@@ -23,13 +23,24 @@ const { buildSystemPrompt, buildTools, general, SECTION_ORDER, MODEL } =
 
 const pack = general;
 
+/**
+ * The artifact sandbox proxies requests through its own allowlist, which does
+ * not currently accept `claude-opus-5` (400). This is a sandbox constraint, not
+ * a property of the model — the production app should stay on MODEL from
+ * src/index.ts, which is why this override lives here and not there.
+ *
+ * Remove this once the sandbox accepts the newer model.
+ */
+const PROTOTYPE_MODEL = "claude-sonnet-4-6";
+
 const substitutions = {
   __BUILD_META__: {
     generatedAt: new Date().toISOString(),
     packId: pack.id,
     packVersion: pack.version,
+    productionModel: MODEL,
   },
-  __MODEL__: MODEL,
+  __MODEL__: PROTOTYPE_MODEL,
   __SYSTEM_PROMPT__: buildSystemPrompt(pack.promptModule),
   __TOOLS__: buildTools(pack),
   __SECTION_ORDER__: SECTION_ORDER,
@@ -51,6 +62,6 @@ await writeFile(join(root, "prototype/artifact.jsx"), out, "utf8");
 const kb = (Buffer.byteLength(out, "utf8") / 1024).toFixed(1);
 console.log(`prototype/artifact.jsx  ${kb} kB`);
 console.log(`  pack    ${pack.id} v${pack.version}`);
-console.log(`  model   ${MODEL}`);
+console.log(`  model   ${PROTOTYPE_MODEL}  (sandbox override; production is ${MODEL})`);
 console.log(`  tools   ${substitutions.__TOOLS__.map((t) => t.name).join(", ")}`);
 console.log(`  prompt  ${substitutions.__SYSTEM_PROMPT__.length} chars`);
