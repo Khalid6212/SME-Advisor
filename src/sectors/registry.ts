@@ -10,8 +10,8 @@
  * render at the front of the prefix.
  */
 
-import { general } from "./general.js";
-import type { SectorPack } from "./types.js";
+import { general } from "./general.ts";
+import type { SectorPack } from "./types.ts";
 
 export const PACKS: SectorPack[] = [general];
 

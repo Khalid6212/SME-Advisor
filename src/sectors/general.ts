@@ -16,7 +16,7 @@
  * queue.
  */
 
-import type { SectorPack } from "./types.js";
+import type { SectorPack } from "./types.ts";
 
 export const general: SectorPack = {
   id: "general",

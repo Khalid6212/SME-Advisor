@@ -6,9 +6,9 @@
  * rather than parsing a JSON fence out of a markdown response.
  */
 
-import { buildProfileSchema, SECTION_ORDER, type JSONSchema } from "./schema.js";
-import { CLAIMS_LEDGER_SCHEMA } from "./claims.js";
-import type { SectorPack } from "../sectors/types.js";
+import { buildProfileSchema, SECTION_ORDER, type JSONSchema } from "./schema.ts";
+import { CLAIMS_LEDGER_SCHEMA } from "./claims.ts";
+import type { SectorPack } from "../sectors/types.ts";
 
 /**
  * Incremental checkpoint, called at the end of each section.

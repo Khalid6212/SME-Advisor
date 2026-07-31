@@ -7,8 +7,8 @@
  * back to a monolith.
  */
 
-import type { JSONSchema } from "../core/schema.js";
-import type { DocumentType, Materiality } from "../core/claims.js";
+import type { JSONSchema } from "../core/schema.ts";
+import type { DocumentType, Materiality } from "../core/claims.ts";
 
 export interface RecordOfInterest {
   /** Stable id, used in the profile's financial_records / operational_records. */

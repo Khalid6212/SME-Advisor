@@ -47,7 +47,37 @@ src/
     types.ts        SectorPack interface
     general.ts      The _general pack — primary engine at launch
     registry.ts     Pack lookup and resolution
+scripts/
+  build-prototype.mjs      Generates the artifact from src/
+  prototype-template.jsx   UI template — edit this, not the output
+prototype/
+  artifact.jsx      GENERATED. Do not edit.
 ```
+
+## Running the prototype
+
+```bash
+npm install
+npm run build:prototype
+```
+
+Then paste `prototype/artifact.jsx` into a Claude artifact. It will not run
+anywhere else — it depends on the sandbox for API auth and `window.storage`.
+
+The prototype is generated rather than hand-written so it always reflects the
+committed prompt. Change `src/core/prompt.ts` or `src/sectors/general.ts`, run
+the build again, and re-paste. Never edit `prototype/artifact.jsx` directly —
+the next build overwrites it.
+
+**What to look at.** When an interview completes, the results screen opens on
+the derived metrics. The question is whether they are specific and in the
+owner's own vocabulary — "covers per day", "retention held on completed jobs",
+"cost per truck per month" — or generic — "monthly revenue", "number of
+customers". Specific means general-first works. Generic means the probe
+mechanism needs rework before anything gets built on top of it.
+
+Run it with three or four owners in genuinely unrelated lines of work. The
+Claims tab shows what the verification agent would later need to check.
 
 ## Sector strategy
 

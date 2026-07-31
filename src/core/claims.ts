@@ -12,7 +12,7 @@
  * and contracts appear in DOCUMENT_TYPE below.
  */
 
-import type { JSONSchema } from "./schema.js";
+import type { JSONSchema } from "./schema.ts";
 
 export const MATERIALITY = ["high", "medium", "low"] as const;
 export type Materiality = (typeof MATERIALITY)[number];

@@ -1,14 +1,14 @@
-import { buildSystemPrompt } from "./core/prompt.js";
-import { buildTools } from "./core/tools.js";
-import type { SectorPack } from "./sectors/types.js";
+import { buildSystemPrompt } from "./core/prompt.ts";
+import { buildTools } from "./core/tools.ts";
+import type { SectorPack } from "./sectors/types.ts";
 
-export * from "./core/prompt.js";
-export * from "./core/schema.js";
-export * from "./core/claims.js";
-export * from "./core/tools.js";
-export * from "./sectors/types.js";
-export * from "./sectors/registry.js";
-export { general } from "./sectors/general.js";
+export * from "./core/prompt.ts";
+export * from "./core/schema.ts";
+export * from "./core/claims.ts";
+export * from "./core/tools.ts";
+export * from "./sectors/types.ts";
+export * from "./sectors/registry.ts";
+export { general } from "./sectors/general.ts";
 
 export const MODEL = "claude-opus-5";
 

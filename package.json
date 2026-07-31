@@ -5,7 +5,8 @@
   "description": "Investment readiness assessment for SMEs in Saudi Arabia",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:prototype": "node scripts/build-prototype.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
