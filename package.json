@@ -1,0 +1,17 @@
+{
+  "name": "sme-advisor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Investment readiness assessment for SMEs in Saudi Arabia",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.70.0"
+  }
+}
