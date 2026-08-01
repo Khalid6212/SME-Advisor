@@ -50,6 +50,19 @@ TLS is enabled automatically for any non-localhost host.
 Vercel Postgres is Neon underneath, reached through Vercel's marketplace — the
 same thing with an extra step if you do not already have a Vercel project.
 
+**Supabase offers two connection strings and the difference matters.** Use the
+**direct** connection for migrations; the pooled one (transaction mode, usually
+port 6543) does not support the session-level features DDL relies on, and the
+migration will fail in ways that do not obviously point at the connection
+string. The pooled connection is the right choice for the running API.
+
+If the direct connection refuses to connect at all, check whether it resolves
+to IPv6 only — Supabase provides a session pooler for IPv4 networks.
+
+Supabase also bundles S3-compatible object storage, which the data room needs.
+Keeping the storage layer behind an S3 interface means it works there now and
+against an in-Kingdom bucket later without a rewrite.
+
 **Development only.** Real client financials must not sit outside the Kingdom;
 that is the whole point of D11. The same applies to hosting the API on Vercel:
 besides residency, an interview turn runs an agent loop of up to eight tool
