@@ -16,14 +16,16 @@ const SYSTEM_PROMPT = __SYSTEM_PROMPT__;
 const TOOLS = __TOOLS__;
 const SECTION_ORDER = __SECTION_ORDER__;
 
+// `short` is not derived from `full` — splitting on the first word collapsed
+// "Financial health" and "Financial records" into the same label.
 const SECTION_LABELS = {
-  business_identity: "Business identity",
-  revenue_and_customers: "Revenue & customers",
-  financial_health: "Financial health",
-  operations: "Operations",
-  market_position: "Market position",
-  funding_need: "Funding need",
-  financial_records: "Financial records",
+  business_identity: { full: "Business identity", short: "Identity" },
+  revenue_and_customers: { full: "Revenue & customers", short: "Revenue" },
+  financial_health: { full: "Financial health", short: "Financials" },
+  operations: { full: "Operations", short: "Ops" },
+  market_position: { full: "Market position", short: "Market" },
+  funding_need: { full: "Funding need", short: "Funding" },
+  financial_records: { full: "Financial records", short: "Records" },
 };
 
 const C = {
@@ -125,23 +127,36 @@ function Bubble({ role, text }) {
 }
 
 function Progress({ saved }) {
+  const done = SECTION_ORDER.filter((id) => saved[id]?.complete).length;
+  const current = SECTION_ORDER.find((id) => !saved[id]) ?? null;
+
   return (
     <div style={{
-      display: "flex", gap: 4, padding: "10px 16px",
-      borderBottom: `1px solid ${C.line}`, background: C.bg, flexShrink: 0,
+      padding: "10px 16px", borderBottom: `1px solid ${C.line}`,
+      background: C.bg, flexShrink: 0,
     }}>
-      {SECTION_ORDER.map((id) => {
-        const s = saved[id];
-        const color = !s ? C.line : s.complete ? C.good : C.warn;
-        return (
-          <div key={id} title={SECTION_LABELS[id]} style={{ flex: 1 }}>
-            <div style={{ height: 3, background: color, borderRadius: 2 }} />
-            <div style={{ fontSize: 9, color: C.faint, marginTop: 4, textAlign: "center" }}>
-              {SECTION_LABELS[id].split(" ")[0]}
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        fontSize: 11, color: C.faint, marginBottom: 6,
+      }}>
+        <span>{current ? SECTION_LABELS[current].full : "Wrapping up"}</span>
+        <span>{done} of {SECTION_ORDER.length}</span>
+      </div>
+      <div style={{ display: "flex", gap: 4 }}>
+        {SECTION_ORDER.map((id) => {
+          const s = saved[id];
+          const color = !s ? C.line : s.complete ? C.good : C.warn;
+          return (
+            <div key={id} title={SECTION_LABELS[id].full} style={{ flex: 1 }}>
+              <div style={{ height: 3, background: color, borderRadius: 2 }} />
+              <div style={{ fontSize: 9, color: id === current ? C.dim : C.faint,
+                            marginTop: 4, textAlign: "center" }}>
+                {SECTION_LABELS[id].short}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -152,8 +167,13 @@ function Results({ result, onReset }) {
   const sector = profile.sector_detail ?? {};
   const metrics = sector.derived_metrics ?? [];
   const [tab, setTab] = useState("metrics");
+  const [copied, setCopied] = useState(false);
 
-  const copy = () => navigator.clipboard?.writeText(JSON.stringify(result, null, 2));
+  const copy = async () => {
+    await navigator.clipboard?.writeText(JSON.stringify(result, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
@@ -183,9 +203,11 @@ function Results({ result, onReset }) {
         ))}
         <div style={{ flex: 1 }} />
         <button onClick={copy} style={{
-          padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.line}`,
-          background: "transparent", color: C.dim, fontSize: 12, cursor: "pointer",
-        }}>Copy JSON</button>
+          padding: "6px 14px", borderRadius: 8,
+          border: `1px solid ${copied ? C.good : C.line}`,
+          background: "transparent", color: copied ? C.good : C.dim,
+          fontSize: 12, cursor: "pointer",
+        }}>{copied ? "Copied ✓" : "Copy JSON"}</button>
         <button onClick={onReset} style={{
           padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.line}`,
           background: "transparent", color: C.faint, fontSize: 12, cursor: "pointer",
@@ -304,6 +326,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [ready, setReady] = useState(false);
   const bottom = useRef(null);
+  const box = useRef(null);
 
   useEffect(() => {
     loadState().then((s) => {
@@ -313,6 +336,14 @@ export default function App() {
   }, []);
 
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, busy]);
+
+  // Grow the answer box with its content, up to the maxHeight set on the element.
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [input]);
 
   const persist = (m, s, r) => saveState({ messages: m, saved: s, result: r, build: BUILD });
 
@@ -351,13 +382,18 @@ export default function App() {
   };
 
   const reset = async () => {
+    // Discards the whole interview, so confirm — there is no undo.
+    if (!window.confirm("Discard this interview and start over?")) return;
     setMessages([]); setSaved({}); setResult(null); setBrief(""); setError(null);
     await saveState({ messages: [], saved: {}, result: null, build: BUILD });
   };
 
   const shell = {
-    height: "100vh", display: "flex", flexDirection: "column",
-    background: C.bg, fontFamily: "'Inter', system-ui, sans-serif",
+    // dvh, not vh — on mobile browsers 100vh sits under the address bar and
+    // pushes the answer box off screen.
+    height: "100dvh", display: "flex", flexDirection: "column",
+    background: C.bg,
+    fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
   };
 
   if (!ready) {
@@ -440,24 +476,37 @@ export default function App() {
           </div>
           <div style={{
             padding: "12px 16px", borderTop: `1px solid ${C.line}`,
-            display: "flex", gap: 8, background: C.bg, flexShrink: 0,
+            background: C.bg, flexShrink: 0,
           }}>
-            <input
-              value={input} onChange={(e) => setInput(e.target.value)} dir="auto"
-              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && !busy && (e.preventDefault(), send())}
-              placeholder="Your answer…" disabled={busy}
-              style={{
-                flex: 1, padding: "10px 14px", borderRadius: 12,
-                border: `1px solid ${C.line}`, background: C.panel,
-                color: C.text, fontSize: 14, outline: "none",
-              }}
-            />
-            <button onClick={send} disabled={busy || !input.trim()} style={{
-              padding: "10px 20px", borderRadius: 12, border: "none",
-              background: busy || !input.trim() ? C.line : C.accent,
-              color: "#fff", fontSize: 14, fontWeight: 600,
-              cursor: busy ? "default" : "pointer",
-            }}>Send</button>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+              <textarea
+                ref={box} value={input} dir="auto" rows={1}
+                onChange={(e) => setInput(e.target.value)}
+                // Enter sends; Shift+Enter starts a new paragraph. Typing stays
+                // enabled while a turn is in flight — only sending is blocked,
+                // so a train of thought is never interrupted by latency.
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+                }}
+                placeholder="Your answer… (Shift+Enter for a new paragraph)"
+                style={{
+                  flex: 1, padding: "10px 14px", borderRadius: 12,
+                  border: `1px solid ${C.line}`, background: C.panel,
+                  color: C.text, fontSize: 14, lineHeight: 1.5, outline: "none",
+                  resize: "none", overflowY: "auto", maxHeight: 200,
+                  fontFamily: "inherit",
+                }}
+              />
+              <button onClick={send} disabled={busy || !input.trim()} style={{
+                padding: "10px 20px", borderRadius: 12, border: "none",
+                background: busy || !input.trim() ? C.line : C.accent,
+                color: "#fff", fontSize: 14, fontWeight: 600, flexShrink: 0,
+                cursor: busy || !input.trim() ? "default" : "pointer",
+              }}>Send</button>
+            </div>
+            <div style={{ fontSize: 11, color: C.faint, marginTop: 6 }}>
+              Approximate numbers are fine — "around 400,000 a month" works.
+            </div>
           </div>
         </>
       )}

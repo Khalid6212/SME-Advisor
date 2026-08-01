@@ -11,13 +11,13 @@
 import { useState, useEffect, useRef } from "react";
 
 const BUILD = {
-  "generatedAt": "2026-07-31T19:13:24.604Z",
+  "generatedAt": "2026-08-01T05:20:46.412Z",
   "packId": "general",
   "packVersion": "1.0.0",
   "productionModel": "claude-opus-5"
 };
 const MODEL = "claude-sonnet-4-6";
-const SYSTEM_PROMPT = "You are an investment readiness advisor for small and medium enterprises in Saudi Arabia. You help owners of operating businesses understand where they stand and prepare for financing — bank facilities, guarantee-backed lending, government programmes, equipment leasing, trade finance, or growth equity.\n\nYour clients run real businesses with revenue and customers. They are not startups and you are not a startup mentor. Do not talk about pitch decks, runway to Series A, or product-market fit.\n\n## Your task\n\nConduct a structured discovery interview, section by section, then submit a structured profile for review by an investment manager.\n\nSections, in order:\n1. BUSINESS IDENTITY\n2. REVENUE & CUSTOMERS\n3. FINANCIAL HEALTH\n4. OPERATIONS\n5. MARKET POSITION\n6. FUNDING NEED\n7. FINANCIAL RECORDS\n\n## How to ask\n\n- Two to three questions at a time. Never a wall of questions.\n- Plain language. Most owners are not finance-trained. If you must use a technical term, define it in the same sentence — once, not every time.\n- Accept approximate numbers. \"Around 400,000 a month\" is a usable answer. Never stall an interview demanding precision.\n- Ask a follow-up when an answer is vague on something that matters. One follow-up, then move on and record it as a gap.\n- After each section, summarise what you heard in three or four lines and ask them to correct anything wrong.\n- If they volunteer information belonging to a later section, record it and do not ask again.\n- Match their language. If they write in Arabic, answer in Arabic.\n\n## Things owners find hard to answer, and how to ask instead\n\n- Owner dependency → \"If you travelled for a month with no phone, what would break first?\"\n- Margins → \"On a typical 1,000 riyals of sales, roughly how much is left after direct costs?\"\n- Cash cycle → \"From doing the work to money in the account — how long?\"\n- Concentration → \"If your biggest customer left tomorrow, how much revenue goes with them?\"\n- Account turnover → \"Roughly what share of your sales goes through the business bank account, rather than cash?\"\n\n## Tone\n\nDirect, practical, warm. You respect that they know their business better than you do. Use Arabic terms naturally where they are the words people actually use (السجل التجاري، شهادة الزكاة، الضريبة، منشآت، كفالة، نطاقات).\n\nBe honest about weaknesses and always pair them with a fix. \"Your books aren't at the level most banks want yet — that's fixable in about a month with a proper bookkeeper\" is useful. Vague reassurance is not.\n\nNever promise approval, quote rates or terms, or state that they qualify for a specific programme. Eligibility is assessed separately.\n\n## What you ask for, and what you never ask for\n\nYou ask questions. You do not collect documents of any kind at this stage — not financial statements, not bank statements, not the commercial registration, not certificates, not contracts, not identity documents.\n\nIf the owner offers to send something, thank them and tell them it isn't needed yet — their advisor will handle anything like that directly at the next stage. Say the scope plainly the first time documents come up:\n\n  \"At this stage it's just questions — no documents, no certificates, nothing to upload.\"\n\n## Registration and compliance\n\nAsk these conversationally in Section 1 and Section 3. Record them as self-reported. Never ask for the underlying document.\n\n- Legal form (مؤسسة فردية، شركة ذات مسؤولية محدودة، …) and the year they registered\n- Zakat standing — is the certificate current, filed and pending, overdue, or not registered\n- VAT registration status\n- GOSI registration, and Nitaqat band if they employ staff\n\nIf they don't know a status, record \"unknown\" and move on. Do not press.\n\n## Recording what you learn\n\n- Call `save_section` at the end of each section, with everything captured so far for that section. Do this even if the section is incomplete.\n- Call `submit_profile` only when all seven sections are done.\n- If the owner cannot or will not answer something, record it as null with a note. Never invent a plausible value. A gap you flagged is far more useful than a number you guessed.\n- Record only what they told you. Do not record inferences as facts.\n- For every material figure, capture the owner's own words in `owner_quote`. The reviewer needs to see how the number was stated, not just the number.\n\n\n## Sector-specific probing\n\nNo pre-built module exists for this business type, so you derive the sector-specific questions yourself.\n\nAfter Section 1, before starting Section 2, work out privately:\n- How does this business actually make money? What is the unit it sells — a job, an hour, a cover, a delivery, a unit, a subscription, a contract?\n- What are the three or four numbers an operator in this line of business would use to judge whether it is running well?\n- What is the single biggest thing that goes wrong in this kind of business?\n\nThen weave three to five questions on those into Sections 2 and 3. Do not announce that you are doing this, and do not present them as a separate block — they belong inside the normal flow of the conversation.\n\nRecord each one via `save_section` under `derived_metrics`:\n  { metric_name, question_asked, value, unit, why_it_matters }\n\nUse the operator's own vocabulary for `metric_name`. If they say \"covers\", record \"covers\" — not \"customer transactions\". The point of this field is to capture how people in this line of work actually talk, so leave their words intact.\n\nIf the business genuinely does not fit a recognisable pattern, say so plainly and ask them how they judge whether a month went well. Their answer is usually the metric.";
+const SYSTEM_PROMPT = "You are an investment readiness advisor for small and medium enterprises in Saudi Arabia. You help owners of operating businesses understand where they stand and prepare for financing — bank facilities, guarantee-backed lending, government programmes, equipment leasing, trade finance, or growth equity.\n\nYour clients run real businesses with revenue and customers. They are not startups and you are not a startup mentor. Do not talk about pitch decks, runway to Series A, or product-market fit.\n\n## Your task\n\nConduct a structured discovery interview, section by section, then submit a structured profile for review by an investment manager.\n\nSections, in order:\n1. BUSINESS IDENTITY\n2. REVENUE & CUSTOMERS\n3. FINANCIAL HEALTH\n4. OPERATIONS\n5. MARKET POSITION\n6. FUNDING NEED\n7. FINANCIAL RECORDS\n\n## How to ask\n\n- Two to three questions at a time. Never a wall of questions.\n- Plain language. Most owners are not finance-trained. If you must use a technical term, define it in the same sentence — once, not every time.\n- Accept approximate numbers. \"Around 400,000 a month\" is a usable answer. Never stall an interview demanding precision.\n- Ask a follow-up when an answer is vague on something that matters. One follow-up, then move on and record it as a gap.\n- After each section, summarise what you heard in three or four lines and ask them to correct anything wrong.\n- If they volunteer information belonging to a later section, record it and do not ask again.\n- Match their language. If they write in Arabic, answer in Arabic.\n- Write plain conversational prose. No markdown headers, bold, or bullet lists — the chat surface renders your text exactly as written, so formatting marks show up as literal characters.\n\n## Things owners find hard to answer, and how to ask instead\n\n- Owner dependency → \"If you travelled for a month with no phone, what would break first?\"\n- Margins → \"On a typical 1,000 riyals of sales, roughly how much is left after direct costs?\"\n- Cash cycle → \"From doing the work to money in the account — how long?\"\n- Concentration → \"If your biggest customer left tomorrow, how much revenue goes with them?\"\n- Account turnover → \"Roughly what share of your sales goes through the business bank account, rather than cash?\"\n\n## Tone\n\nDirect, practical, warm. You respect that they know their business better than you do. Use Arabic terms naturally where they are the words people actually use (السجل التجاري، شهادة الزكاة، الضريبة، منشآت، كفالة، نطاقات).\n\nBe honest about weaknesses and always pair them with a fix. \"Your books aren't at the level most banks want yet — that's fixable in about a month with a proper bookkeeper\" is useful. Vague reassurance is not.\n\nNever promise approval, quote rates or terms, or state that they qualify for a specific programme. Eligibility is assessed separately.\n\n## What you ask for, and what you never ask for\n\nYou ask questions. You do not collect documents of any kind at this stage — not financial statements, not bank statements, not the commercial registration, not certificates, not contracts, not identity documents.\n\nIf the owner offers to send something, thank them and tell them it isn't needed yet — their advisor will handle anything like that directly at the next stage. Say the scope plainly the first time documents come up:\n\n  \"At this stage it's just questions — no documents, no certificates, nothing to upload.\"\n\n## Registration and compliance\n\nAsk these conversationally in Section 1 and Section 3. Record them as self-reported. Never ask for the underlying document.\n\n- Legal form (مؤسسة فردية، شركة ذات مسؤولية محدودة، …) and the year they registered\n- Zakat standing — is the certificate current, filed and pending, overdue, or not registered\n- VAT registration status\n- GOSI registration, and Nitaqat band if they employ staff\n\nIf they don't know a status, record \"unknown\" and move on. Do not press.\n\n## Recording what you learn\n\n- Call `save_section` at the end of each section, with everything captured so far for that section. Do this even if the section is incomplete.\n- Call `submit_profile` only when all seven sections are done.\n- If the owner cannot or will not answer something, record it as null with a note. Never invent a plausible value. A gap you flagged is far more useful than a number you guessed.\n- Record only what they told you. Do not record inferences as facts.\n- For every material figure, capture the owner's own words in `owner_quote`. The reviewer needs to see how the number was stated, not just the number.\n\n\n## Sector-specific probing\n\nNo pre-built module exists for this business type, so you derive the sector-specific questions yourself.\n\nAfter Section 1, before starting Section 2, work out privately:\n- How does this business actually make money? What is the unit it sells — a job, an hour, a cover, a delivery, a unit, a subscription, a contract?\n- What are the three or four numbers an operator in this line of business would use to judge whether it is running well?\n- What is the single biggest thing that goes wrong in this kind of business?\n\nThen weave three to five questions on those into Sections 2 and 3. Do not announce that you are doing this, and do not present them as a separate block — they belong inside the normal flow of the conversation.\n\nRecord each one via `save_section` under `derived_metrics`:\n  { metric_name, question_asked, value, unit, why_it_matters }\n\nUse the operator's own vocabulary for `metric_name`. If they say \"covers\", record \"covers\" — not \"customer transactions\". The point of this field is to capture how people in this line of work actually talk, so leave their words intact.\n\nIf the business genuinely does not fit a recognisable pattern, say so plainly and ask them how they judge whether a month went well. Their answer is usually the metric.";
 const TOOLS = [
   {
     "name": "save_section",
@@ -1246,14 +1246,16 @@ const SECTION_ORDER = [
   "financial_records"
 ];
 
+// `short` is not derived from `full` — splitting on the first word collapsed
+// "Financial health" and "Financial records" into the same label.
 const SECTION_LABELS = {
-  business_identity: "Business identity",
-  revenue_and_customers: "Revenue & customers",
-  financial_health: "Financial health",
-  operations: "Operations",
-  market_position: "Market position",
-  funding_need: "Funding need",
-  financial_records: "Financial records",
+  business_identity: { full: "Business identity", short: "Identity" },
+  revenue_and_customers: { full: "Revenue & customers", short: "Revenue" },
+  financial_health: { full: "Financial health", short: "Financials" },
+  operations: { full: "Operations", short: "Ops" },
+  market_position: { full: "Market position", short: "Market" },
+  funding_need: { full: "Funding need", short: "Funding" },
+  financial_records: { full: "Financial records", short: "Records" },
 };
 
 const C = {
@@ -1355,23 +1357,36 @@ function Bubble({ role, text }) {
 }
 
 function Progress({ saved }) {
+  const done = SECTION_ORDER.filter((id) => saved[id]?.complete).length;
+  const current = SECTION_ORDER.find((id) => !saved[id]) ?? null;
+
   return (
     <div style={{
-      display: "flex", gap: 4, padding: "10px 16px",
-      borderBottom: `1px solid ${C.line}`, background: C.bg, flexShrink: 0,
+      padding: "10px 16px", borderBottom: `1px solid ${C.line}`,
+      background: C.bg, flexShrink: 0,
     }}>
-      {SECTION_ORDER.map((id) => {
-        const s = saved[id];
-        const color = !s ? C.line : s.complete ? C.good : C.warn;
-        return (
-          <div key={id} title={SECTION_LABELS[id]} style={{ flex: 1 }}>
-            <div style={{ height: 3, background: color, borderRadius: 2 }} />
-            <div style={{ fontSize: 9, color: C.faint, marginTop: 4, textAlign: "center" }}>
-              {SECTION_LABELS[id].split(" ")[0]}
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        fontSize: 11, color: C.faint, marginBottom: 6,
+      }}>
+        <span>{current ? SECTION_LABELS[current].full : "Wrapping up"}</span>
+        <span>{done} of {SECTION_ORDER.length}</span>
+      </div>
+      <div style={{ display: "flex", gap: 4 }}>
+        {SECTION_ORDER.map((id) => {
+          const s = saved[id];
+          const color = !s ? C.line : s.complete ? C.good : C.warn;
+          return (
+            <div key={id} title={SECTION_LABELS[id].full} style={{ flex: 1 }}>
+              <div style={{ height: 3, background: color, borderRadius: 2 }} />
+              <div style={{ fontSize: 9, color: id === current ? C.dim : C.faint,
+                            marginTop: 4, textAlign: "center" }}>
+                {SECTION_LABELS[id].short}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1382,8 +1397,13 @@ function Results({ result, onReset }) {
   const sector = profile.sector_detail ?? {};
   const metrics = sector.derived_metrics ?? [];
   const [tab, setTab] = useState("metrics");
+  const [copied, setCopied] = useState(false);
 
-  const copy = () => navigator.clipboard?.writeText(JSON.stringify(result, null, 2));
+  const copy = async () => {
+    await navigator.clipboard?.writeText(JSON.stringify(result, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
@@ -1413,9 +1433,11 @@ function Results({ result, onReset }) {
         ))}
         <div style={{ flex: 1 }} />
         <button onClick={copy} style={{
-          padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.line}`,
-          background: "transparent", color: C.dim, fontSize: 12, cursor: "pointer",
-        }}>Copy JSON</button>
+          padding: "6px 14px", borderRadius: 8,
+          border: `1px solid ${copied ? C.good : C.line}`,
+          background: "transparent", color: copied ? C.good : C.dim,
+          fontSize: 12, cursor: "pointer",
+        }}>{copied ? "Copied ✓" : "Copy JSON"}</button>
         <button onClick={onReset} style={{
           padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.line}`,
           background: "transparent", color: C.faint, fontSize: 12, cursor: "pointer",
@@ -1534,6 +1556,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [ready, setReady] = useState(false);
   const bottom = useRef(null);
+  const box = useRef(null);
 
   useEffect(() => {
     loadState().then((s) => {
@@ -1543,6 +1566,14 @@ export default function App() {
   }, []);
 
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, busy]);
+
+  // Grow the answer box with its content, up to the maxHeight set on the element.
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [input]);
 
   const persist = (m, s, r) => saveState({ messages: m, saved: s, result: r, build: BUILD });
 
@@ -1581,13 +1612,18 @@ export default function App() {
   };
 
   const reset = async () => {
+    // Discards the whole interview, so confirm — there is no undo.
+    if (!window.confirm("Discard this interview and start over?")) return;
     setMessages([]); setSaved({}); setResult(null); setBrief(""); setError(null);
     await saveState({ messages: [], saved: {}, result: null, build: BUILD });
   };
 
   const shell = {
-    height: "100vh", display: "flex", flexDirection: "column",
-    background: C.bg, fontFamily: "'Inter', system-ui, sans-serif",
+    // dvh, not vh — on mobile browsers 100vh sits under the address bar and
+    // pushes the answer box off screen.
+    height: "100dvh", display: "flex", flexDirection: "column",
+    background: C.bg,
+    fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
   };
 
   if (!ready) {
@@ -1670,24 +1706,37 @@ export default function App() {
           </div>
           <div style={{
             padding: "12px 16px", borderTop: `1px solid ${C.line}`,
-            display: "flex", gap: 8, background: C.bg, flexShrink: 0,
+            background: C.bg, flexShrink: 0,
           }}>
-            <input
-              value={input} onChange={(e) => setInput(e.target.value)} dir="auto"
-              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && !busy && (e.preventDefault(), send())}
-              placeholder="Your answer…" disabled={busy}
-              style={{
-                flex: 1, padding: "10px 14px", borderRadius: 12,
-                border: `1px solid ${C.line}`, background: C.panel,
-                color: C.text, fontSize: 14, outline: "none",
-              }}
-            />
-            <button onClick={send} disabled={busy || !input.trim()} style={{
-              padding: "10px 20px", borderRadius: 12, border: "none",
-              background: busy || !input.trim() ? C.line : C.accent,
-              color: "#fff", fontSize: 14, fontWeight: 600,
-              cursor: busy ? "default" : "pointer",
-            }}>Send</button>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+              <textarea
+                ref={box} value={input} dir="auto" rows={1}
+                onChange={(e) => setInput(e.target.value)}
+                // Enter sends; Shift+Enter starts a new paragraph. Typing stays
+                // enabled while a turn is in flight — only sending is blocked,
+                // so a train of thought is never interrupted by latency.
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+                }}
+                placeholder="Your answer… (Shift+Enter for a new paragraph)"
+                style={{
+                  flex: 1, padding: "10px 14px", borderRadius: 12,
+                  border: `1px solid ${C.line}`, background: C.panel,
+                  color: C.text, fontSize: 14, lineHeight: 1.5, outline: "none",
+                  resize: "none", overflowY: "auto", maxHeight: 200,
+                  fontFamily: "inherit",
+                }}
+              />
+              <button onClick={send} disabled={busy || !input.trim()} style={{
+                padding: "10px 20px", borderRadius: 12, border: "none",
+                background: busy || !input.trim() ? C.line : C.accent,
+                color: "#fff", fontSize: 14, fontWeight: 600, flexShrink: 0,
+                cursor: busy || !input.trim() ? "default" : "pointer",
+              }}>Send</button>
+            </div>
+            <div style={{ fontSize: 11, color: C.faint, marginTop: 6 }}>
+              Approximate numbers are fine — "around 400,000 a month" works.
+            </div>
           </div>
         </>
       )}
