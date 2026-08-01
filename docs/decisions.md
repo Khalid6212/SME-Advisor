@@ -278,3 +278,70 @@ it has been read.
   produce questions, not prose.
 - `src/planner/default-template.ts` is a **draft** — review section order and
   emphasis against what your lenders actually ask for.
+
+---
+
+## D18 — Two document tracks from one profile
+
+**Decision.** The same profile produces two document sets: a **lender pack**
+(persuade a credit officer the facility gets repaid) and an **internal
+operating plan** (tell the owner what to do next). Separate templates, separate
+`audience`, both drafted by the planner agent.
+
+**Why.** The two aims are get finance and plan the business, and they are not
+the same document with a different cover. A lender reads for repayment
+capacity, concentration, and downside. An owner reads for what to fix first and
+what to watch. Writing one and relabelling it serves neither reader.
+
+**Consequences.** `PlanTemplate.audience` drives both the agent's brief and
+rule scoping — an edit to a lender pack is evidence about lender packs.
+`internal-template.ts` leads with where the business stands, the blockers, the
+numbers to watch, and a ninety-day list of fewer than ten actions. An operating
+plan nobody acts on is worse than none: it spends goodwill you would otherwise
+have spent on something they would have used.
+
+---
+
+## D19 — Agents learn from manager edits, behind an approval gate
+
+**Decision.** Manager edits and explicit directions are captured, distilled
+into candidate house rules by a separate agent, and applied **only after a
+human approves them**. Rules are scoped, versioned, revocable, and injected
+into the drafting agents' prompts.
+
+**Why this shape rather than automatic learning.** The naive version makes
+output worse, and does so invisibly. A manager correcting a revenue figure is
+not stating a preference. A manager rewording one sentence for one client is
+not setting house style. An agent that treats every edit as a rule applies
+one-offs confidently to every future document, and the output still reads
+fluently — nobody traces the damage back to a rule learned six weeks earlier.
+
+**The three defences, none optional.**
+
+1. **Approval gate.** Candidates are proposals. Nothing reaches a prompt until
+   a human says so. The distiller is explicitly told that proposing nothing is
+   the common, correct outcome.
+2. **Scoping.** Empty scope means "everywhere", non-empty narrows, and the
+   distiller is told to scope as narrowly as the evidence supports. Widening a
+   rule later is easy; a rule wrongly applied to every client is discovered by
+   a reader.
+3. **Measurement.** `section_edits.edit_distance` tracked per section over
+   time is the scoreboard. If the loop works, manager edits shrink. Without
+   that signal you cannot distinguish a system that is learning from one that
+   is accumulating noise.
+
+**Consequences.**
+- Only `preference` and `directive` edits become candidates; `fact_correction`,
+  `client_specific`, and `noise` teach nothing. Fact corrections update the
+  profile instead.
+- `occurrences` matters: a pattern seen three times is worth more than three
+  rules proposed on first sighting.
+- `manager_note` on an edit is far higher signal than a diff. The UI should
+  invite it without demanding it.
+- No rule may authorise stating something unsourced. House rules refine style;
+  they never override D17's grounding requirement, and the injected block says
+  so explicitly.
+- **Cache placement:** rules render after the stable core and sector pack, with
+  the breakpoint after them. Rules change only on approval, so the prefix stays
+  byte-identical between approvals. Rules above the core would invalidate every
+  client's cache on every approval.

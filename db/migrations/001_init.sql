@@ -342,6 +342,61 @@ CREATE TABLE plan_gaps (
 );
 CREATE INDEX plan_gaps_plan_idx ON plan_gaps (plan_id, blocking DESC);
 
+-- ─── learning loop ──────────────────────────────────────────────────────────
+
+-- Every manager edit to generated text. Raw material for rule distillation,
+-- and the source of the edit-distance trend that tells you whether the loop is
+-- working at all.
+CREATE TABLE section_edits (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent         text NOT NULL,
+  client_id     uuid REFERENCES clients(id) ON DELETE SET NULL,
+  plan_id       uuid REFERENCES plans(id) ON DELETE SET NULL,
+  section_key   text NOT NULL,
+  audience      text,
+  sector_id     text,
+  before_text   text NOT NULL,
+  after_text    text NOT NULL,
+  edit_distance real,
+  -- Set when the manager explains the change. Far higher signal than a diff,
+  -- so the UI should invite it without demanding it.
+  manager_note  text,
+  edited_by     uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX section_edits_trend_idx ON section_edits (agent, section_key, created_at);
+
+CREATE TYPE edit_kind AS ENUM (
+  'fact_correction', 'preference', 'directive', 'client_specific', 'noise'
+);
+CREATE TYPE rule_status AS ENUM ('candidate', 'active', 'rejected', 'retired');
+
+-- Nothing here is applied until status = 'active'. Approval is a human action.
+CREATE TABLE house_rules (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  text            text NOT NULL,
+  -- Empty array means "applies everywhere"; non-empty narrows. Default narrow.
+  scope_agents    text[] NOT NULL DEFAULT '{}',
+  scope_audiences text[] NOT NULL DEFAULT '{}',
+  scope_sectors   text[] NOT NULL DEFAULT '{}',
+  scope_sections  text[] NOT NULL DEFAULT '{}',
+  status          rule_status NOT NULL DEFAULT 'candidate',
+  kind            edit_kind,
+  confidence      text,
+  rationale       text,
+  -- How many independent edits pointed the same way. One is weak evidence.
+  occurrences     integer NOT NULL DEFAULT 1,
+  source_edit_ids uuid[] NOT NULL DEFAULT '{}',
+  proposed_at     timestamptz NOT NULL DEFAULT now(),
+  approved_by     uuid REFERENCES users(id) ON DELETE SET NULL,
+  approved_at     timestamptz,
+  retired_at      timestamptz
+);
+CREATE INDEX house_rules_active_idx ON house_rules (status)
+  WHERE status = 'active';
+CREATE INDEX house_rules_queue_idx ON house_rules (proposed_at DESC)
+  WHERE status = 'candidate';
+
 -- ─── reminders ──────────────────────────────────────────────────────────────
 
 -- Managers push reminders manually. Kept as rows rather than a timestamp

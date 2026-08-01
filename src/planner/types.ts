@@ -66,10 +66,22 @@ export interface PlanSectionSpec {
   required: boolean;
 }
 
+/**
+ * Who the document is for. The same profile produces both tracks, but they are
+ * genuinely different documents: a lender wants repayment capacity and risk
+ * mitigation, an owner wants to know what to do on Monday. Writing one and
+ * relabelling it serves neither.
+ */
+export const AUDIENCE = ["lender", "internal"] as const;
+export type Audience = (typeof AUDIENCE)[number];
+
 export interface PlanTemplate {
   key: string;
   version: string;
+  audience: Audience;
   name: { en: string; ar: string };
+  /** One line on what this document is for, given to the agent as context. */
+  purpose: string;
   sections: PlanSectionSpec[];
 }
 

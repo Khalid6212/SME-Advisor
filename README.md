@@ -4,8 +4,21 @@ Investment readiness assessment for small and medium enterprises in Saudi Arabia
 
 An operating SME — a clinic, a contractor, a workshop, a trading business — talks
 to a structured discovery agent. The agent produces a machine-readable profile
-plus a ledger of claims, which an investment manager reviews before preparing
-documents for lenders, guarantee programmes, or investors.
+plus a ledger of claims. An investment manager then reviews, edits, and produces
+two document sets from it.
+
+**Two aims, two tracks, one profile:**
+
+| | Get finance | Plan the business |
+|---|---|---|
+| Reader | Credit officer | The owner |
+| Asks | Can this be repaid? | What do I fix first? |
+| Output | Lender pack | Operating plan |
+
+The manager sits between the agents and anything that leaves the building —
+reviewing, editing, customising, and producing. Their edits feed back: captured,
+distilled into candidate house rules, and applied to future drafts **only after
+they approve them**.
 
 ## Current stage
 

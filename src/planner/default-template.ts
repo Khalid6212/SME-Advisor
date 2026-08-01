@@ -16,7 +16,10 @@ import type { PlanTemplate } from "./types.ts";
 export const defaultPlanTemplate: PlanTemplate = {
   key: "sme-funding-plan",
   version: "0.1.0-draft",
+  audience: "lender",
   name: { en: "SME funding business plan", ar: "خطة عمل لطلب التمويل" },
+  purpose:
+    "Persuade a credit officer that this business can service the facility it is asking for. Their questions are repayment capacity, concentration, and what happens if things go wrong.",
 
   sections: [
     {
