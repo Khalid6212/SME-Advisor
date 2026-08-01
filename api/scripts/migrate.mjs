@@ -19,7 +19,15 @@ if (!url) {
   process.exit(1);
 }
 
-const pool = new pg.Pool({ connectionString: url });
+// Mirrors sslFor() in src/db.ts — hosted providers require TLS, a local
+// container does not offer it.
+const host = new URL(url).hostname;
+const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
+
+const pool = new pg.Pool({
+  connectionString: url,
+  ssl: isLocal ? undefined : { rejectUnauthorized: true },
+});
 
 // A raw ECONNREFUSED stack is the least useful thing to show someone whose
 // database simply is not running yet.

@@ -41,13 +41,21 @@ The installer asks for a superuser password — remember it, it goes in
 createdb -U postgres sme_advisor
 ```
 
-### Hosted (Neon, Supabase, or similar)
+### Hosted (Neon, Supabase, Vercel Postgres)
 
-Fine for development, and it skips the install entirely. Paste the connection
-string into `DATABASE_URL`.
+No install at all, and the quickest way to get moving. Create a Postgres
+database, copy the connection string into `DATABASE_URL`, run the migration.
+TLS is enabled automatically for any non-localhost host.
 
-**Test data only.** Real client financials must not sit outside the Kingdom —
-that is the whole reason for the hosting decision in D11.
+Vercel Postgres is Neon underneath, reached through Vercel's marketplace — the
+same thing with an extra step if you do not already have a Vercel project.
+
+**Development only.** Real client financials must not sit outside the Kingdom;
+that is the whole point of D11. The same applies to hosting the API on Vercel:
+besides residency, an interview turn runs an agent loop of up to eight tool
+round trips, which sits badly against serverless function duration limits. The
+SPA is static and can be hosted anywhere, including Vercel — that separation is
+why the API was split out in the first place.
 
 ---
 

@@ -1,8 +1,20 @@
 import pg from "pg";
 import { config } from "./config.ts";
 
+/**
+ * Hosted providers (Neon, Supabase, RDS) require TLS; a local container does
+ * not offer it. Deciding from the host avoids a connection string that works
+ * on one machine and fails on another.
+ */
+export function sslFor(url: string): pg.ClientConfig["ssl"] {
+  const host = new URL(url).hostname;
+  const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  return isLocal ? undefined : { rejectUnauthorized: true };
+}
+
 export const pool = new pg.Pool({
   connectionString: config.DATABASE_URL,
+  ssl: sslFor(config.DATABASE_URL),
   max: 10,
   idleTimeoutMillis: 30_000,
 });
