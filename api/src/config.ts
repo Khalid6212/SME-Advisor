@@ -22,6 +22,20 @@ const schema = z.object({
   MAIL_FROM: z.string().default("SME Advisor <no-reply@localhost>"),
 
   ANTHROPIC_API_KEY: z.string().optional(),
+
+  /**
+   * Asserts where this database physically sits.
+   *
+   * PDPL attaches to personal data, not to whether you are paying, so a free
+   * tier outside the Kingdom is fine until real client data exists — and
+   * unacceptable the moment it does. The failure mode is never the migration;
+   * it is "we'll move before the first real client" becoming "someone signed
+   * up on Tuesday and nobody moved the database".
+   *
+   * Setting this to in_kingdom is a human assertion. Nothing can verify it, so
+   * it is deliberately explicit rather than inferred from a hostname.
+   */
+  DATA_RESIDENCY: z.enum(["development", "in_kingdom"]).default("development"),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -36,3 +50,29 @@ if (!parsed.success) {
 
 export const config = parsed.data;
 export const isProd = config.NODE_ENV === "production";
+
+/**
+ * A development-residency database must never hold real client data. Refusing
+ * to boot in production is the only enforcement that survives a busy week —
+ * a log line would be scrolled past, and a code comment ignored entirely.
+ */
+if (isProd && config.DATA_RESIDENCY === "development") {
+  console.error(
+    [
+      "Refusing to start: NODE_ENV=production with DATA_RESIDENCY=development.",
+      "",
+      "This database is not asserted to be in-Kingdom, and production means",
+      "real SME owners' personal and financial data. Either point DATABASE_URL",
+      "at an in-Kingdom database and set DATA_RESIDENCY=in_kingdom, or do not",
+      "run this as production.",
+    ].join("\n"),
+  );
+  process.exit(1);
+}
+
+if (config.DATA_RESIDENCY === "development") {
+  console.warn(
+    "\n  ⚠  DATA_RESIDENCY=development — synthetic data only.\n" +
+      "     Real client data requires an in-Kingdom database (D11).\n",
+  );
+}

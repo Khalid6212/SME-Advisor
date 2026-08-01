@@ -156,6 +156,39 @@ advice. Have it reviewed.
 
 ---
 
+## D11a — Free hosting until real data exists, enforced not intended
+
+**Decision.** Develop against a free non-Kingdom database (Neon, Supabase) with
+**synthetic data only**. Move to in-Kingdom hosting before the first real
+client. `DATA_RESIDENCY` asserts which side of that line a deployment is on;
+the API refuses to boot with `NODE_ENV=production` and
+`DATA_RESIDENCY=development`.
+
+**Why.** PDPL attaches to personal data, not to whether you are paying. With no
+personal data there is no exposure, no region requirement, and no DPA needed —
+so paying for in-Kingdom hosting before the first client is spending money to
+protect nothing.
+
+**Why enforced rather than intended.** The migration is a `pg_dump`; that was
+never the risk. The risk is "we'll move before the first real client" becoming
+"someone signed up on Tuesday and nobody moved the database". A refusal to boot
+is the only control that survives a busy week — a log line gets scrolled past
+and a code comment ignored.
+
+**Consequences.**
+- `DATA_RESIDENCY=in_kingdom` is a human assertion. Nothing can verify where a
+  database physically sits, so it is explicit rather than inferred.
+- `/health` returns it, so the SPA can show a synthetic-data-only banner.
+- Free in-Kingdom options exist when the line is crossed: an Oracle Cloud
+  Always Free ARM instance in Jeddah or Riyadh running Postgres in Docker.
+  Verify Always Free eligibility in those regions first — it is tied to the
+  account's home region, which cannot be changed later.
+- Backups and replicas must follow the primary in-Kingdom. A compliant primary
+  with backups replicated elsewhere defeats the purpose, and it is the detail
+  most often missed.
+
+---
+
 ## D12 — Documents enter only via a manager request
 
 **Decision.** The client portal accepts uploads, but only against a slot a

@@ -26,7 +26,9 @@ app.addHook("preHandler", loadUser);
 
 app.get("/health", async () => {
   await pool.query("SELECT 1");
-  return { ok: true };
+  // Surfaced so the SPA can show a synthetic-data-only banner. A line in a log
+  // nobody reads is not a control.
+  return { ok: true, data_residency: config.DATA_RESIDENCY };
 });
 
 await app.register(authRoutes);
