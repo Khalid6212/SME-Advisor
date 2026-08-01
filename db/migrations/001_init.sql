@@ -266,6 +266,82 @@ CREATE INDEX documents_client_idx ON documents (client_id, uploaded_at DESC);
 CREATE INDEX documents_retention_idx ON documents (delete_after)
   WHERE deleted_at IS NULL;
 
+-- ─── business plans ─────────────────────────────────────────────────────────
+
+CREATE TYPE plan_status AS ENUM ('draft', 'in_review', 'delivered');
+CREATE TYPE plan_section_status AS ENUM ('empty', 'drafted', 'edited', 'approved');
+CREATE TYPE plan_readiness AS ENUM (
+  'ready_to_review', 'needs_client_input', 'insufficient_profile'
+);
+
+CREATE TABLE plans (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id      uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  -- The profile the plan was drafted from. If the client later edits their
+  -- profile, this is how you know the plan is stale.
+  profile_id     uuid NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
+  version        integer NOT NULL,
+  template_key   text NOT NULL,
+  template_version text NOT NULL,
+  status         plan_status NOT NULL DEFAULT 'draft',
+  readiness      plan_readiness,
+  manager_note   text,
+  created_by     uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  superseded_at  timestamptz,
+  UNIQUE (client_id, version)
+);
+CREATE UNIQUE INDEX plans_current_idx
+  ON plans (client_id) WHERE superseded_at IS NULL;
+
+CREATE TABLE plan_sections (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id     uuid NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+  key         text NOT NULL,
+  position    integer NOT NULL,
+  title_en    text NOT NULL,
+  title_ar    text NOT NULL,
+  content     text NOT NULL DEFAULT '',
+  -- One entry per factual statement: {statement, source, ref}. A plan leaves
+  -- the building carrying the client's name, so an unsourced sentence is a
+  -- liability rather than a rough edge.
+  provenance  jsonb NOT NULL DEFAULT '[]'::jsonb,
+  confidence  text,
+  status      plan_section_status NOT NULL DEFAULT 'empty',
+  edited_by   uuid REFERENCES users(id) ON DELETE SET NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (plan_id, key)
+);
+CREATE INDEX plan_sections_plan_idx ON plan_sections (plan_id, position);
+
+-- Every projected figure traces to one of these, and each is rendered beside
+-- the number it produced.
+CREATE TABLE plan_assumptions (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id     uuid NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+  label       text NOT NULL,
+  value       text NOT NULL,
+  basis       text NOT NULL,
+  source      text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (plan_id, label)
+);
+
+-- Gaps become information requests to the client; request_id links them once
+-- a manager sends one.
+CREATE TABLE plan_gaps (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id      uuid NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+  section_key  text NOT NULL,
+  question     text NOT NULL,
+  why_it_matters text NOT NULL,
+  blocking     boolean NOT NULL DEFAULT false,
+  request_id   uuid REFERENCES requests(id) ON DELETE SET NULL,
+  resolved_at  timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX plan_gaps_plan_idx ON plan_gaps (plan_id, blocking DESC);
+
 -- ─── reminders ──────────────────────────────────────────────────────────────
 
 -- Managers push reminders manually. Kept as rows rather than a timestamp

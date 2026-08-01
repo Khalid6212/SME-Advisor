@@ -244,3 +244,37 @@ the UI discourage chasing the same person twice in a day.
 **Consequence.** The reminder email names the outstanding items — reading
 `node_ids` and `request_ids` — rather than saying "you have documents
 outstanding". A vague chase gets ignored.
+
+---
+
+## D17 — The planner drafts what it can ground, and flags the rest
+
+**Decision.** A business planner agent drafts a funding business plan from the
+profile. Manager-driven: the manager generates, edits, and delivers. Every
+factual statement carries provenance (profile field, owner quote, manager note,
+or recorded assumption). Anything ungroundable becomes a gap, not prose.
+
+**Why.** The profile is backward-looking; a plan is forward-looking. Strategy,
+projections, and market analysis are not in a discovery interview, and an agent
+asked to produce them anyway will invent market sizes, sector growth rates, and
+competitor figures. Those are the statistics a lender is most likely to check —
+and the document carries the client's name, so the cost of being caught lands
+on them and on the firm.
+
+A section reading "the owner has not yet provided market sizing" can be fixed
+with a phone call. A paragraph of invented figures cannot be fixed at all once
+it has been read.
+
+**Consequences.**
+- `plan_sections.provenance` is a required jsonb array, one entry per factual
+  statement.
+- Projections need a `plan_assumptions` row first; the assumption renders next
+  to the figure it produced.
+- `plan_gaps` become ordinary information requests, reusing that machinery
+  rather than opening a second conversation with the owner.
+- `plans.profile_id` pins the version drafted from, so a later profile edit
+  marks the plan stale rather than silently diverging.
+- Sections marked `draftable_from_profile: false` (strategy, projections)
+  produce questions, not prose.
+- `src/planner/default-template.ts` is a **draft** — review section order and
+  emphasis against what your lenders actually ask for.

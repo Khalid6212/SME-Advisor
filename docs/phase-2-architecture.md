@@ -263,6 +263,21 @@ POST   /clients/:id/data-room/publish  { node_ids, due_at }  → notifies client
 GET    /documents/:id            → short-lived signed URL, audited
 ```
 
+**Business plan** — manager side
+
+```
+GET    /plan-templates
+GET    /clients/:id/plan                          → current version + sections
+POST   /clients/:id/plan          { template_key } → runs the planner agent
+PATCH  /plan-sections/:id         { content, status }
+POST   /clients/:id/plan/sections/:key/redraft    → re-runs one section
+GET    /clients/:id/plan/gaps
+POST   /clients/:id/plan/gaps/:id/request         → sends the gap as a question
+GET    /clients/:id/plan/export   ?format=md|docx
+```
+
+---
+
 **Reminders** — manager side
 
 ```
