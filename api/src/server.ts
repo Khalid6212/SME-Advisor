@@ -3,6 +3,7 @@ import cookie from "@fastify/cookie";
 import { config, isProd } from "./config.ts";
 import { pool } from "./db.ts";
 import { authRoutes, loadUser } from "./auth.ts";
+import { meRoutes } from "./routes/me.ts";
 
 const app = Fastify({
   logger: isProd ? true : { transport: { target: "pino-pretty" } },
@@ -29,6 +30,7 @@ app.get("/health", async () => {
 });
 
 await app.register(authRoutes);
+await app.register(meRoutes);
 
 const close = async () => {
   await app.close();
