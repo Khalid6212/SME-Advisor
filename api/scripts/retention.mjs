@@ -45,11 +45,19 @@ for (const r of report.results) {
 }
 console.log(report.total === 0 ? "nothing to delete" : `${report.total} record(s) deleted`);
 
-if (report.storageKeys.length > 0) {
+if (report.storage.purged > 0) {
+  console.log(`  ${String(report.storage.purged).padStart(6)}  blobs purged from storage`);
+}
+
+if (report.storage.failed > 0) {
+  // Rows are kept when their blob resists deletion, so the next run retries.
+  // Losing the row would strand the file with nothing pointing at it.
   console.warn(
-    `\n  ⚠  ${report.storageKeys.length} document row(s) tombstoned, blobs NOT yet purged.` +
-      `\n     Object storage is not wired up. Until it is, these files still exist.\n`,
+    `\n  ⚠  ${report.storage.failed} blob(s) could not be deleted. Their rows were kept` +
+      `\n     so the next run retries. Investigate before reporting any erasure` +
+      `\n     request as complete.\n`,
   );
+  process.exitCode = 1;
 }
 
 await pool.end();

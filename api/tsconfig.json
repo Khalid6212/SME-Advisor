@@ -11,6 +11,10 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
+    // Node strips types rather than compiling them, so any syntax that emits
+    // code — parameter properties, enums, namespaces — fails at runtime while
+    // typechecking cleanly. This makes tsc reject it instead.
+    "erasableSyntaxOnly": true,
     "noEmit": true
   },
   "include": ["src/**/*"]

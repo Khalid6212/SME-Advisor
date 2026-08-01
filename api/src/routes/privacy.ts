@@ -175,18 +175,24 @@ export async function privacyRoutes(app: FastifyInstance): Promise<void> {
 
     const outcome = await runErasure(request.user_id);
 
+    // Files that resisted deletion mean the request is not discharged. Marking
+    // it completed would tell the subject their data is gone when it is not,
+    // so it stays in progress until a retry clears them.
+    const complete = outcome.storage.failed === 0;
+
     await query(
       `UPDATE data_subject_requests
-          SET status = 'completed', completed_at = now(), handled_by = $2, outcome = $3
+          SET status = $4,
+              completed_at = CASE WHEN $4 = 'completed' THEN now() ELSE NULL END,
+              handled_by = $2,
+              outcome = $3
         WHERE id = $1`,
-      [id, user.id, JSON.stringify(outcome)],
+      [id, user.id, JSON.stringify(outcome), complete ? "completed" : "in_progress"],
     );
 
     return {
       ...outcome,
-      // Surfaced, not buried: until object storage purges these, the files
-      // still exist and the request is not fully discharged.
-      storage_purge_pending: outcome.storageKeys.length,
+      complete,
       residency: config.DATA_RESIDENCY,
     };
   });

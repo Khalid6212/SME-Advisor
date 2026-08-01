@@ -5,6 +5,7 @@ import { pool } from "./db.ts";
 import { authRoutes, loadUser } from "./auth.ts";
 import { meRoutes } from "./routes/me.ts";
 import { privacyRoutes } from "./routes/privacy.ts";
+import { managerRoutes } from "./routes/manager.ts";
 import { assertPolicyCoverage } from "./privacy/policy.ts";
 
 // Fail at boot, not at the first erasure request: a data category with no
@@ -40,6 +41,7 @@ app.get("/health", async () => {
 await app.register(authRoutes);
 await app.register(meRoutes);
 await app.register(privacyRoutes);
+await app.register(managerRoutes);
 
 const close = async () => {
   await app.close();

@@ -19,3 +19,6 @@ Thumbs.db
 # Never commit client data
 /data/
 *.client.json
+
+# local object storage driver
+api/.storage/

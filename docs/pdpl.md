@@ -88,17 +88,25 @@ top.
 - **Versioned notice** at `GET /privacy/notice`, with the exact text stored on
   each consent record.
 
+- **Object storage with real purge.** Retention and erasure delete the blob
+  first, then the row — and only rows whose blob is confirmed gone. A blob that
+  resists deletion keeps its row so the next run retries; deleting the row first
+  would strand the file with nothing pointing at it. An erasure request with
+  failed blob deletions stays `in_progress` rather than being reported complete.
+- **Engagement closure** — `POST /clients/:id/close` sets `closed_at`, which is
+  what starts every retention clock. The response states the dates on which each
+  category begins to be deleted, so closing an engagement is a visible decision
+  about deletion rather than an invisible side effect of a status change.
+
 ## Outstanding — engineering
 
-- [ ] **Object storage purge.** Retention and erasure tombstone `documents`
-      rows and return their storage keys, but nothing deletes the blobs — the
-      storage layer does not exist yet. **Until it does, a completed erasure
-      request has not actually deleted the files.** Both the job and the API
-      response report the pending count rather than hiding it.
-- [ ] **Account closure** — `clients.closed_at` starts most retention clocks
-      and nothing sets it yet, so nothing currently expires in practice.
 - [ ] **Consent capture in the UI** at first sign-in and at each upload. The
       endpoint exists; nothing calls it.
+- [ ] **Data room upload endpoints.** Storage works; nothing writes to it yet,
+      so purge is correct but untested against real objects.
+- [ ] **Bucket-level encryption and key custody.** Objects are written with
+      `ServerSideEncryption: AES256`, but the bucket policy and key
+      arrangement are not yet configured or documented.
 - [ ] **Correction requests** are recorded but handled manually; profile
       editing already exists, so this is mostly workflow.
 - [ ] **Encryption at rest** for object storage, and a documented key

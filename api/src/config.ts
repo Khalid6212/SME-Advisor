@@ -24,6 +24,19 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
 
   /**
+   * S3-compatible object storage. Works against Supabase Storage, R2, MinIO,
+   * or an in-Kingdom bucket — the driver does not care. Unset in development
+   * falls back to the local filesystem; production refuses to start without it.
+   */
+  S3_BUCKET: z.string().optional(),
+  S3_REGION: z.string().default("auto"),
+  S3_ENDPOINT: z.string().optional(),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  /** Required by MinIO, Supabase, and most non-AWS implementations. */
+  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+
+  /**
    * Asserts where this database physically sits.
    *
    * PDPL attaches to personal data, not to whether you are paying, so a free
