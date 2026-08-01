@@ -75,8 +75,12 @@ CREATE TABLE clients (
   status               client_status NOT NULL DEFAULT 'interviewing',
   assigned_manager_id  uuid REFERENCES users(id) ON DELETE SET NULL,
   created_at           timestamptz NOT NULL DEFAULT now(),
-  updated_at           timestamptz NOT NULL DEFAULT now()
+  updated_at           timestamptz NOT NULL DEFAULT now(),
+  -- Retention for most records runs from the end of the engagement, not from
+  -- creation, so that clock needs somewhere to start.
+  closed_at            timestamptz
 );
+CREATE INDEX clients_closed_idx ON clients (closed_at) WHERE closed_at IS NOT NULL;
 CREATE INDEX clients_owner_idx ON clients (owner_user_id);
 CREATE INDEX clients_status_idx ON clients (status, updated_at DESC);
 

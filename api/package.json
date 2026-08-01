@@ -7,6 +7,7 @@
     "dev": "node --env-file-if-exists=.env --watch src/server.ts",
     "start": "node --env-file-if-exists=.env src/server.ts",
     "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "retention": "node --env-file-if-exists=.env scripts/retention.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

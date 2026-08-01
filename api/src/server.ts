@@ -4,6 +4,12 @@ import { config, isProd } from "./config.ts";
 import { pool } from "./db.ts";
 import { authRoutes, loadUser } from "./auth.ts";
 import { meRoutes } from "./routes/me.ts";
+import { privacyRoutes } from "./routes/privacy.ts";
+import { assertPolicyCoverage } from "./privacy/policy.ts";
+
+// Fail at boot, not at the first erasure request: a data category with no
+// retention or erasure rule is a gap between the published notice and the code.
+assertPolicyCoverage();
 
 const app = Fastify({
   logger: isProd ? true : { transport: { target: "pino-pretty" } },
@@ -33,6 +39,7 @@ app.get("/health", async () => {
 
 await app.register(authRoutes);
 await app.register(meRoutes);
+await app.register(privacyRoutes);
 
 const close = async () => {
   await app.close();

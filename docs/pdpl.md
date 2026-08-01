@@ -77,20 +77,34 @@ top.
 - **DSR tracking** — `data_subject_requests` records each request with a
   deadline, because response periods are enforceable.
 
+- **Retention job** — `npm run retention`, or `-- --dry` to report without
+  applying. One transaction; a half-applied sweep would leave the system in a
+  state no schedule describes. Schedule it daily.
+- **DSR endpoints** — self-service export, request intake with a 30-day clock,
+  manager-executed erasure.
+- **Policy coverage is asserted at boot.** Every inventory entry must have a
+  retention and erasure rule; the API refuses to start otherwise. Adding a data
+  category without deciding how it expires cannot pass silently.
+- **Versioned notice** at `GET /privacy/notice`, with the exact text stored on
+  each consent record.
+
 ## Outstanding — engineering
 
-- [ ] **Retention job.** Fields exist; nothing deletes yet. A retention policy
-      that never runs is worse than none, because you have documented an
-      obligation you are not meeting.
-- [ ] **DSR endpoints** — export, correction, erasure — driven by
-      `erasurePlan()`.
-- [ ] **Consent capture in the UI** at first sign-in and at each upload.
+- [ ] **Object storage purge.** Retention and erasure tombstone `documents`
+      rows and return their storage keys, but nothing deletes the blobs — the
+      storage layer does not exist yet. **Until it does, a completed erasure
+      request has not actually deleted the files.** Both the job and the API
+      response report the pending count rather than hiding it.
+- [ ] **Account closure** — `clients.closed_at` starts most retention clocks
+      and nothing sets it yet, so nothing currently expires in practice.
+- [ ] **Consent capture in the UI** at first sign-in and at each upload. The
+      endpoint exists; nothing calls it.
+- [ ] **Correction requests** are recorded but handled manually; profile
+      editing already exists, so this is mostly workflow.
 - [ ] **Encryption at rest** for object storage, and a documented key
       arrangement.
 - [ ] **Breach detection.** The audit log makes investigation possible; nothing
-      currently alerts.
-- [ ] Serve the generated notice, versioned, and record which version each
-      consent refers to.
+      alerts.
 
 ## Outstanding — yours
 
