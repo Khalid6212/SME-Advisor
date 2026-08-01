@@ -69,10 +69,19 @@ claims           id, profile_id, claim_key, field_path, stated_value,
                  precision, owner_quote, materiality, verifiable_by text[],
                  verification_status, invalidated_at
 
-requests         id, client_id, kind, body, claim_keys text[], status,
-                 created_by, created_at, due_at, fulfilled_at
-documents        id, request_id, client_id, storage_key, filename,
-                 mime_type, size_bytes, uploaded_at, deleted_at
+requests         id, client_id, body, claim_keys text[], status,
+                 created_by, reply_body, created_at, due_at, fulfilled_at
+
+data_room_templates  id, key, version, name_en, name_ar, body jsonb, is_default
+data_rooms           id, client_id, template_key, template_version, status,
+                     created_at, published_at
+data_room_nodes      id, data_room_id, parent_id, kind, position, path,
+                     title_en, title_ar, description_en, description_ar,
+                     required, status, document_type, claim_keys text[],
+                     reviewer_note, due_at, requested_at, fulfilled_at
+documents            id, node_id, client_id, storage_key, filename, mime_type,
+                     size_bytes, version, consent_text, uploaded_at,
+                     superseded_at, delete_after, deleted_at
 
 audit_events     id, actor_user_id, client_id, action, payload jsonb, created_at
 ```
@@ -83,40 +92,59 @@ the moment a conversation is replayed.
 
 ---
 
-## The request lifecycle
+## The data room
 
-The one new domain object. It is the bridge between the two portals.
+Documents do not arrive as a flat list of requests — they arrive into a
+structured room the manager defines and the client fills. That is how a lending
+file actually works, and it gives both sides a shared index to talk about
+("section 2.3 is still outstanding") rather than a scroll of attachments.
+
+**Structure.** A tree of folders and items. Folders organise; items are the
+slots that hold documents. Both live in one table keyed by `kind`, so nesting
+is arbitrary and a manager can restructure without a migration. Nodes carry a
+dotted `path` ("2.3.1") — the number shown in the UI, recomputed on reorder.
+
+**Templates.** Managers work from a reusable template and customise per client.
+Nobody should rebuild a lending file structure per deal. Templates are stored
+as a `jsonb` tree because they are edited as one document; only an instantiated
+room materialises per-node rows, since that is where status, uploads, and audit
+attach. `src/dataroom/default-template.ts` ships a draft SME lending structure —
+Corporate, Financial, Compliance, Commercial, Operations, Funding request.
+
+**Lifecycle.**
 
 ```
-Manager reviews profile
+Manager instantiates a template  ──▶  data_room.status = 'draft'
+      │
+      │   customises: add, rename, reorder, mark required
+      │   suggested items from minimumDocumentSet(claims), each carrying
+      │   the owner's own quote as its reason
+      ▼
+Publishes  ──▶  chosen items move not_requested → requested
+      │         data_room.status = 'published', client notified
+      ▼
+Client uploads into requested items only
       │
       ▼
-minimumDocumentSet(claims)  ──▶ suggested requests, each carrying the
-      │                         owner's own quote as its reason
-      ▼
-Manager edits and sends  ──▶  request.status = 'open'
-      │
-      ▼
-Client sees it in their portal, answers or uploads
-      │
-      ▼
-request.status = 'fulfilled'  ──▶  manager notified
+uploaded ──▶ under_review ──▶ accepted | rejected (with reviewer_note)
 ```
 
-Two kinds:
+`not_requested` is doing real work: a manager can lay out the full structure
+while asking for only part of it, so the client sees a short list rather than a
+wall of eighteen items. Ask for what unblocks the next decision.
 
-- `information` — a question. The client answers in text.
-- `document` — a file. The client uploads.
+**Why items carry `claim_keys`.** The client sees why each item was asked for,
+in their own words — "you mentioned around 480,000 a month; this confirms it".
+That reads very differently from a bare checklist, and it is the same mechanism
+a verification agent would later drive.
 
-`claim_keys` links a request back to the claims that motivated it, so the
-manager sees "this document would settle these three statements" rather than a
-detached checklist. This is where `claims.ts` earns its keep.
+**Information requests stay separate.** A question is not a document slot. The
+`requests` table keeps questions; the data room keeps files.
 
-**Requests are the only route by which documents enter the system.** The
-interview agent still asks for nothing (D1). A manager asking for bank
-statements after reading a profile is the verification stage, human-driven for
-now, and the same `Request` rows are what a verification agent would later
-consume.
+**The interview agent still asks for nothing** (D1). Everything here is the
+verification stage, human-driven for now — which is why certificates and
+contracts appear in the default template even though the interview never
+mentions them.
 
 ---
 
@@ -138,16 +166,18 @@ changed.
 
 ## Document handling
 
-Documents exist only because a manager asked for them, and the handling
-standard is correspondingly high.
+A data room concentrates a business's entire document set in one place, which
+makes it both more useful and a higher-value target than scattered attachments.
 
 - Encrypted at rest; bucket private, no public URLs ever
 - Downloads go through the API against a short-lived signed URL, never a
   direct bucket link
 - Access scoped to the assigned reviewer, not to all managers
-- Explicit consent captured at upload, recording who will see the file
+- Explicit consent captured per upload, recording who will see the file
+- Re-uploads version rather than overwrite (`version`, `superseded_at`), so a
+  rejected-then-replaced document keeps its history
 - Stated retention period with actual deletion, `deleted_at` for tombstones
-- Every read and download written to `audit_events`
+- Every view and download written to `audit_events`
 
 Assessment must still complete without any documents. `statement_quality` is
 self-reported and already carries the signal.
@@ -178,7 +208,11 @@ GET    /me/profile
 PATCH  /me/profile               { patch }        → new version, invalidates claims
 GET    /me/requests
 POST   /me/requests/:id/reply    { body }
-POST   /me/requests/:id/documents  multipart
+
+GET    /me/data-room                              → published tree, requested
+                                                    items only, with progress
+POST   /me/data-room/nodes/:id/documents  multipart  { consent }
+DELETE /me/data-room/documents/:id                → only before under_review
 ```
 
 **Manager portal** — role-gated
@@ -189,12 +223,26 @@ GET    /clients/:id
 GET    /clients/:id/profile      ?version
 PATCH  /clients/:id/profile
 GET    /clients/:id/claims
-GET    /clients/:id/suggested-requests    → minimumDocumentSet output
-POST   /clients/:id/requests     { kind, body, claim_keys }
+POST   /clients/:id/requests     { body, claim_keys }   → information only
 GET    /clients/:id/transcript
-POST   /clients/:id/review/turn  { message }      → review agent
-GET    /documents/:id            → signed URL, audited
+POST   /clients/:id/review/turn  { message }            → review agent
 GET    /clients/:id/export       ?format=json|md
+```
+
+**Data room** — manager side
+
+```
+GET    /data-room-templates
+POST   /data-room-templates      { key, name, body }
+GET    /clients/:id/data-room                     → full tree, all statuses
+POST   /clients/:id/data-room    { template_key } → instantiate
+GET    /clients/:id/data-room/suggested           → minimumDocumentSet mapped
+                                                    to items, with quotes
+POST   /clients/:id/data-room/nodes  { parent_id, kind, title, required, … }
+PATCH  /data-room/nodes/:id      { title, position, required, status, note }
+DELETE /data-room/nodes/:id
+POST   /clients/:id/data-room/publish  { node_ids, due_at }  → notifies client
+GET    /documents/:id            → short-lived signed URL, audited
 ```
 
 ---

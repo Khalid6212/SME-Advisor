@@ -158,17 +158,17 @@ advice. Have it reviewed.
 
 ## D12 — Documents enter only via a manager request
 
-**Decision.** The client portal accepts uploads, but only against an open
-`Request` created by a manager. There is no general "upload your documents" box.
+**Decision.** The client portal accepts uploads, but only against a slot a
+manager has explicitly requested. There is no general "upload your documents"
+box.
 
 **Why.** Preserves D1 — the interview agent still asks for nothing. A manager
 requesting bank statements after reading a profile *is* the verification stage,
-human-driven for now. Scoping uploads to requests also keeps collection minimal
-and gives every file a recorded reason.
+human-driven for now. Scoping uploads keeps collection minimal and gives every
+file a recorded reason.
 
-**Consequences.** `Request` becomes the interface a verification agent will
-later consume, unchanged. `minimumDocumentSet()` already generates the
-suggestions a manager sends.
+**Superseded in mechanism by D14** — the slot is a data room item rather than a
+flat request row. The principle is unchanged.
 
 ---
 
@@ -181,3 +181,34 @@ notified.
 **Why.** Silent edits under a reviewed profile are worse than disallowing edits
 — a manager could otherwise prepare lender documents against figures the owner
 has since changed.
+
+---
+
+## D14 — Documents live in a manager-defined data room, not a request list
+
+**Decision.** Replace flat document requests with a structured data room: a
+tree of folders and items that the manager defines from a reusable template and
+customises per client, and that the client uploads into. Information requests
+(questions) stay separate.
+
+**Why.** A flat list does not survive contact with a real lending file. A room
+gives both sides a shared index to talk about — "section 2.3 is outstanding" —
+and gives the client a completeness view instead of a scroll of attachments.
+Templates matter as much as structure: nobody should rebuild a lending file
+layout per deal.
+
+**Consequences.**
+- Folders and items share one table keyed by `kind`, so nesting is arbitrary
+  and restructuring needs no migration.
+- Templates are stored as a `jsonb` tree (edited as one document); only an
+  instantiated room materialises per-node rows, since that is where status,
+  uploads, and audit attach.
+- `not_requested` lets a manager lay out the full structure while asking for
+  only part of it — the client sees a short list, not eighteen items.
+- Items carry `claim_keys`, so the client sees why each was asked for in their
+  own words. Same mechanism a verification agent would later drive.
+- Documents version on re-upload rather than overwrite, so a
+  rejected-then-replaced file keeps its history.
+- `src/dataroom/default-template.ts` is a **draft**. Have someone who submits
+  these files weekly review the document names and issuing authorities before
+  it reaches clients.

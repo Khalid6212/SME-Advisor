@@ -135,15 +135,15 @@ CREATE TABLE claims (
 );
 CREATE INDEX claims_profile_idx ON claims (profile_id, materiality);
 
--- ─── requests and documents ─────────────────────────────────────────────────
+-- ─── information requests ───────────────────────────────────────────────────
 
-CREATE TYPE request_kind AS ENUM ('information', 'document');
+-- Questions only. Documents live in the data room below — a flat request list
+-- does not survive contact with a real lending file (decisions.md D14).
 CREATE TYPE request_status AS ENUM ('open', 'fulfilled', 'withdrawn', 'expired');
 
 CREATE TABLE requests (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id     uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-  kind          request_kind NOT NULL,
   body          text NOT NULL,
   claim_keys    text[] NOT NULL DEFAULT '{}',
   status        request_status NOT NULL DEFAULT 'open',
@@ -155,20 +155,100 @@ CREATE TABLE requests (
 );
 CREATE INDEX requests_client_idx ON requests (client_id, status, created_at DESC);
 
+-- ─── data room ──────────────────────────────────────────────────────────────
+
+-- Templates are stored as a jsonb tree because they are edited as a whole
+-- document. Only an instantiated room needs per-node rows, since that is where
+-- status, uploads, and audit attach.
+CREATE TABLE data_room_templates (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  key         text NOT NULL,
+  version     text NOT NULL,
+  name_en     text NOT NULL,
+  name_ar     text NOT NULL,
+  description text NOT NULL DEFAULT '',
+  body        jsonb NOT NULL,
+  is_default  boolean NOT NULL DEFAULT false,
+  created_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  archived_at timestamptz,
+  UNIQUE (key, version)
+);
+CREATE UNIQUE INDEX data_room_templates_default_idx
+  ON data_room_templates ((true)) WHERE is_default AND archived_at IS NULL;
+
+CREATE TYPE data_room_status AS ENUM ('draft', 'published', 'closed');
+
+CREATE TABLE data_rooms (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id         uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  template_key      text,
+  template_version  text,
+  status            data_room_status NOT NULL DEFAULT 'draft',
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  published_at      timestamptz,
+  UNIQUE (client_id)
+);
+
+CREATE TYPE node_kind AS ENUM ('folder', 'item');
+CREATE TYPE item_status AS ENUM (
+  'not_requested', 'requested', 'uploaded',
+  'under_review', 'accepted', 'rejected'
+);
+
+-- Folders and items share a table. Arbitrary nesting stays simple, and a
+-- manager can restructure without a migration.
+--
+-- `path` is the displayed dotted number ("2.3.1"), recomputed on reorder.
+-- `position` is the sort key within a parent; `path` is derived from it.
+CREATE TABLE data_room_nodes (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  data_room_id    uuid NOT NULL REFERENCES data_rooms(id) ON DELETE CASCADE,
+  parent_id       uuid REFERENCES data_room_nodes(id) ON DELETE CASCADE,
+  kind            node_kind NOT NULL,
+  position        integer NOT NULL,
+  path            text NOT NULL,
+  title_en        text NOT NULL,
+  title_ar        text NOT NULL,
+  description_en  text,
+  description_ar  text,
+  required        boolean NOT NULL DEFAULT true,
+  status          item_status NOT NULL DEFAULT 'not_requested',
+  document_type   text,
+  -- Why this item was asked for. Lets the client see the owner's own words
+  -- back: "you mentioned around 480,000 a month — this confirms it."
+  claim_keys      text[] NOT NULL DEFAULT '{}',
+  reviewer_note   text,
+  due_at          timestamptz,
+  requested_at    timestamptz,
+  fulfilled_at    timestamptz,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX data_room_nodes_room_idx ON data_room_nodes (data_room_id, path);
+CREATE INDEX data_room_nodes_parent_idx ON data_room_nodes (parent_id, position);
+CREATE INDEX data_room_nodes_open_idx ON data_room_nodes (data_room_id, status)
+  WHERE kind = 'item';
+
+-- Documents attach to an item, never to a room directly. One item can hold
+-- several files (twelve monthly statements) and several versions of each.
 CREATE TABLE documents (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  request_id   uuid REFERENCES requests(id) ON DELETE SET NULL,
+  node_id      uuid NOT NULL REFERENCES data_room_nodes(id) ON DELETE CASCADE,
   client_id    uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
   storage_key  text NOT NULL UNIQUE,
   filename     text NOT NULL,
   mime_type    text NOT NULL,
   size_bytes   bigint NOT NULL,
+  version      integer NOT NULL DEFAULT 1,
   uploaded_by  uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   consent_text text NOT NULL,
   uploaded_at  timestamptz NOT NULL DEFAULT now(),
+  superseded_at timestamptz,
   delete_after timestamptz,
   deleted_at   timestamptz
 );
+CREATE INDEX documents_node_idx ON documents (node_id, version DESC);
 CREATE INDEX documents_client_idx ON documents (client_id, uploaded_at DESC);
 CREATE INDEX documents_retention_idx ON documents (delete_after)
   WHERE deleted_at IS NULL;
