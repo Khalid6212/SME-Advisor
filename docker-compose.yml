@@ -1,0 +1,27 @@
+# Local development only.
+#
+# Production runs in-Kingdom against managed Postgres and an S3-compatible
+# bucket (D11). This file exists so a developer can get a database in one
+# command, not as a deployment artifact — note the trivial password and the
+# exposed port.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: sme-advisor-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sme_advisor
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sme_advisor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

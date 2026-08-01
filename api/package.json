@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/server.ts",
-    "start": "node src/server.ts",
-    "migrate": "node scripts/migrate.mjs",
+    "dev": "node --env-file-if-exists=.env --watch src/server.ts",
+    "start": "node --env-file-if-exists=.env src/server.ts",
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

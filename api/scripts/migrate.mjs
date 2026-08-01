@@ -21,6 +21,28 @@ if (!url) {
 
 const pool = new pg.Pool({ connectionString: url });
 
+// A raw ECONNREFUSED stack is the least useful thing to show someone whose
+// database simply is not running yet.
+try {
+  await pool.query("SELECT 1");
+} catch (err) {
+  if (err.code === "ECONNREFUSED" || err.errors?.[0]?.code === "ECONNREFUSED") {
+    console.error(
+      [
+        "Cannot reach the database.",
+        "",
+        `  DATABASE_URL = ${url.replace(/:[^:@]*@/, ":****@")}`,
+        "",
+        "Start it with `docker compose up -d` from the repo root, or check",
+        "docs/local-setup.md if you are not using Docker.",
+      ].join("\n"),
+    );
+    process.exit(1);
+  }
+  console.error(`Database connection failed: ${err.message}`);
+  process.exit(1);
+}
+
 await pool.query(`
   CREATE TABLE IF NOT EXISTS schema_migrations (
     filename    text PRIMARY KEY,
