@@ -189,6 +189,39 @@ and a code comment ignored.
 
 ---
 
+## D11b — One inventory drives the notice, retention, and erasure
+
+**Decision.** `src/privacy/inventory.ts` is the single register of what the
+system holds. The privacy notice is generated from it, and the retention job
+and erasure logic read from it. Nobody hand-maintains a notice.
+
+**Why.** A privacy notice maintained separately from the code describes the
+system as it was the day someone last edited it. Adding a field is a code
+change; if the notice does not change with it, the drift is discovered by a
+regulator rather than by you. Deriving all three from one register makes
+divergence structurally impossible rather than a matter of discipline.
+
+**Consequences.**
+- Editing the notice means editing the inventory and regenerating.
+- Lawful bases and retention periods in the inventory are **drafts** needing
+  review. The 84-month figures are placeholders.
+- `consents` stores the exact notice text and version shown, because a boolean
+  cannot evidence what someone was actually shown.
+- `data_subject_requests` records each request with a deadline and a per-record
+  outcome — some data is retained on its own basis, and the subject has to be
+  told specifically what and why.
+
+**The unresolved item is the model API.** Every interview turn sends business
+and personal data to Anthropic — a processor relationship and a cross-border
+transfer. Hosting in Dammam while streaming the same content abroad does not
+achieve what in-Kingdom hosting is for. Needs a DPA, a zero-retention decision,
+and a confirmed transfer basis. If the transfer proves unacceptable, the
+architectural answer is to send less: generate documents from the structured
+profile rather than raw transcripts. Decide before building further on top.
+See `docs/pdpl.md`.
+
+---
+
 ## D12 — Documents enter only via a manager request
 
 **Decision.** The client portal accepts uploads, but only against a slot a

@@ -342,6 +342,48 @@ CREATE TABLE plan_gaps (
 );
 CREATE INDEX plan_gaps_plan_idx ON plan_gaps (plan_id, blocking DESC);
 
+-- ─── privacy ────────────────────────────────────────────────────────────────
+
+-- Consent is a record, not a boolean. What was agreed, to what text, when, and
+-- from where — a boolean cannot evidence consent to a regulator, and cannot
+-- show what the person was actually shown.
+CREATE TABLE consents (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id     uuid REFERENCES clients(id) ON DELETE CASCADE,
+  purpose       text NOT NULL,
+  -- The exact wording shown, stored verbatim. Notice text changes over time.
+  notice_text   text NOT NULL,
+  notice_version text NOT NULL,
+  granted_at    timestamptz NOT NULL DEFAULT now(),
+  withdrawn_at  timestamptz,
+  ip_address    inet,
+  user_agent    text
+);
+CREATE INDEX consents_user_idx ON consents (user_id, purpose, granted_at DESC);
+
+CREATE TYPE dsr_kind AS ENUM ('access', 'correction', 'erasure', 'withdraw_consent');
+CREATE TYPE dsr_status AS ENUM ('received', 'in_progress', 'completed', 'refused');
+
+-- Data subject requests. Tracked as records because PDPL response deadlines
+-- are enforceable and "we think we handled it" is not evidence.
+CREATE TABLE data_subject_requests (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind          dsr_kind NOT NULL,
+  status        dsr_status NOT NULL DEFAULT 'received',
+  detail        text,
+  -- What was actually done, per inventory location. Some records are retained
+  -- on their own basis and the subject must be told which and why.
+  outcome       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  received_at   timestamptz NOT NULL DEFAULT now(),
+  due_at        timestamptz NOT NULL,
+  completed_at  timestamptz,
+  handled_by    uuid REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX dsr_open_idx ON data_subject_requests (due_at)
+  WHERE status IN ('received', 'in_progress');
+
 -- ─── learning loop ──────────────────────────────────────────────────────────
 
 -- Every manager edit to generated text. Raw material for rule distillation,
