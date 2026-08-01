@@ -212,3 +212,35 @@ layout per deal.
 - `src/dataroom/default-template.ts` is a **draft**. Have someone who submits
   these files weekly review the document names and issuing authorities before
   it reaches clients.
+
+---
+
+## D15 — Groups share a contact, not a profile
+
+**Decision.** A contact may run several sister businesses. One user owns
+several `clients` rows joined by `group_id`; each business keeps its own
+profile and data room. No consolidated group profile.
+
+**Why.** We deal with a single counterparty for a group, so the relationship is
+one login. But readiness is a property of a business, not a family of
+businesses — a strong trading company and a weak contracting affiliate should
+not average into one tier.
+
+**Deliberately unanswered.** Whether a group ever needs a consolidated profile
+depends on whether you underwrite at group level. Building it speculatively
+would complicate every query, so it waits until a real case demands it.
+
+---
+
+## D16 — Reminders are rows, not a timestamp
+
+**Decision.** Managers push reminders manually. Each is a row recording target,
+the specific outstanding items, sender, and time.
+
+**Why.** "We chased three times over two weeks" is the thing you actually want
+to know, and a `last_reminded_at` column cannot tell you that. Rows also let
+the UI discourage chasing the same person twice in a day.
+
+**Consequence.** The reminder email names the outstanding items — reading
+`node_ids` and `request_ids` — rather than saying "you have documents
+outstanding". A vague chase gets ignored.

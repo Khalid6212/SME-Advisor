@@ -53,9 +53,22 @@ CREATE TYPE client_status AS ENUM (
   'awaiting_client', 'documents_ready', 'delivered', 'abandoned'
 );
 
+-- A group of sister businesses under one relationship. We deal with a single
+-- counterparty for the group, so the contact is one user; each business still
+-- gets its own profile and data room.
+CREATE TABLE client_groups (
+  id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                     text NOT NULL,
+  primary_contact_user_id  uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at               timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX client_groups_contact_idx ON client_groups (primary_contact_user_id);
+
 CREATE TABLE clients (
   id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_user_id        uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  -- Null for the common case: one business, no group.
+  group_id             uuid REFERENCES client_groups(id) ON DELETE SET NULL,
   name                 text NOT NULL,
   sector_id            text NOT NULL DEFAULT 'general',
   sector_pack_version  text NOT NULL DEFAULT '1.0.0',
@@ -252,6 +265,28 @@ CREATE INDEX documents_node_idx ON documents (node_id, version DESC);
 CREATE INDEX documents_client_idx ON documents (client_id, uploaded_at DESC);
 CREATE INDEX documents_retention_idx ON documents (delete_after)
   WHERE deleted_at IS NULL;
+
+-- ─── reminders ──────────────────────────────────────────────────────────────
+
+-- Managers push reminders manually. Kept as rows rather than a timestamp
+-- column so the history survives — "we chased three times" is the thing you
+-- actually want to know, and it lets the UI rate-limit chasing.
+CREATE TYPE reminder_target AS ENUM ('interview', 'data_room', 'request');
+
+CREATE TABLE reminders (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id    uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  target       reminder_target NOT NULL,
+  -- Which outstanding items this reminder was about, so the email can name
+  -- them rather than saying "you have documents outstanding".
+  node_ids     uuid[] NOT NULL DEFAULT '{}',
+  request_ids  uuid[] NOT NULL DEFAULT '{}',
+  message      text,
+  channel      text NOT NULL DEFAULT 'email',
+  sent_by      uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  sent_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX reminders_client_idx ON reminders (client_id, sent_at DESC);
 
 -- ─── audit ──────────────────────────────────────────────────────────────────
 

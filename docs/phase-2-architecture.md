@@ -46,6 +46,21 @@ Role lives on `users.role`. Every client-scoped query filters on
 `clients.owner_user_id` for clients and passes unfiltered for managers —
 enforced in the data layer, never in the UI.
 
+**Groups.** A contact may run several sister businesses. We deal with one
+counterparty for the group, so one user owns several `clients` rows joined by
+`group_id`. Each business keeps its own profile and data room; the client
+portal shows a switcher when the user owns more than one, and the manager sees
+group affiliation on the pipeline.
+
+Whether a group ever needs a single consolidated profile is deliberately
+unanswered — it only matters if you underwrite at group level, and building it
+speculatively would complicate every query.
+
+**Document access is scoped to `assigned_manager_id`**, not to all managers.
+Two consequences to handle rather than discover: reassignment must be a
+first-class action, and `admin` must be able to read with an audit entry —
+otherwise a reviewer on leave blocks a live deal.
+
 ---
 
 ## Data model
@@ -57,8 +72,9 @@ users            id, email, role, created_at, last_seen_at
 magic_links      id, user_id, token_hash, expires_at, consumed_at
 auth_sessions    id, user_id, expires_at, revoked_at
 
-clients          id, owner_user_id, name, sector_id, sector_pack_version,
-                 status, created_at
+client_groups    id, name, primary_contact_user_id, created_at
+clients          id, owner_user_id, group_id, name, sector_id,
+                 sector_pack_version, status, assigned_manager_id, created_at
 interviews       id, client_id, status, started_at, completed_at
 interview_messages  id, interview_id, role, content jsonb, created_at
 section_saves    id, interview_id, section_id, complete, data jsonb, gaps jsonb
@@ -83,6 +99,8 @@ documents            id, node_id, client_id, storage_key, filename, mime_type,
                      size_bytes, version, consent_text, uploaded_at,
                      superseded_at, delete_after, deleted_at
 
+reminders        id, client_id, target, node_ids[], request_ids[], message,
+                 channel, sent_by, sent_at
 audit_events     id, actor_user_id, client_id, action, payload jsonb, created_at
 ```
 
@@ -197,11 +215,11 @@ POST   /auth/logout
 GET    /auth/me                                   → { id, email, role }
 ```
 
-**Client portal** — all scoped to the caller's own client
+**Client portal** — all scoped to the caller's own clients
 
 ```
-GET    /me/client
-POST   /me/client                { name, brief }  → creates client + interview
+GET    /me/clients                                → switcher; usually one
+POST   /me/clients               { name, brief }  → creates client + interview
 GET    /me/interview
 POST   /me/interview/turn        { message }      → runs the agent loop
 GET    /me/profile
@@ -244,6 +262,18 @@ DELETE /data-room/nodes/:id
 POST   /clients/:id/data-room/publish  { node_ids, due_at }  → notifies client
 GET    /documents/:id            → short-lived signed URL, audited
 ```
+
+**Reminders** — manager side
+
+```
+GET    /clients/:id/reminders                     → history, "chased 3 times"
+POST   /clients/:id/reminders    { target, node_ids, request_ids, message }
+```
+
+Reminders are pushed manually and recorded as rows, not a `last_reminded_at`
+column — the history is the useful part, and it lets the UI discourage chasing
+someone twice in a day. The email names the outstanding items rather than
+saying "you have documents outstanding".
 
 ---
 
