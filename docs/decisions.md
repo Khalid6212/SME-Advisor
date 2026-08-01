@@ -132,3 +132,52 @@ With it, the minimum document set is computable — the union of `verifiable_by`
 across high-materiality claims, which for most clients resolves to two or three
 documents rather than twelve. The request then carries a reason, which converts
 better than a generic checklist.
+
+---
+
+## D11 — Vite SPA + separate API, in-Kingdom, magic-link auth
+
+**Decision.** Static React SPA, separate Fastify API, Postgres and object
+storage hosted in Saudi Arabia. SME owners sign in by email magic link.
+
+**Why.** Hosting personal and financial data of Saudi SMEs in-Kingdom is the
+conservative reading of PDPL and reassures clients. A separate API makes that
+straightforward — the SPA is static and can be served from anywhere, while data
+and compute stay in-region. Magic links avoid an SMS dependency.
+
+**Consequences.** Deliverability to business domains is the practical risk on
+magic links: send from an owned domain with SPF and DKIM, keep links
+short-lived, provide an obvious resend path, and expect to need a support route
+for owners whose IT blocks the mail. Everything ships as Docker against standard
+Postgres and an S3-compatible bucket, so the region stays a deployment decision.
+
+**Confirm before real client data lands.** The PDPL reading above is ours, not
+advice. Have it reviewed.
+
+---
+
+## D12 — Documents enter only via a manager request
+
+**Decision.** The client portal accepts uploads, but only against an open
+`Request` created by a manager. There is no general "upload your documents" box.
+
+**Why.** Preserves D1 — the interview agent still asks for nothing. A manager
+requesting bank statements after reading a profile *is* the verification stage,
+human-driven for now. Scoping uploads to requests also keeps collection minimal
+and gives every file a recorded reason.
+
+**Consequences.** `Request` becomes the interface a verification agent will
+later consume, unchanged. `minimumDocumentSet()` already generates the
+suggestions a manager sends.
+
+---
+
+## D13 — Profile edits invalidate dependent claims
+
+**Decision.** A client editing their profile after review writes a new profile
+version; claims under edited fields return to `unverified` and the manager is
+notified.
+
+**Why.** Silent edits under a reviewed profile are worse than disallowing edits
+— a manager could otherwise prepare lender documents against figures the owner
+has since changed.
