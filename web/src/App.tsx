@@ -3,6 +3,7 @@ import { api, type ClientRow, type User } from "./api";
 import { Login } from "./screens/Login";
 import { Interview } from "./screens/Interview";
 import { DataRoom } from "./screens/DataRoom";
+import { Plan } from "./screens/Plan";
 
 const READINESS: Record<string, string> = {
   ready: "good", near_ready: "info", needs_work: "warn", not_ready: "bad",
@@ -117,8 +118,10 @@ export default function App() {
               <button onClick={() => setOpen(null)} style={{ marginTop: 20 }}>← Pipeline</button>
               <h1>{open.name}</h1>
               <p className="sub">{open.contact_email} · {open.status.replace(/_/g, " ")}</p>
-              <Tabs tabs={["Data room"]} active={tab} onChange={setTab} />
-              <DataRoom clientId={open.id} manager />
+              <Tabs tabs={["Data room", "Plans"]} active={tab} onChange={setTab} />
+              {tab === "Plans"
+                ? <Plan clientId={open.id} />
+                : <DataRoom clientId={open.id} manager />}
             </>
           ) : (
             <>

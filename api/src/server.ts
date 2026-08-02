@@ -8,6 +8,7 @@ import { meRoutes } from "./routes/me.ts";
 import { privacyRoutes } from "./routes/privacy.ts";
 import { managerRoutes } from "./routes/manager.ts";
 import { dataRoomRoutes } from "./routes/dataroom.ts";
+import { planRoutes } from "./routes/plans.ts";
 import { assertPolicyCoverage } from "./privacy/policy.ts";
 
 // Fail at boot, not at the first erasure request: a data category with no
@@ -49,6 +50,7 @@ await app.register(meRoutes);
 await app.register(privacyRoutes);
 await app.register(managerRoutes);
 await app.register(dataRoomRoutes);
+await app.register(planRoutes);
 
 const close = async () => {
   await app.close();
