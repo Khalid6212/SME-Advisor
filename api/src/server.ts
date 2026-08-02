@@ -1,11 +1,13 @@
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
+import multipart from "@fastify/multipart";
 import { config, isProd } from "./config.ts";
 import { pool } from "./db.ts";
 import { authRoutes, loadUser } from "./auth.ts";
 import { meRoutes } from "./routes/me.ts";
 import { privacyRoutes } from "./routes/privacy.ts";
 import { managerRoutes } from "./routes/manager.ts";
+import { dataRoomRoutes } from "./routes/dataroom.ts";
 import { assertPolicyCoverage } from "./privacy/policy.ts";
 
 // Fail at boot, not at the first erasure request: a data category with no
@@ -18,6 +20,10 @@ const app = Fastify({
 });
 
 await app.register(cookie, { secret: config.SESSION_SECRET });
+
+// 25 MB covers a year of bank statements. attachFieldsToBody stays off so the
+// handler can stream and check the MIME type before reading the whole body.
+await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
 
 // The SPA is served from a different origin, so credentialed CORS is required.
 // Exact-origin only — never reflect the request origin with credentials on.
@@ -42,6 +48,7 @@ await app.register(authRoutes);
 await app.register(meRoutes);
 await app.register(privacyRoutes);
 await app.register(managerRoutes);
+await app.register(dataRoomRoutes);
 
 const close = async () => {
   await app.close();

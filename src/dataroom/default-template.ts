@@ -15,7 +15,7 @@
 import type { DataRoomTemplate } from "./types.ts";
 
 export const defaultTemplate: DataRoomTemplate = {
-  id: "sme-lending-default",
+  key: "sme-lending-default",
   version: "0.1.0-draft",
   name: { en: "SME lending file", ar: "ملف تمويل المنشآت" },
   description:

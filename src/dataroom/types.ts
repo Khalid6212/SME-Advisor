@@ -42,7 +42,8 @@ export interface TemplateNode {
 }
 
 export interface DataRoomTemplate {
-  id: string;
+  /** Stable identifier, stored as `data_rooms.template_key`. */
+  key: string;
   version: string;
   name: { en: string; ar: string };
   description: string;
