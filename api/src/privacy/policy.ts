@@ -143,6 +143,19 @@ export const RULES: Rule[] = [
             AND cl.closed_at < now() - ${months(12)}
         RETURNING d.storage_key`,
       );
+      // A node left reading "uploaded" with nothing behind it would claim a
+      // document that no longer exists — misleading in the archive, and wrong
+      // outright if the engagement is ever reopened.
+      await c.query(
+        `UPDATE data_room_nodes n
+            SET status = 'requested', fulfilled_at = NULL, updated_at = now()
+          WHERE n.kind = 'item'
+            AND n.status IN ('uploaded', 'under_review', 'accepted')
+            AND NOT EXISTS (
+              SELECT 1 FROM documents d
+               WHERE d.node_id = n.id AND d.deleted_at IS NULL
+            )`,
+      );
       return {
         location: "documents",
         affected: rows.length,

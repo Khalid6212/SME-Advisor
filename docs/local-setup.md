@@ -34,12 +34,40 @@ docker compose up -d
 winget install --id PostgreSQL.PostgreSQL.17
 ```
 
-The installer asks for a superuser password — remember it, it goes in
-`DATABASE_URL`. Then create the database:
+Needs administrator rights. The installer asks for a superuser password —
+remember it, it goes in `DATABASE_URL`. Then create the database:
 
 ```bash
 createdb -U postgres sme_advisor
 ```
+
+### Portable Postgres — no installer, no admin
+
+What this machine currently runs. Extract the binaries archive into your user
+profile and run a cluster from there. Nothing is installed, no service is
+registered, and removing it is deleting one folder.
+
+```powershell
+$root = "$env:LOCALAPPDATA\pgportable"
+mkdir $root; cd $root
+curl.exe -L -o pg.zip "https://get.enterprisedb.com/postgresql/postgresql-17.10-2-windows-x64-binaries.zip"
+tar.exe -xf pg.zip
+"postgres" | Set-Content pw.txt -NoNewline
+.\pgsql\bin\initdb.exe -D "$root\data" -U postgres --pwfile="$root\pw.txt" --auth=scram-sha-256 --encoding=UTF8
+Remove-Item pw.txt
+.\pgsql\bin\pg_ctl.exe -D "$root\data" -l "$root\server.log" start
+.\pgsql\bin\createdb.exe -U postgres -h 127.0.0.1 sme_advisor
+```
+
+It does not survive a reboot. To start it again:
+
+```powershell
+& "$env:LOCALAPPDATA\pgportable\pgsql\bin\pg_ctl.exe" -D "$env:LOCALAPPDATA\pgportable\data" -l "$env:LOCALAPPDATA\pgportable\server.log" start
+```
+
+`pg_ctl start` may appear to hang in a non-interactive shell — it holds the
+console while the server detaches. The server is running; check `server.log`
+or `pg_isready`.
 
 ### Hosted (Neon, Supabase, Vercel Postgres)
 

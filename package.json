@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit && npm run typecheck -w @sme/api",
     "build:prototype": "node scripts/build-prototype.mjs",
     "migrate": "npm run migrate -w @sme/api",
+    "retention": "npm run retention -w @sme/api",
     "dev:api": "npm run dev -w @sme/api"
   },
   "devDependencies": {
