@@ -6,7 +6,7 @@
  */
 
 import { buildSystemPrompt } from "../../../src/core/prompt.ts";
-import { buildTools } from "../../../src/core/tools.ts";
+import { assertProfileShape, buildTools } from "../../../src/core/tools.ts";
 import { assessReadiness } from "../../../src/core/readiness.ts";
 import { getPack } from "../../../src/sectors/registry.ts";
 import { renderRules, selectRules } from "../../../src/learning/rules.ts";
@@ -107,6 +107,9 @@ async function submitProfile(
   interview: InterviewRow,
   input: { profile: any; claims: any[] },
 ): Promise<void> {
+  // Stands in for `strict` on the tool, which the union-parameter cap rules out.
+  assertProfileShape(input.profile);
+
   const pack = getPack(interview.sector_id);
   const assessment = assessReadiness(input.profile, pack);
 
