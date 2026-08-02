@@ -1,0 +1,33 @@
+# Caddy terminates TLS and puts the SPA and the API on one origin.
+#
+# Same-origin is the point: no CORS, and the session cookie is first-party with
+# nothing to configure. It also means APP_ORIGIN and API_ORIGIN differ only by
+# the /api prefix.
+#
+# SITE_ADDRESS is the domain, or :80 when there isn't one yet. With a domain,
+# Caddy obtains and renews a Let's Encrypt certificate on its own.
+
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# handle_path strips /api before proxying, so the API keeps its routes at
+	# the root and knows nothing about the prefix.
+	handle_path /api/* {
+		reverse_proxy api:3001
+	}
+
+	handle {
+		root * /srv
+		# SPA: unknown paths are client-side routes, not 404s.
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		# Only sent when Caddy is actually serving TLS.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+}
