@@ -10,8 +10,15 @@ const schema = z.object({
 
   DATABASE_URL: z.string().url(),
 
-  /** Where the SPA lives. Used for magic-link URLs and CORS. */
+  /** Where the SPA lives. CORS allows exactly this, and verification redirects here. */
   APP_ORIGIN: z.string().url(),
+
+  /**
+   * This API's own public URL. Magic links must point here — `/auth/verify`
+   * is an API route, and a link aimed at the SPA 404s for every user.
+   * Behind a proxy this is the external URL, not the listening port.
+   */
+  API_ORIGIN: z.string().url().default("http://localhost:3001"),
 
   /** Rotating this invalidates every session. */
   SESSION_SECRET: z.string().min(32),

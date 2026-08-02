@@ -4,9 +4,10 @@
   "private": true,
   "description": "Investment readiness assessment for SMEs in Saudi Arabia",
   "type": "module",
-  "workspaces": ["api"],
+  "workspaces": ["api", "web"],
   "scripts": {
-    "typecheck": "tsc --noEmit && npm run typecheck -w @sme/api",
+    "typecheck": "tsc --noEmit && npm run typecheck -w @sme/api && npm run typecheck -w @sme/web",
+    "dev:web": "npm run dev -w @sme/web",
     "build:prototype": "node scripts/build-prototype.mjs",
     "migrate": "npm run migrate -w @sme/api",
     "retention": "npm run retention -w @sme/api",

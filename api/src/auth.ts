@@ -114,7 +114,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       [user!.id, sha256(token), expires],
     );
 
-    const url = `${config.APP_ORIGIN}/auth/verify?token=${token}`;
+    // API_ORIGIN, not APP_ORIGIN — /auth/verify is an API route which sets the
+    // cookie and then redirects to the SPA.
+    const url = `${config.API_ORIGIN}/auth/verify?token=${token}`;
     await sendMail(magicLinkMail(email, url));
     await audit("auth.magic_link_sent", { actorUserId: user!.id });
 
