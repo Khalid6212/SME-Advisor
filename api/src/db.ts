@@ -2,14 +2,29 @@ import pg from "pg";
 import { config } from "./config.ts";
 
 /**
- * Hosted providers (Neon, Supabase, RDS) require TLS; a local container does
- * not offer it. Deciding from the host avoids a connection string that works
- * on one machine and fails on another.
+ * Hosted providers (Neon, Supabase, RDS) require TLS; a database on the same
+ * private network does not offer it.
+ *
+ * The heuristic is "does the hostname look like it's on the public internet".
+ * A bare name with no dot — `postgres`, `db` — is a container or LAN name, and
+ * demanding TLS from one fails with "server does not support SSL connections".
+ * Set DATABASE_SSL explicitly to override; a guess should never be the last
+ * word on whether a connection is encrypted.
  */
 export function sslFor(url: string): pg.ClientConfig["ssl"] {
+  const explicit = process.env.DATABASE_SSL;
+  if (explicit !== undefined) {
+    return explicit === "true" ? { rejectUnauthorized: true } : undefined;
+  }
+
   const host = new URL(url).hostname;
-  const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
-  return isLocal ? undefined : { rejectUnauthorized: true };
+  const isPrivate =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    !host.includes("."); // container or LAN name
+
+  return isPrivate ? undefined : { rejectUnauthorized: true };
 }
 
 export const pool = new pg.Pool({

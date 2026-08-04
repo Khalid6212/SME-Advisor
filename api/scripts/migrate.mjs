@@ -19,15 +19,21 @@ if (!url) {
   process.exit(1);
 }
 
-// Mirrors sslFor() in src/db.ts — hosted providers require TLS, a local
-// container does not offer it.
+// Mirrors sslFor() in src/db.ts. A bare hostname with no dot is a container or
+// LAN name; demanding TLS from one fails outright.
 const host = new URL(url).hostname;
-const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
+const isPrivate =
+  host === "localhost" || host === "127.0.0.1" || host === "::1" || !host.includes(".");
+const ssl =
+  process.env.DATABASE_SSL !== undefined
+    ? process.env.DATABASE_SSL === "true"
+      ? { rejectUnauthorized: true }
+      : undefined
+    : isPrivate
+      ? undefined
+      : { rejectUnauthorized: true };
 
-const pool = new pg.Pool({
-  connectionString: url,
-  ssl: isLocal ? undefined : { rejectUnauthorized: true },
-});
+const pool = new pg.Pool({ connectionString: url, ssl });
 
 // A raw ECONNREFUSED stack is the least useful thing to show someone whose
 // database simply is not running yet.
