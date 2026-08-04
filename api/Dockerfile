@@ -12,6 +12,10 @@ RUN npm ci --omit=dev --workspace @sme/api --include-workspace-root
 # The API imports the shared core from src/, so both trees are needed.
 COPY src ./src
 COPY api ./api
+# The migration runner reads db/migrations at runtime. Without this the image
+# starts fine and only fails when someone tries to migrate — which is exactly
+# when you least want a surprise.
+COPY db ./db
 
 ENV NODE_ENV=production
 EXPOSE 3001
