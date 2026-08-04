@@ -29,7 +29,11 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      NODE_ENV: production
+      # Defaults to production, which refuses to start without SMTP and object
+      # storage — both are needed before anyone signs in for real. Set
+      # NODE_ENV=development explicitly for a staging box that has neither yet;
+      # magic links then print to the container log instead of being emailed.
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3001
       DATABASE_URL: postgres://${POSTGRES_USER:-sme}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sme_advisor}
       APP_ORIGIN: ${PUBLIC_URL:?set PUBLIC_URL}
