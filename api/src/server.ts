@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
@@ -15,8 +16,26 @@ import { assertPolicyCoverage } from "./privacy/policy.ts";
 // retention or erasure rule is a gap between the published notice and the code.
 assertPolicyCoverage();
 
+/**
+ * Pretty logs locally, plain JSON everywhere else.
+ *
+ * `pino-pretty` is a devDependency and the container image installs with
+ * --omit=dev, so asking for it by name crash-loops any non-production
+ * deployment — which includes a staging box running NODE_ENV=development.
+ * Resolving it first degrades to plain logging instead of failing to boot.
+ */
+function loggerOptions() {
+  if (isProd) return true;
+  try {
+    createRequire(import.meta.url).resolve("pino-pretty");
+    return { transport: { target: "pino-pretty" } };
+  } catch {
+    return true;
+  }
+}
+
 const app = Fastify({
-  logger: isProd ? true : { transport: { target: "pino-pretty" } },
+  logger: loggerOptions(),
   bodyLimit: 2 * 1024 * 1024,
 });
 
