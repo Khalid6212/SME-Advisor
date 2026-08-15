@@ -1,5 +1,8 @@
+import crypto from "node:crypto";
 import nodemailer from "nodemailer";
 import { config, isProd } from "./config.ts";
+
+const MAIL_HOSTNAME = new URL(config.APP_ORIGIN).hostname;
 
 /**
  * Without SMTP_URL, mail is logged rather than sent. That keeps local
@@ -7,8 +10,11 @@ import { config, isProd } from "./config.ts";
  * console and you paste it. Refused in production, where a silently unsent
  * login link would lock every user out with no error anywhere.
  */
+// Without an explicit `name`, nodemailer's HELO/EHLO greeting and generated
+// Message-ID fall back to "localhost" — a strong spam signal to a receiving
+// server, and enough on its own to get silently dropped rather than bounced.
 const transport = config.SMTP_URL
-  ? nodemailer.createTransport(config.SMTP_URL)
+  ? nodemailer.createTransport(config.SMTP_URL, { name: MAIL_HOSTNAME })
   : null;
 
 if (!transport && isProd) {
@@ -29,7 +35,18 @@ export async function sendMail(mail: Mail): Promise<void> {
     );
     return;
   }
-  await transport.sendMail({ from: config.MAIL_FROM, ...mail });
+  const info = await transport.sendMail({
+    from: config.MAIL_FROM,
+    // The transport's `name` option only governs the SMTP HELO/EHLO greeting;
+    // nodemailer's own Message-ID generation falls back to "localhost"
+    // regardless, unless a real one is provided per message.
+    messageId: `<${crypto.randomUUID()}@${MAIL_HOSTNAME}>`,
+    ...mail,
+  });
+  console.log(
+    `mail accepted for ${mail.to}: messageId=${info.messageId} response=${info.response} ` +
+      `accepted=${JSON.stringify(info.accepted)} rejected=${JSON.stringify(info.rejected)}`,
+  );
 }
 
 export function magicLinkMail(to: string, url: string): Mail {
