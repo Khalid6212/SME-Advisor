@@ -5,7 +5,9 @@ if (!config.ANTHROPIC_API_KEY) {
   console.warn("ANTHROPIC_API_KEY is not set — agent endpoints will fail.");
 }
 
-export const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+// Generous enough for a single agentic turn on a large section, bounded so a
+// stuck upstream call can't hold a connection open indefinitely.
+export const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY, timeout: 300_000 });
 
 export const MODEL = "claude-opus-5";
 

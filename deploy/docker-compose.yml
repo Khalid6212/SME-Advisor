@@ -28,6 +28,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    labels:
+      autoheal: "true"
     environment:
       # Defaults to production, which refuses to start without SMTP and object
       # storage — both are needed before anyone signs in for real. Set
@@ -50,6 +52,14 @@ services:
       S3_ENDPOINT: ${S3_ENDPOINT}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+    healthcheck:
+      # 127.0.0.1, not localhost — some images resolve localhost to ::1 first,
+      # where nothing listens, and wget doesn't fall back to IPv4.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     volumes:
       # Only used until object storage is configured. Documents on a container
       # filesystem do not survive a rebuild — the API refuses to start in
@@ -69,7 +79,11 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    depends_on: [api, web]
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_completed_successfully
     ports:
       - "80:80"
       - "443:443"
@@ -80,6 +94,18 @@ services:
       - webroot:/srv:ro
       - caddydata:/data
       - caddyconfig:/config
+
+  # Docker marks an unhealthy container unhealthy; it does not restart it.
+  # This watches for that status and restarts anything labeled autoheal=true.
+  # Needs the host's Docker socket to issue that restart — a real privilege,
+  # scoped to this one small, single-purpose image.
+  autoheal:
+    image: willfarrell/autoheal
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   pgdata:
