@@ -60,6 +60,17 @@ export interface User {
   id: string;
   email: string;
   role: "client" | "manager" | "admin";
+  has_password: boolean;
+}
+
+export interface AccountRow {
+  id: string;
+  email: string;
+  role: "client" | "manager" | "admin";
+  status: "active" | "disabled";
+  created_at: string;
+  last_seen_at: string | null;
+  has_password: boolean;
 }
 
 export interface ClientRow {
@@ -98,6 +109,16 @@ export interface Doc {
   filename: string;
   size_bytes: number;
   uploaded_at: string;
+}
+
+export interface DocVersion {
+  id: string;
+  version: number;
+  filename: string;
+  size_bytes: number;
+  uploaded_at: string;
+  superseded_at: string | null;
+  uploaded_by_email: string;
 }
 
 export interface RoomView {

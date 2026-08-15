@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, type ClientRow, type User } from "./api";
 import { Login } from "./screens/Login";
+import { SetPassword } from "./screens/SetPassword";
 import { Interview } from "./screens/Interview";
 import { DataRoom } from "./screens/DataRoom";
 import { Plan } from "./screens/Plan";
+import { Admin } from "./screens/Admin";
 
 const READINESS: Record<string, string> = {
   ready: "good", near_ready: "info", needs_work: "warn", not_ready: "bad",
@@ -70,6 +72,7 @@ export default function App() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [open, setOpen] = useState<ClientRow | null>(null);
   const [tab, setTab] = useState("Data room");
+  const [view, setView] = useState<"pipeline" | "admin">("pipeline");
   const [residency, setResidency] = useState<string | null>(null);
 
   useEffect(() => {
@@ -87,6 +90,12 @@ export default function App() {
 
   if (user === "loading") return <p className="muted" style={{ padding: 40 }}>Loading…</p>;
   if (!user) return <Login />;
+  // The only way to reach this with has_password false is a magic link that
+  // just verified — there's a real session already, it just can't be used
+  // for anything else until this step closes.
+  if (!user.has_password) {
+    return <SetPassword email={user.email} onDone={() => location.reload()} />;
+  }
 
   const manager = user.role === "manager" || user.role === "admin";
   const active = open ?? clients[0] ?? null;
@@ -104,6 +113,14 @@ export default function App() {
       <div className="topbar">
         <span className="brand">SME Advisor</span>
         {manager && <span className="pill info">Investment team</span>}
+        {user.role === "admin" && (
+          <button
+            style={view === "admin" ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
+            onClick={() => setView(view === "admin" ? "pipeline" : "admin")}
+          >
+            Team
+          </button>
+        )}
         <div className="spacer" />
         <span className="muted" style={{ fontSize: 13 }}>{user.email}</span>
         <button onClick={() => api.post("/auth/logout").then(() => location.reload())}>
@@ -112,7 +129,13 @@ export default function App() {
       </div>
 
       <div className="shell">
-        {manager ? (
+        {view === "admin" ? (
+          <>
+            <h1>Team</h1>
+            <p className="sub">Advisors and admins who can access the platform.</p>
+            <Admin currentUserId={user.id} />
+          </>
+        ) : manager ? (
           open ? (
             <>
               <button onClick={() => setOpen(null)} style={{ marginTop: 20 }}>← Pipeline</button>

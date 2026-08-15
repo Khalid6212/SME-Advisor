@@ -312,6 +312,41 @@ export async function dataRoomRoutes(app: FastifyInstance): Promise<void> {
     return { requested: updated.length, items: updated };
   });
 
+  /**
+   * Full history for one node, not just the current document — the write
+   * side already supersedes rather than overwrites (see the upload handler
+   * below); this is the read side that was missing.
+   */
+  app.get("/data-room/nodes/:nodeId/documents", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { nodeId } = req.params as { nodeId: string };
+
+    const node = await one<{ client_id: string }>(
+      `SELECT c.id AS client_id
+         FROM data_room_nodes n
+         JOIN data_rooms r ON r.id = n.data_room_id
+         JOIN clients c ON c.id = r.client_id
+        WHERE n.id = $1`,
+      [nodeId],
+    );
+    if (!node) return reply.code(404).send({ error: "not_found" });
+
+    if (!(await mayReadDocuments(user.id, user.role, node.client_id))) {
+      return reply.code(403).send({ error: "not_assigned_reviewer" });
+    }
+
+    return query(
+      `SELECT d.id, d.version, d.filename, d.size_bytes, d.uploaded_at,
+              d.superseded_at, u.email AS uploaded_by_email
+         FROM documents d
+         JOIN users u ON u.id = d.uploaded_by
+        WHERE d.node_id = $1 AND d.deleted_at IS NULL
+        ORDER BY d.version DESC`,
+      [nodeId],
+    );
+  });
+
   app.get("/documents/:docId", async (req, reply) => {
     const user = requireManager(req, reply);
     if (!user) return;

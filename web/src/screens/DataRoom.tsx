@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Doc, type Node, type RoomView } from "../api";
+import { api, type Doc, type DocVersion, type Node, type RoomView } from "../api";
 
 const STATUS_PILL: Record<string, string> = {
   not_requested: "grey",
@@ -24,6 +24,8 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [historyOpen, setHistoryOpen] = useState<string | null>(null);
+  const [versions, setVersions] = useState<Record<string, DocVersion[]>>({});
 
   const path = manager ? `/clients/${clientId}/data-room` : `/me/clients/${clientId}/data-room`;
 
@@ -54,6 +56,15 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
     setSelected(new Set());
     await load();
     setBusy(null);
+  };
+
+  const toggleHistory = async (nodeId: string) => {
+    if (historyOpen === nodeId) return setHistoryOpen(null);
+    setHistoryOpen(nodeId);
+    if (!versions[nodeId]) {
+      const v = await api.get<DocVersion[]>(`/data-room/nodes/${nodeId}/documents`);
+      setVersions((prev) => ({ ...prev, [nodeId]: v }));
+    }
   };
 
   const upload = async (nodeId: string, file: File) => {
@@ -152,9 +163,42 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
             <span className="dim">{d.filename}</span>
             <span className="muted">{bytes(d.size_bytes)}</span>
             <div style={{ flex: 1 }} />
-            {manager && <a href={api.downloadUrl(d.id)}>Download</a>}
+            {manager && (
+              <>
+                <a href="#" onClick={(e) => { e.preventDefault(); void toggleHistory(n.id); }}>
+                  {historyOpen === n.id ? "Hide history" : "History"}
+                </a>
+                <a href={api.downloadUrl(d.id)} style={{ marginLeft: 12 }}>Download</a>
+              </>
+            )}
           </div>
         ))}
+
+        {manager && historyOpen === n.id && (() => {
+          const nodeVersions = versions[n.id];
+          return (
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+            {!nodeVersions ? (
+              <p className="muted" style={{ fontSize: 12, margin: 0 }}>Loading…</p>
+            ) : nodeVersions.length === 0 ? (
+              <p className="muted" style={{ fontSize: 12, margin: 0 }}>Nothing uploaded yet.</p>
+            ) : (
+              nodeVersions.map((v) => (
+                <div key={v.id} className="row" style={{ fontSize: 12, marginTop: 6 }}>
+                  <span className={`pill ${v.superseded_at ? "grey" : "good"}`}>v{v.version}</span>
+                  <span className="dim">{v.filename}</span>
+                  <span className="muted">
+                    {v.uploaded_by_email} · {new Date(v.uploaded_at).toLocaleString()}
+                    {v.superseded_at ? " · replaced" : " · current"}
+                  </span>
+                  <div style={{ flex: 1 }} />
+                  <a href={api.downloadUrl(v.id)}>Download</a>
+                </div>
+              ))
+            )}
+          </div>
+          );
+        })()}
 
         {canUpload && (
           <label style={{ display: "inline-block", marginTop: 10 }}>

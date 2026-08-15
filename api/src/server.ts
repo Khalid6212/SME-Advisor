@@ -8,6 +8,7 @@ import { authRoutes, loadUser } from "./auth.ts";
 import { meRoutes } from "./routes/me.ts";
 import { privacyRoutes } from "./routes/privacy.ts";
 import { managerRoutes } from "./routes/manager.ts";
+import { adminRoutes } from "./routes/admin.ts";
 import { dataRoomRoutes } from "./routes/dataroom.ts";
 import { planRoutes } from "./routes/plans.ts";
 import { assertPolicyCoverage } from "./privacy/policy.ts";
@@ -37,6 +38,9 @@ function loggerOptions() {
 const app = Fastify({
   logger: loggerOptions(),
   bodyLimit: 2 * 1024 * 1024,
+  // Behind Caddy — without this, req.ip is Caddy's own address, which would
+  // put every request in the same rate-limit bucket.
+  trustProxy: true,
 });
 
 await app.register(cookie, { secret: config.SESSION_SECRET });
@@ -68,6 +72,7 @@ await app.register(authRoutes);
 await app.register(meRoutes);
 await app.register(privacyRoutes);
 await app.register(managerRoutes);
+await app.register(adminRoutes);
 await app.register(dataRoomRoutes);
 await app.register(planRoutes);
 
