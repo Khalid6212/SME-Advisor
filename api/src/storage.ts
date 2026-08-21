@@ -115,6 +115,13 @@ class S3Driver implements StorageDriver {
       region: config.S3_REGION,
       endpoint: config.S3_ENDPOINT,
       forcePathStyle: config.S3_FORCE_PATH_STYLE,
+      // The SDK's newer default (WHEN_SUPPORTED) attaches an automatic
+      // checksum header to every request. Several S3-compatible providers —
+      // Oracle's Object Storage included — fail signature verification on
+      // that header even with correct credentials, surfacing as an opaque
+      // SignatureDoesNotMatch. WHEN_REQUIRED matches the pre-2024 behavior.
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
       credentials: {
         accessKeyId: config.S3_ACCESS_KEY_ID!,
         secretAccessKey: config.S3_SECRET_ACCESS_KEY!,
