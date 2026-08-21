@@ -52,6 +52,57 @@ function Pipeline({ onOpen }: { onOpen: (c: ClientRow) => void }) {
   );
 }
 
+/** POST /me/clients has always existed; nothing in the client view ever
+ *  called it. Self-signup got you an account with nowhere to go next. */
+function NewBusiness({ onCreated }: { onCreated: (client: ClientRow) => void }) {
+  const [name, setName] = useState("");
+  const [brief, setBrief] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.post<{ client_id: string }>("/me/clients", {
+        name: name.trim(),
+        brief: brief.trim(),
+      });
+      onCreated({
+        id: r.client_id, name: name.trim(), status: "interviewing", sector_id: "general",
+        created_at: new Date().toISOString(), closed_at: null, group_name: null, readiness: null,
+      });
+    } catch {
+      setError("Something went wrong. Try again.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="card" onSubmit={submit}>
+      <div style={{ fontWeight: 600, marginBottom: 10 }}>Tell us about your business</div>
+      <label className="muted" style={{ fontSize: 12 }}>Business name</label>
+      <input
+        required value={name} autoFocus
+        onChange={(e) => setName(e.target.value)}
+        style={{ margin: "6px 0 14px", width: "100%" }}
+      />
+      <label className="muted" style={{ fontSize: 12 }}>What does it do?</label>
+      <textarea
+        required value={brief} rows={3}
+        onChange={(e) => setBrief(e.target.value)}
+        placeholder="A sentence or two — this opens the assessment, so specifics beat a general description."
+        style={{ margin: "6px 0 14px", width: "100%" }}
+      />
+      {error && <p style={{ color: "var(--bad)", fontSize: 13, marginTop: 0 }}>{error}</p>}
+      <button className="primary" disabled={busy || !name.trim() || !brief.trim()}>
+        {busy ? "Starting…" : "Start"}
+      </button>
+    </form>
+  );
+}
+
 function Tabs({ tabs, active, onChange }: {
   tabs: string[]; active: string; onChange: (t: string) => void;
 }) {
@@ -178,7 +229,7 @@ export default function App() {
                   : <DataRoom clientId={active.id} manager={false} />}
               </>
             ) : (
-              <div className="card muted">No business yet.</div>
+              <NewBusiness onCreated={(c) => { setClients((prev) => [...prev, c]); setOpen(c); }} />
             )}
           </>
         )}
