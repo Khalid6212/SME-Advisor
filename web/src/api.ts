@@ -61,6 +61,7 @@ export interface User {
   email: string;
   role: "client" | "manager" | "admin";
   has_password: boolean;
+  has_consented: boolean;
 }
 
 export interface AccountRow {
@@ -119,6 +120,8 @@ export interface DocVersion {
   uploaded_at: string;
   superseded_at: string | null;
   uploaded_by_email: string;
+  extract_status: "pending" | "done" | "unsupported" | "failed" | null;
+  extract_summary: string | null;
 }
 
 export interface RoomView {
@@ -126,4 +129,44 @@ export interface RoomView {
   tree: Node[];
   documents: Doc[];
   reasons?: { node_id: string; owner_quote: string; field_path: string }[];
+}
+
+export interface InterviewTurn {
+  role: string;
+  text: string;
+}
+
+export interface Claim {
+  id: string;
+  field_path: string;
+  stated_value: string | null;
+  owner_quote: string;
+  materiality: "high" | "medium" | "low";
+  verification_status: "unverified" | "confirmed" | "contradicted";
+}
+
+export interface InterviewSummary {
+  status: string;
+  sections: { section_id: string; complete: boolean }[];
+  messages: InterviewTurn[];
+  profile: { version: number; readiness: string | null } | null;
+  claims: Claim[];
+}
+
+export interface PlanInputs {
+  revenue_growth_pct: number | null;
+  growth_basis: string | null;
+  projection_years: number;
+  management_assessment: string | null;
+  positioning_notes: string | null;
+  risk_mitigants: string | null;
+  use_of_funds_notes: string | null;
+  updated_at?: string;
+}
+
+export interface FinancialLine {
+  year_offset: number;
+  line_item: string;
+  value: string;
+  basis: string | null;
 }

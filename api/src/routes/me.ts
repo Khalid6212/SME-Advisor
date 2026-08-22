@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth.ts";
 import { audit, one, query, tx } from "../db.ts";
-import { getInterview, loadMessages, runTurn } from "../agents/interview.ts";
+import { editLastUserMessage, getInterview, loadMessages, runTurn } from "../agents/interview.ts";
 import { textOf } from "../anthropic.ts";
 
 const createClientSchema = z.object({
@@ -16,6 +16,7 @@ const createClientSchema = z.object({
 });
 
 const turnSchema = z.object({ message: z.string().trim().min(1).max(8000) });
+const editSchema = z.object({ message: z.string().trim().min(1).max(8000) });
 
 /** Ownership check. Returns null and replies 404 — not 403 — so the endpoint
  *  cannot be used to discover which client ids exist. */
@@ -124,6 +125,35 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
       req.log.error({ err, clientId: id }, "interview turn failed");
       // The user's message is not persisted on failure, so a retry re-sends it
       // rather than duplicating a turn.
+      return reply.code(502).send({ error: "agent_unavailable" });
+    }
+  });
+
+  /** Corrects the client's most recent answer and re-runs the turn from there. */
+  app.patch("/me/clients/:id/interview/messages/last", async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+
+    const { id } = req.params as { id: string };
+    const client = await ownedClient(user.id, id);
+    if (!client) return reply.code(404).send({ error: "not_found" });
+
+    const parsed = editSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+
+    const interview = await getInterview(id);
+    if (!interview) return reply.code(404).send({ error: "no_interview" });
+    if (interview.status === "complete") {
+      return reply.code(409).send({ error: "interview_complete" });
+    }
+
+    try {
+      return await editLastUserMessage(interview, parsed.data.message);
+    } catch (err: any) {
+      if (err.message === "no_editable_message") {
+        return reply.code(409).send({ error: "no_editable_message" });
+      }
+      req.log.error({ err, clientId: id }, "interview edit failed");
       return reply.code(502).send({ error: "agent_unavailable" });
     }
   });

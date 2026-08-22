@@ -9,6 +9,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireManager, requireUser } from "../auth.ts";
+import { extractDocument } from "../agents/extract.ts";
 import { audit, one, query, tx } from "../db.ts";
 import { purge, storage, storageKey } from "../storage.ts";
 import { sendMail } from "../mailer.ts";
@@ -338,9 +339,11 @@ export async function dataRoomRoutes(app: FastifyInstance): Promise<void> {
 
     return query(
       `SELECT d.id, d.version, d.filename, d.size_bytes, d.uploaded_at,
-              d.superseded_at, u.email AS uploaded_by_email
+              d.superseded_at, u.email AS uploaded_by_email,
+              e.status AS extract_status, e.summary AS extract_summary
          FROM documents d
          JOIN users u ON u.id = d.uploaded_by
+         LEFT JOIN document_extracts e ON e.document_id = d.id
         WHERE d.node_id = $1 AND d.deleted_at IS NULL
         ORDER BY d.version DESC`,
       [nodeId],
@@ -498,6 +501,10 @@ export async function dataRoomRoutes(app: FastifyInstance): Promise<void> {
       clientId: node.client_id,
       payload: { node_id: nodeId, filename: file.filename, bytes: buffer.byteLength },
     });
+
+    // Best-effort enrichment, not part of the upload's success — a manager
+    // can still review the raw file if this fails or the type is unsupported.
+    extractDocument(doc.id).catch((err) => req.log.error({ err, documentId: doc.id }, "document extraction failed"));
 
     return reply.code(201).send(doc);
   });

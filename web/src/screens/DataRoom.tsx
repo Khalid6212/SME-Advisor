@@ -184,15 +184,33 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
               <p className="muted" style={{ fontSize: 12, margin: 0 }}>Nothing uploaded yet.</p>
             ) : (
               nodeVersions.map((v) => (
-                <div key={v.id} className="row" style={{ fontSize: 12, marginTop: 6 }}>
-                  <span className={`pill ${v.superseded_at ? "grey" : "good"}`}>v{v.version}</span>
-                  <span className="dim">{v.filename}</span>
-                  <span className="muted">
-                    {v.uploaded_by_email} · {new Date(v.uploaded_at).toLocaleString()}
-                    {v.superseded_at ? " · replaced" : " · current"}
-                  </span>
-                  <div style={{ flex: 1 }} />
-                  <a href={api.downloadUrl(v.id)}>Download</a>
+                <div key={v.id} style={{ marginTop: 6 }}>
+                  <div className="row" style={{ fontSize: 12 }}>
+                    <span className={`pill ${v.superseded_at ? "grey" : "good"}`}>v{v.version}</span>
+                    <span className="dim">{v.filename}</span>
+                    <span className="muted">
+                      {v.uploaded_by_email} · {new Date(v.uploaded_at).toLocaleString()}
+                      {v.superseded_at ? " · replaced" : " · current"}
+                    </span>
+                    <div style={{ flex: 1 }} />
+                    <a href={api.downloadUrl(v.id)}>Download</a>
+                  </div>
+                  {v.extract_status === "done" && v.extract_summary && (
+                    <p className="dim" style={{ fontSize: 11, margin: "3px 0 0", fontStyle: "italic" }}>
+                      {v.extract_summary}
+                    </p>
+                  )}
+                  {v.extract_status === "pending" && (
+                    <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>Reading document…</p>
+                  )}
+                  {v.extract_status === "unsupported" && (
+                    <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>
+                      Automatic reading not available for this file type — review it directly.
+                    </p>
+                  )}
+                  {v.extract_status === "failed" && (
+                    <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>Reading failed — review it directly.</p>
+                  )}
                 </div>
               ))
             )}

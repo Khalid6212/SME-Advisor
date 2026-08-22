@@ -18,6 +18,7 @@ export const PROVENANCE_SOURCE = [
   "owner_quote",   // the owner's own words, from a claim
   "manager_note",  // supplied by the reviewer
   "assumption",    // derived, and only with a recorded assumption
+  "document",      // an uploaded document's extracted content (D-verify)
 ] as const;
 export type ProvenanceSource = (typeof PROVENANCE_SOURCE)[number];
 
@@ -51,8 +52,40 @@ export interface Assumption {
   source: "owner" | "manager" | "profile_derived";
 }
 
+/**
+ * The advisor's own judgment, captured before drafting rather than only as an
+ * edit afterward. One row per client — this is what the plan is regenerated
+ * from, not a record of a single generation.
+ */
+export interface PlanInputs {
+  revenue_growth_pct: number | null;
+  growth_basis: string | null;
+  projection_years: number;
+  management_assessment: string | null;
+  positioning_notes: string | null;
+  risk_mitigants: string | null;
+  use_of_funds_notes: string | null;
+}
+
+/** One computed line in the financial projection table. */
+export interface FinancialLine {
+  year_offset: number;
+  line_item: string;
+  value: number;
+  basis: string | null;
+}
+
 export const SECTION_STATUS = ["empty", "drafted", "edited", "approved"] as const;
 export type SectionStatus = (typeof SECTION_STATUS)[number];
+
+/**
+ * Who a section is written for. The plan is drafted once — a lender wants
+ * repayment capacity and risk mitigation, an owner wants to know what to do
+ * on Monday, and most sections serve both. `audiences` marks which output
+ * views include a given section; it does not fork the draft.
+ */
+export const AUDIENCE = ["lender", "internal"] as const;
+export type Audience = (typeof AUDIENCE)[number];
 
 export interface PlanSectionSpec {
   key: string;
@@ -64,21 +97,19 @@ export interface PlanSectionSpec {
   /** False when the section cannot be drafted from the profile at all. */
   draftable_from_profile: boolean;
   required: boolean;
+  /** Which purpose-specific exports include this section. */
+  audiences: Audience[];
 }
 
 /**
- * Who the document is for. The same profile produces both tracks, but they are
- * genuinely different documents: a lender wants repayment capacity and risk
- * mitigation, an owner wants to know what to do on Monday. Writing one and
- * relabelling it serves neither.
+ * The one canonical business plan. Audience-specific documents (a lender
+ * pack, an internal operating plan) are views over this — a section filter
+ * and reorder at export time — not separate drafts, so a figure cannot say
+ * one thing in one document and another in the other.
  */
-export const AUDIENCE = ["lender", "internal"] as const;
-export type Audience = (typeof AUDIENCE)[number];
-
 export interface PlanTemplate {
   key: string;
   version: string;
-  audience: Audience;
   name: { en: string; ar: string };
   /** One line on what this document is for, given to the agent as context. */
   purpose: string;
@@ -91,4 +122,13 @@ export function partitionSections(template: PlanTemplate) {
     draftable: template.sections.filter((s) => s.draftable_from_profile),
     needsInput: template.sections.filter((s) => !s.draftable_from_profile),
   };
+}
+
+/** The sections a given purpose-specific export should include, in order. */
+export function sectionsForAudience(
+  template: PlanTemplate,
+  audience: Audience | "full",
+): PlanSectionSpec[] {
+  if (audience === "full") return template.sections;
+  return template.sections.filter((s) => s.audiences.includes(audience));
 }

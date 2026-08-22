@@ -221,6 +221,44 @@ export async function runTurn(
   };
 }
 
+/**
+ * Lets the client correct what they just typed rather than living with a typo
+ * for the rest of the interview. Only the most recent client-authored turn is
+ * eligible — walking further back would mean discarding answers the agent has
+ * already built on. Everything from that turn onward (the client's message,
+ * the agent's reply, and any tool traffic in between) is deleted and the loop
+ * re-runs from there, the same way a dropped-and-retried turn already works.
+ */
+export async function editLastUserMessage(
+  interview: InterviewRow,
+  newText: string,
+): Promise<TurnResult> {
+  const rows = await query<{ id: string; role: string; content: any }>(
+    `SELECT id, role, content FROM interview_messages
+      WHERE interview_id = $1 ORDER BY created_at, id`,
+    [interview.id],
+  );
+
+  let idx = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i]!;
+    if (r.role === "assistant") continue;
+    // A user-role turn that is not plain text is a tool_result batch, not
+    // something the client typed — nothing earlier is reachable either.
+    const isPlainText =
+      typeof r.content === "string" ||
+      (Array.isArray(r.content) && r.content.every((b: any) => b.type === "text"));
+    if (isPlainText) idx = i;
+    break;
+  }
+  if (idx === -1) throw new Error("no_editable_message");
+
+  const idsToRemove = rows.slice(idx).map((r) => r.id);
+  await query(`DELETE FROM interview_messages WHERE id = ANY($1::uuid[])`, [idsToRemove]);
+
+  return runTurn(interview, newText);
+}
+
 export async function getInterview(clientId: string): Promise<InterviewRow | null> {
   return one<InterviewRow>(
     `SELECT i.id, i.client_id, i.status, c.sector_id, c.sector_pack_version

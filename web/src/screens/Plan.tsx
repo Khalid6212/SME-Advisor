@@ -1,40 +1,88 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, type FinancialLine } from "../api";
+import { PlanInputs } from "./PlanInputs";
 
 interface Template {
-  key: string; audience: string; name: { en: string }; purpose: string;
+  key: string; name: { en: string }; purpose: string;
   sections: number; needs_input: string[];
 }
 interface Section {
   id: string; key: string; title_en: string; content: string;
   provenance: { statement: string; source: string; ref: string }[];
-  confidence: string | null; status: string;
+  confidence: string | null; status: string; audiences: string[];
 }
 interface Gap {
   id: string; section_key: string; question: string;
   why_it_matters: string; blocking: boolean; request_id: string | null;
 }
 interface PlanView {
-  plan: { id: string; version: number; readiness: string | null; manager_note: string | null;
-          template_key: string; profile_superseded: boolean };
+  plan: {
+    id: string; version: number; status: string; readiness: string | null;
+    manager_note: string | null; template_key: string; profile_superseded: boolean;
+    approved_by: string | null; approved_at: string | null;
+  };
   sections: Section[];
   assumptions: { label: string; value: string; basis: string }[];
   gaps: Gap[];
+  financials: FinancialLine[];
 }
 
 const CONFIDENCE: Record<string, string> = {
   well_supported: "good", thin: "warn", blocked: "bad",
 };
 
+const AUDIENCE_LABEL: Record<string, string> = {
+  full: "Full plan", lender: "Lender pack", internal: "Operating plan",
+};
+
+const LINE_ITEM_LABEL: Record<string, string> = {
+  revenue: "Revenue", cogs: "Cost of goods sold", gross_profit: "Gross profit",
+  operating_cost: "Operating costs", net_income: "Net income",
+};
+const LINE_ITEM_ORDER = ["revenue", "cogs", "gross_profit", "operating_cost", "net_income"];
+
+const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+
+function FinancialsTable({ rows }: { rows: FinancialLine[] }) {
+  if (rows.length === 0) return null;
+  const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
+  const items = LINE_ITEM_ORDER.filter((item) => rows.some((r) => r.line_item === item));
+  const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
+  const fmt = (v: string | undefined) => (v == null ? "—" : Number(v).toLocaleString());
+
+  return (
+    <div className="card" style={{ overflowX: "auto" }}>
+      <table>
+        <thead>
+          <tr>
+            <th>SAR</th>
+            {years.map((y) => <th key={y}>{y === 0 ? "Base year" : `Year ${y}`}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item}>
+              <td>{LINE_ITEM_LABEL[item] ?? item}</td>
+              {years.map((y) => <td key={y}>{fmt(byKey.get(`${y}:${item}`))}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function Plan({ clientId }: { clientId: string }) {
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [plans, setPlans] = useState<{ id: string; version: number; template_key: string }[]>([]);
+  const [plans, setPlans] = useState<{ id: string; version: number; status: string }[]>([]);
   const [view, setView] = useState<PlanView | null>(null);
+  const [audience, setAudience] = useState<"full" | "lender" | "internal">("full");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [note, setNote] = useState("");
+  const [showInputs, setShowInputs] = useState(false);
 
   const loadList = async () => setPlans(await api.get(`/clients/${clientId}/plans`));
 
@@ -49,16 +97,27 @@ export function Plan({ clientId }: { clientId: string }) {
     setBusy(key);
     setError(null);
     try {
-      const r = await api.post<{ plan_id: string }>(`/clients/${clientId}/plans`, { template_key: key });
+      const r = await api.post<{ plan_id: string }>(`/clients/${clientId}/plans`, {});
       await loadList();
       await openPlan(r.plan_id);
     } catch (e: any) {
       setError(
         e.code === "no_profile"
           ? "The interview needs to be completed before a plan can be drafted."
-          : "The planner is unavailable right now.",
+          : e.code === "no_plan_inputs"
+            ? "Fill in the planning input below before drafting."
+            : "The planner is unavailable right now.",
       );
+      if (e.code === "no_plan_inputs") setShowInputs(true);
     }
+    setBusy(null);
+  };
+
+  const approve = async () => {
+    if (!view) return;
+    setBusy("approve");
+    await api.post(`/plans/${view.plan.id}/approve`);
+    await openPlan(view.plan.id);
     setBusy(null);
   };
 
@@ -82,33 +141,78 @@ export function Plan({ clientId }: { clientId: string }) {
     setBusy(null);
   };
 
+  const approved = view?.plan.status === "delivered";
+  const visibleSections = (view?.sections ?? []).filter(
+    (s) => audience === "full" || s.audiences.includes(audience),
+  );
+
   return (
     <div>
+      <div className="row" style={{ marginBottom: 12 }}>
+        <button onClick={() => setShowInputs(!showInputs)}>
+          {showInputs ? "Hide planning input" : "Planning input"}
+        </button>
+      </div>
+      {showInputs && <div style={{ marginBottom: 16 }}><PlanInputs clientId={clientId} /></div>}
+
       <div className="card">
         <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
           {templates.map((t) => (
-            <button key={t.key} onClick={() => generate(t.key)} disabled={!!busy}
-                    className={t.audience === "lender" ? "primary" : ""}>
-              {busy === t.key ? "Drafting…" : `Draft ${t.name.en}`}
+            <button key={t.key} onClick={() => generate(t.key)} disabled={!!busy} className="primary">
+              {busy === t.key ? "Drafting…" : `Draft business plan`}
             </button>
           ))}
           <div style={{ flex: 1 }} />
           {plans.map((p) => (
             <button key={p.id} onClick={() => openPlan(p.id)}>
-              v{p.version} · {p.template_key.includes("internal") ? "operating" : "lender"}
+              v{p.version} · {p.status === "delivered" ? "approved" : p.status.replace(/_/g, " ")}
             </button>
           ))}
         </div>
         <p className="muted" style={{ fontSize: 12, margin: "10px 0 0" }}>
-          Drafting runs the agent over the profile and takes a minute or so.
-          Strategy and projections come back as questions, not prose — they
-          aren't in a discovery interview.
+          One plan, drafted once from the profile, the planning input above, and any verified
+          documents. Lender and operating views are the same draft, filtered.
         </p>
         {error && <p style={{ color: "var(--bad)", marginBottom: 0 }}>{error}</p>}
       </div>
 
       {!view ? null : (
         <>
+          <div className="card">
+            <div className="row">
+              <span className={`pill ${approved ? "good" : "grey"}`}>
+                {approved ? "Approved" : view.plan.status.replace(/_/g, " ")}
+              </span>
+              {view.plan.readiness && <span className="pill info">{view.plan.readiness.replace(/_/g, " ")}</span>}
+              <div style={{ flex: 1 }} />
+              {(["full", "lender", "internal"] as const).map((a) => (
+                <button
+                  key={a} onClick={() => setAudience(a)}
+                  style={audience === a ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
+                >
+                  {AUDIENCE_LABEL[a]}
+                </button>
+              ))}
+            </div>
+            {!approved && (
+              <div className="row" style={{ marginTop: 10 }}>
+                <p className="muted" style={{ fontSize: 12, flex: 1, margin: 0 }}>
+                  Approve before exporting — the formatted export is only available once a
+                  manager has explicitly signed off on this version.
+                </p>
+                <button className="primary" onClick={approve} disabled={busy === "approve"}>
+                  {busy === "approve" ? "Approving…" : "Approve plan"}
+                </button>
+              </div>
+            )}
+            {approved && (
+              <div className="row" style={{ marginTop: 10, gap: 16 }}>
+                <a href={`${API_BASE}/plans/${view.plan.id}/export?audience=${audience}`}>Export as Markdown</a>
+                <a href={`${API_BASE}/plans/${view.plan.id}/export.docx?audience=${audience}`}>Export as Word</a>
+              </div>
+            )}
+          </div>
+
           {view.plan.profile_superseded && (
             <div className="card" style={{ borderColor: "var(--warn)", color: "var(--warn)" }}>
               The profile has changed since this plan was drafted. Regenerate before sending it anywhere.
@@ -149,7 +253,7 @@ export function Plan({ clientId }: { clientId: string }) {
           )}
 
           <h2>Sections</h2>
-          {view.sections.map((s) => (
+          {visibleSections.map((s) => (
             <div key={s.id} className="card">
               <div className="row">
                 <strong style={{ flex: 1 }}>{s.title_en}</strong>
@@ -169,6 +273,11 @@ export function Plan({ clientId }: { clientId: string }) {
                   {/* Optional, and worth more than the diff — see D19. */}
                   <input value={note} onChange={(e) => setNote(e.target.value)}
                          placeholder="Why did you change it? (optional — helps the agent learn)" />
+                  {approved && (
+                    <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                      Saving will revoke this plan's approval — it will need re-approving before it can be exported again.
+                    </p>
+                  )}
                   <div className="row">
                     <button className="primary" onClick={() => save(s)} disabled={busy === s.id}>
                       {busy === s.id ? "Saving…" : "Save"}
@@ -198,6 +307,13 @@ export function Plan({ clientId }: { clientId: string }) {
             </div>
           ))}
 
+          {view.financials.length > 0 && (
+            <>
+              <h2>Financial projections</h2>
+              <FinancialsTable rows={view.financials} />
+            </>
+          )}
+
           {view.assumptions.length > 0 && (
             <>
               <h2>Assumptions</h2>
@@ -212,12 +328,6 @@ export function Plan({ clientId }: { clientId: string }) {
               </div>
             </>
           )}
-
-          <div className="row" style={{ marginTop: 16 }}>
-            <a href={`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/plans/${view.plan.id}/export`}>
-              Export as Markdown
-            </a>
-          </div>
         </>
       )}
     </div>

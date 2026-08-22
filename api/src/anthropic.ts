@@ -10,6 +10,9 @@ if (!config.ANTHROPIC_API_KEY) {
 export const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY, timeout: 300_000 });
 
 export const MODEL = "claude-opus-5";
+/** Document extraction is read-and-summarise, not multi-step reasoning — a
+ *  faster, cheaper model is the right fit and keeps per-upload cost small. */
+export const EXTRACT_MODEL = "claude-haiku-4-5-20251001";
 
 export type ContentBlock = Record<string, any>;
 export type Message = { role: "user" | "assistant"; content: string | ContentBlock[] };
@@ -32,6 +35,8 @@ export interface AgentLoopOptions {
   onTool: (name: string, input: any) => Promise<ToolResult | null>;
   maxTurns?: number;
   maxTokens?: number;
+  /** Defaults to MODEL. Override for tasks that don't need Opus-level reasoning. */
+  model?: string;
 }
 
 export interface AgentLoopResult {
@@ -64,7 +69,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 
   for (let i = 0; i < maxTurns; i++) {
     const res = await anthropic.messages.create({
-      model: MODEL,
+      model: opts.model ?? MODEL,
       max_tokens: opts.maxTokens ?? 16000,
       system: cacheable(opts.system) as any,
       tools: opts.tools as any,

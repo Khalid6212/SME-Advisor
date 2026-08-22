@@ -1,26 +1,31 @@
 /**
  * Business planner agent, server-side.
  *
- * Drafts a lender pack or an internal operating plan from a profile. Sections
- * marked `draftable_from_profile: false` produce gaps rather than prose — the
- * profile is backward-looking and strategy and projections are not in it (D17).
+ * Drafts the one canonical business plan from a profile, the advisor's own
+ * planning input, and whatever documents have been verified so far.
+ * Audience-specific documents (a lender pack, an internal operating plan)
+ * are views over this single draft, not separate generations — see
+ * sectionsForAudience in src/planner/types.ts.
  */
 
 import { PLANNER_SYSTEM, buildPlannerBrief, buildPlannerTools } from "../../../src/planner/agent.ts";
-import { defaultPlanTemplate } from "../../../src/planner/default-template.ts";
-import { internalPlanTemplate } from "../../../src/planner/internal-template.ts";
-import type { PlanTemplate } from "../../../src/planner/types.ts";
+import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
+import { computeProjections } from "../../../src/planner/projections.ts";
+import type { PlanInputs } from "../../../src/planner/types.ts";
 import { renderRules, selectRules } from "../../../src/learning/rules.ts";
 import type { HouseRule } from "../../../src/learning/types.ts";
 import { runAgentLoop, type Message } from "../anthropic.ts";
 import { audit, one, query, tx } from "../db.ts";
 
-export const TEMPLATES: Record<string, PlanTemplate> = {
-  [defaultPlanTemplate.key]: defaultPlanTemplate,
-  [internalPlanTemplate.key]: internalPlanTemplate,
-};
+export const TEMPLATES = { [businessPlanTemplate.key]: businessPlanTemplate };
 
-async function houseRules(audience: string, sector: string): Promise<string> {
+/**
+ * Not scoped by audience: one run now drafts every audience's sections
+ * together, so a rule scoped to one audience is over-included here rather
+ * than dropped. That costs nothing visible — a section a rule doesn't really
+ * apply to is simply never exported to that audience.
+ */
+async function houseRules(sector: string): Promise<string> {
   const rows = await query<any>(
     `SELECT id, text, scope_agents, scope_audiences, scope_sectors, scope_sections, occurrences
        FROM house_rules WHERE status = 'active'`,
@@ -39,7 +44,7 @@ async function houseRules(audience: string, sector: string): Promise<string> {
       section_keys: r.scope_sections,
     },
   }));
-  return renderRules(selectRules(rules, { agent: "planner", audience, sector }));
+  return renderRules(selectRules(rules, { agent: "planner", sector }));
 }
 
 export interface GenerateResult {
@@ -52,20 +57,16 @@ export interface GenerateResult {
 }
 
 /**
- * Runs the planner over one profile and writes the result.
+ * Runs the planner over one profile, the advisor's planning input, and
+ * verified document facts, and writes the result.
  *
- * The profile is passed as structured JSON rather than the interview
- * transcript. That keeps the agent grounded in recorded fields, and it is also
- * the narrower option should the cross-border transfer question in docs/pdpl.md
- * land badly — this call sends the profile, not everything the owner ever said.
+ * Requires plan_inputs to exist — the advisor's judgment is what grounds the
+ * forward-looking sections (D-plan). Without it, most of a "full" plan would
+ * either be invented or come back as one long list of gaps; better to ask for
+ * the input up front than to draft a document that is mostly questions.
  */
-export async function generatePlan(
-  clientId: string,
-  templateKey: string,
-  createdBy: string,
-): Promise<GenerateResult> {
-  const template = TEMPLATES[templateKey];
-  if (!template) throw new Error(`Unknown plan template: ${templateKey}`);
+export async function generatePlan(clientId: string, createdBy: string): Promise<GenerateResult> {
+  const template = businessPlanTemplate;
 
   const profile = await one<{ id: string; data: any; version: number }>(
     `SELECT id, data, version FROM profiles
@@ -74,38 +75,69 @@ export async function generatePlan(
   );
   if (!profile) throw new Error("no_profile");
 
+  const planInputs = await one<PlanInputs>(
+    `SELECT revenue_growth_pct, growth_basis, projection_years, management_assessment,
+            positioning_notes, risk_mitigants, use_of_funds_notes
+       FROM plan_inputs WHERE client_id = $1`,
+    [clientId],
+  );
+  if (!planInputs) throw new Error("no_plan_inputs");
+
   const client = await one<{ name: string; sector_id: string }>(
     `SELECT name, sector_id FROM clients WHERE id = $1`,
     [clientId],
   );
 
-  const claims = await query<{ claim_key: string; field_path: string; owner_quote: string }>(
-    `SELECT claim_key, field_path, owner_quote FROM claims
-      WHERE profile_id = $1 AND invalidated_at IS NULL`,
+  const claims = await query<{
+    claim_key: string; field_path: string; stated_value: string | null;
+    owner_quote: string; verification_status: string;
+  }>(
+    `SELECT claim_key, field_path, stated_value, owner_quote, verification_status
+       FROM claims WHERE profile_id = $1 AND invalidated_at IS NULL`,
     [profile.id],
   );
 
-  const rules = await houseRules(template.audience, client!.sector_id);
-  const system = [
-    PLANNER_SYSTEM,
-    `\n## This document\n\n${template.purpose}`,
-    buildPlannerBrief(template),
-    rules,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const documentFacts = await query<{ filename: string; summary: string | null; facts: unknown }>(
+    `SELECT d.filename, e.summary, e.facts
+       FROM document_extracts e JOIN documents d ON d.id = e.document_id
+      WHERE d.client_id = $1 AND d.deleted_at IS NULL AND e.status = 'done'`,
+    [clientId],
+  );
+
+  const projections = computeProjections(
+    {
+      annualRevenue: profile.data?.revenue_and_customers?.annual_revenue ?? null,
+      grossMarginPct: profile.data?.financial_health?.gross_margin_pct ?? null,
+      monthlyOperatingCost: profile.data?.financial_health?.monthly_operating_cost ?? null,
+    },
+    planInputs,
+  );
+
+  const rules = await houseRules(client!.sector_id);
+  const system = [PLANNER_SYSTEM, buildPlannerBrief(template), rules].filter(Boolean).join("\n\n");
 
   const messages: Message[] = [
     {
       role: "user",
       content: [
-        `Draft the plan for ${client!.name}.`,
+        `Draft the business plan for ${client!.name}.`,
         "",
-        "PROFILE (owner-reported, unverified at this stage):",
+        "PROFILE (owner-reported at interview, unverified unless a claim below says otherwise):",
         JSON.stringify(profile.data, null, 2),
         "",
-        "CLAIMS — the owner's own words, for provenance refs:",
+        "CLAIMS — the owner's own words, with verification status where a document was checked against them:",
         JSON.stringify(claims, null, 2),
+        "",
+        "ADVISOR PLANNING INPUT — the source for strategy, positioning, and growth sections the profile does not cover:",
+        JSON.stringify(planInputs, null, 2),
+        "",
+        documentFacts.length > 0
+          ? `DOCUMENT FACTS — extracted from uploaded documents:\n${JSON.stringify(documentFacts, null, 2)}`
+          : "DOCUMENT FACTS: none extracted yet.",
+        "",
+        projections.length > 0
+          ? `COMPUTED FINANCIAL PROJECTIONS — narrate these exactly, do not recompute them:\n${JSON.stringify(projections, null, 2)}`
+          : "COMPUTED FINANCIAL PROJECTIONS: none — base revenue or a growth assumption is missing. Flag the projections section as a gap.",
       ].join("\n"),
     },
   ];
@@ -160,8 +192,10 @@ export async function generatePlan(
     );
     const plan = rows[0]!;
 
-    // Every section in the template gets a row, drafted or not — an empty row
-    // makes a missing section visible in the UI rather than absent from it.
+    // Every section in the template gets a row, drafted or not, regardless of
+    // which audience it belongs to — audience is a read/export-time filter,
+    // not a drafting split. An empty row makes a missing section visible in
+    // the UI rather than absent from it.
     for (const [i, spec] of template.sections.entries()) {
       const draft = drafted.find((d) => d.section_key === spec.key);
       await c.query(
@@ -192,12 +226,19 @@ export async function generatePlan(
       );
     }
 
+    for (const p of projections) {
+      await c.query(
+        `INSERT INTO plan_financials (plan_id, year_offset, line_item, value, basis)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [plan.id, p.year_offset, p.line_item, p.value, p.basis],
+      );
+    }
+
     await audit("plan.generated", {
       actorUserId: createdBy,
       clientId,
       payload: {
         template: template.key,
-        audience: template.audience,
         version: plan.version,
         sections_drafted: drafted.length,
         gaps: gaps.length,

@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { api, type ClientRow, type User } from "./api";
 import { Login } from "./screens/Login";
 import { SetPassword } from "./screens/SetPassword";
+import { Consent } from "./screens/Consent";
 import { Interview } from "./screens/Interview";
+import { ManagerInterview } from "./screens/ManagerInterview";
 import { DataRoom } from "./screens/DataRoom";
 import { Plan } from "./screens/Plan";
 import { Admin } from "./screens/Admin";
@@ -147,6 +149,11 @@ export default function App() {
   if (!user.has_password) {
     return <SetPassword email={user.email} onDone={() => location.reload()} />;
   }
+  // Clients only — a manager account was provisioned deliberately, not
+  // self-signed-up, so the interview consent gate does not apply to them.
+  if (user.role === "client" && !user.has_consented) {
+    return <Consent onDone={() => location.reload()} />;
+  }
 
   const manager = user.role === "manager" || user.role === "admin";
   const active = open ?? clients[0] ?? null;
@@ -192,10 +199,12 @@ export default function App() {
               <button onClick={() => setOpen(null)} style={{ marginTop: 20 }}>← Pipeline</button>
               <h1>{open.name}</h1>
               <p className="sub">{open.contact_email} · {open.status.replace(/_/g, " ")}</p>
-              <Tabs tabs={["Data room", "Plans"]} active={tab} onChange={setTab} />
+              <Tabs tabs={["Interview", "Data room", "Plans"]} active={tab} onChange={setTab} />
               {tab === "Plans"
                 ? <Plan clientId={open.id} />
-                : <DataRoom clientId={open.id} manager />}
+                : tab === "Interview"
+                  ? <ManagerInterview clientId={open.id} />
+                  : <DataRoom clientId={open.id} manager />}
             </>
           ) : (
             <>

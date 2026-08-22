@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { config, isProd } from "./config.ts";
+import { INTERVIEW_CONSENT_PURPOSE } from "./consent.ts";
 import { audit, one, query, tx } from "./db.ts";
 import { magicLinkMail, sendMail } from "./mailer.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
@@ -14,6 +15,8 @@ export interface AuthUser {
   email: string;
   role: "client" | "manager" | "admin";
   has_password: boolean;
+  /** Only meaningful for clients — managers/admins never see the gate this guards. */
+  has_consented: boolean;
 }
 
 // Computed once, so a login attempt against an email with no password set
@@ -66,14 +69,18 @@ export async function loadUser(req: FastifyRequest): Promise<void> {
   if (!sessionId) return;
 
   const row = await one<AuthUser>(
-    `SELECT u.id, u.email, u.role, (u.password_hash IS NOT NULL) AS has_password
+    `SELECT u.id, u.email, u.role, (u.password_hash IS NOT NULL) AS has_password,
+            EXISTS(
+              SELECT 1 FROM consents
+               WHERE user_id = u.id AND purpose = $2 AND withdrawn_at IS NULL
+            ) AS has_consented
        FROM auth_sessions s
        JOIN users u ON u.id = s.user_id
       WHERE s.id = $1
         AND s.revoked_at IS NULL
         AND s.expires_at > now()
         AND u.status = 'active'`,
-    [sessionId],
+    [sessionId, INTERVIEW_CONSENT_PURPOSE],
   );
   req.user = row;
   if (row) {
