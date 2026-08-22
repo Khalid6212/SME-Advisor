@@ -43,11 +43,11 @@ export interface AgentLoopResult {
   messages: Message[];
   /** True when a tool handler returned null — the agent finished its job. */
   terminated: boolean;
-  usage: { input: number; output: number; cacheRead: number };
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
 
 /**
- * The system block carries the cache breakpoint. Everything client-specific
+ * The system block carries one cache breakpoint. Everything client-specific
  * lives in `messages`, below it, so the prefix stays byte-identical across every
  * client — verify with usage.cacheRead, which should be non-zero from the second
  * turn of any conversation.
@@ -62,9 +62,32 @@ function cacheable(system: string) {
   ];
 }
 
+/**
+ * Marks the last content block of the last message as a second breakpoint,
+ * so the next call in this same loop — or the next turn of this same
+ * conversation, if it comes back inside the cache TTL — reads the whole
+ * growing history instead of paying full price for it again. Without this,
+ * only the system prompt was ever cached; a long interview or a 24-turn plan
+ * draft re-billed its entire accumulated transcript as fresh input on every
+ * single call. Never mutates the caller's array — the marker is API-only and
+ * has no business being persisted to the database.
+ */
+function withCachedTail(messages: Message[]): Message[] {
+  if (messages.length === 0) return messages;
+  const last = messages[messages.length - 1]!;
+  const content: ContentBlock[] =
+    typeof last.content === "string" ? [{ type: "text", text: last.content }] : [...last.content];
+  if (content.length === 0) return messages;
+
+  const markedContent = content.map((b, i) =>
+    i === content.length - 1 ? { ...b, cache_control: { type: "ephemeral" as const } } : b,
+  );
+  return [...messages.slice(0, -1), { role: last.role, content: markedContent }];
+}
+
 export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopResult> {
   const messages: Message[] = [...opts.messages];
-  const usage = { input: 0, output: 0, cacheRead: 0 };
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const maxTurns = opts.maxTurns ?? 8;
 
   for (let i = 0; i < maxTurns; i++) {
@@ -73,12 +96,13 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
       max_tokens: opts.maxTokens ?? 16000,
       system: cacheable(opts.system) as any,
       tools: opts.tools as any,
-      messages: messages as any,
+      messages: withCachedTail(messages) as any,
     });
 
     usage.input += res.usage.input_tokens ?? 0;
     usage.output += res.usage.output_tokens ?? 0;
     usage.cacheRead += res.usage.cache_read_input_tokens ?? 0;
+    usage.cacheWrite += res.usage.cache_creation_input_tokens ?? 0;
 
     // Append the full content array, not extracted text — tool_use and thinking
     // blocks must round-trip or the next request is rejected.

@@ -12,7 +12,7 @@ import { requireManager, requireUser } from "../auth.ts";
 import { extractDocument } from "../agents/extract.ts";
 import { audit, one, query, tx } from "../db.ts";
 import { purge, storage, storageKey } from "../storage.ts";
-import { sendMail } from "../mailer.ts";
+import { documentReminderMail, sendMail } from "../mailer.ts";
 import { config } from "../config.ts";
 import { instantiate, nest, progress, recomputePaths, suggestions, type NodeRow } from "../dataroom/tree.ts";
 
@@ -58,6 +58,12 @@ const patchSchema = z.object({
 const publishSchema = z.object({
   node_ids: z.array(z.string().uuid()).min(1),
   due_at: z.string().datetime().optional(),
+  message: z.string().trim().max(2000).optional(),
+});
+
+const remindSchema = z.object({
+  // Omit to remind about everything currently outstanding.
+  node_ids: z.array(z.string().uuid()).min(1).optional(),
   message: z.string().trim().max(2000).optional(),
 });
 
@@ -311,6 +317,80 @@ export async function dataRoomRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return { requested: updated.length, items: updated };
+  });
+
+  /**
+   * Items requested but not yet uploaded — the list a reminder would chase.
+   * `rejected` counts too: from the client's side that's still "something to
+   * go do," not a closed item.
+   */
+  app.get("/clients/:id/data-room/outstanding", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const room = await roomFor(id);
+    if (!room) return reply.code(404).send({ error: "no_data_room" });
+
+    const items = await query<{ id: string; path: string; title_en: string; status: string; requested_at: Date | null }>(
+      `SELECT id, path, title_en, status, requested_at FROM data_room_nodes
+        WHERE data_room_id = $1 AND kind = 'item' AND status IN ('requested', 'rejected')
+        ORDER BY path`,
+      [room.id],
+    );
+
+    return { count: items.length, items };
+  });
+
+  /**
+   * A follow-up nudge for items already requested once. Distinct from
+   * /publish, which both asks for the first time and notifies — this only
+   * notifies, for whatever is still outstanding, bundled into one email
+   * rather than one per item so a manager chasing five things doesn't send
+   * five emails.
+   */
+  app.post("/clients/:id/data-room/remind", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const parsed = remindSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+
+    const room = await roomFor(id);
+    if (!room) return reply.code(404).send({ error: "no_data_room" });
+
+    const outstanding = await query<{ id: string; path: string; title_en: string }>(
+      `SELECT id, path, title_en FROM data_room_nodes
+        WHERE data_room_id = $1 AND kind = 'item' AND status IN ('requested', 'rejected')
+          ${parsed.data.node_ids ? "AND id = ANY($2)" : ""}
+        ORDER BY path`,
+      parsed.data.node_ids ? [room.id, parsed.data.node_ids] : [room.id],
+    );
+    if (outstanding.length === 0) return reply.code(409).send({ error: "nothing_outstanding" });
+
+    const contact = await one<{ email: string; name: string }>(
+      `SELECT u.email, c.name FROM clients c JOIN users u ON u.id = c.owner_user_id
+        WHERE c.id = $1`,
+      [id],
+    );
+    if (!contact) return reply.code(404).send({ error: "not_found" });
+
+    await sendMail(documentReminderMail(contact.email, contact.name, outstanding, parsed.data.message));
+
+    await query(
+      `INSERT INTO reminders (client_id, target, node_ids, message, sent_by)
+       VALUES ($1, 'data_room', $2, $3, $4)`,
+      [id, outstanding.map((n) => n.id), parsed.data.message ?? null, user.id],
+    );
+
+    await audit("dataroom.reminder_sent", {
+      actorUserId: user.id,
+      clientId: id,
+      payload: { items: outstanding.map((n) => n.path) },
+    });
+
+    return { sent: true, items: outstanding.length };
   });
 
   /**

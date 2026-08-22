@@ -24,6 +24,7 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [remindSelected, setRemindSelected] = useState<Set<string>>(new Set());
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
   const [versions, setVersions] = useState<Record<string, DocVersion[]>>({});
 
@@ -54,6 +55,14 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
       message: "Your adviser has requested the following.",
     });
     setSelected(new Set());
+    await load();
+    setBusy(null);
+  };
+
+  const remind = async () => {
+    setBusy("remind");
+    await api.post(`/clients/${clientId}/data-room/remind`, { node_ids: [...remindSelected] });
+    setRemindSelected(new Set());
     await load();
     setBusy(null);
   };
@@ -134,6 +143,17 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
                 const next = new Set(selected);
                 e.target.checked ? next.add(n.id) : next.delete(n.id);
                 setSelected(next);
+              }}
+            />
+          )}
+          {manager && ["requested", "rejected"].includes(n.status) && (
+            <input
+              type="checkbox" style={{ width: 16 }} title="Select to remind"
+              checked={remindSelected.has(n.id)}
+              onChange={(e) => {
+                const next = new Set(remindSelected);
+                e.target.checked ? next.add(n.id) : next.delete(n.id);
+                setRemindSelected(next);
               }}
             />
           )}
@@ -241,6 +261,11 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
             <strong>{room.progress.provided} of {room.progress.requested}</strong>
             <span className="muted"> requested items provided</span>
           </div>
+          {manager && remindSelected.size > 0 && (
+            <button onClick={remind} disabled={busy === "remind"} style={{ marginInlineEnd: 8 }}>
+              {busy === "remind" ? "Sending…" : `Remind about ${remindSelected.size} item${remindSelected.size === 1 ? "" : "s"}`}
+            </button>
+          )}
           {manager && selected.size > 0 && (
             <button className="primary" onClick={publish} disabled={busy === "publish"}>
               Request {selected.size} item{selected.size === 1 ? "" : "s"}

@@ -83,12 +83,17 @@ export function Plan({ clientId }: { clientId: string }) {
   const [draft, setDraft] = useState("");
   const [note, setNote] = useState("");
   const [showInputs, setShowInputs] = useState(false);
+  const [outstanding, setOutstanding] = useState<{ count: number; items: { title_en: string }[] } | null>(null);
+  const [selectedGaps, setSelectedGaps] = useState<Set<string>>(new Set());
 
   const loadList = async () => setPlans(await api.get(`/clients/${clientId}/plans`));
+  const loadOutstanding = async () =>
+    setOutstanding(await api.get(`/clients/${clientId}/data-room/outstanding`));
 
   useEffect(() => {
     api.get<Template[]>("/plan-templates").then(setTemplates);
     void loadList();
+    void loadOutstanding();
   }, [clientId]);
 
   const openPlan = async (id: string) => setView(await api.get<PlanView>(`/plans/${id}`));
@@ -134,10 +139,34 @@ export function Plan({ clientId }: { clientId: string }) {
     setBusy(null);
   };
 
-  const requestGap = async (g: Gap) => {
-    setBusy(g.id);
-    await api.post(`/plan-gaps/${g.id}/request`);
-    if (view) await openPlan(view.plan.id);
+  const toggleGap = (id: string) => {
+    setSelectedGaps((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const sendGapRequests = async () => {
+    setBusy("gaps");
+    try {
+      await api.post("/plan-gaps/request-batch", { gap_ids: [...selectedGaps] });
+      setSelectedGaps(new Set());
+      if (view) await openPlan(view.plan.id);
+    } catch {
+      setError("Couldn't send that — try again.");
+    }
+    setBusy(null);
+  };
+
+  const remindOutstanding = async () => {
+    setBusy("remind");
+    try {
+      await api.post(`/clients/${clientId}/data-room/remind`, {});
+      await loadOutstanding();
+    } catch {
+      setError("Couldn't send the reminder — try again.");
+    }
     setBusy(null);
   };
 
@@ -154,6 +183,22 @@ export function Plan({ clientId }: { clientId: string }) {
         </button>
       </div>
       {showInputs && <div style={{ marginBottom: 16 }}><PlanInputs clientId={clientId} /></div>}
+
+      {outstanding && outstanding.count > 0 && (
+        <div className="card" style={{ borderColor: "var(--warn)", marginBottom: 16 }}>
+          <div className="row">
+            <div style={{ flex: 1 }}>
+              <strong>{outstanding.count} requested document{outstanding.count === 1 ? "" : "s"} not yet uploaded</strong>
+              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                {outstanding.items.map((i) => i.title_en).join(", ")}
+              </p>
+            </div>
+            <button onClick={remindOutstanding} disabled={busy === "remind"}>
+              {busy === "remind" ? "Sending…" : "Send reminder"}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
@@ -230,20 +275,32 @@ export function Plan({ clientId }: { clientId: string }) {
 
           {view.gaps.length > 0 && (
             <>
-              <h2>Gaps ({view.gaps.length})</h2>
+              <div className="row">
+                <h2 style={{ flex: 1 }}>Gaps ({view.gaps.length})</h2>
+                {selectedGaps.size > 0 && (
+                  <button className="primary" onClick={sendGapRequests} disabled={busy === "gaps"}>
+                    {busy === "gaps"
+                      ? "Sending…"
+                      : `Send ${selectedGaps.size} question${selectedGaps.size === 1 ? "" : "s"} in one email`}
+                  </button>
+                )}
+              </div>
               {view.gaps.map((g) => (
                 <div key={g.id} className="card">
                   <div className="row">
+                    {!g.request_id && (
+                      <input
+                        type="checkbox" style={{ width: 16 }}
+                        checked={selectedGaps.has(g.id)}
+                        onChange={() => toggleGap(g.id)}
+                      />
+                    )}
                     <span className={`pill ${g.blocking ? "bad" : "grey"}`}>
                       {g.blocking ? "blocking" : "optional"}
                     </span>
                     <span className="muted" style={{ fontSize: 12 }}>{g.section_key}</span>
                     <div style={{ flex: 1 }} />
-                    {g.request_id
-                      ? <span className="pill info">requested</span>
-                      : <button onClick={() => requestGap(g)} disabled={busy === g.id}>
-                          Ask the client
-                        </button>}
+                    {g.request_id && <span className="pill info">requested</span>}
                   </div>
                   <p style={{ margin: "8px 0 4px" }}>{g.question}</p>
                   <p className="muted" style={{ fontSize: 12, margin: 0 }}>{g.why_it_matters}</p>

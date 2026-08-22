@@ -14,7 +14,7 @@ import { computeProjections } from "../../../src/planner/projections.ts";
 import type { PlanInputs } from "../../../src/planner/types.ts";
 import { renderRules, selectRules } from "../../../src/learning/rules.ts";
 import type { HouseRule } from "../../../src/learning/types.ts";
-import { runAgentLoop, type Message } from "../anthropic.ts";
+import { MODEL, runAgentLoop, type Message } from "../anthropic.ts";
 import { audit, one, query, tx } from "../db.ts";
 
 export const TEMPLATES = { [businessPlanTemplate.key]: businessPlanTemplate };
@@ -97,10 +97,14 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
     [profile.id],
   );
 
+  // superseded_at IS NULL matters here specifically — without it, a document
+  // a client re-uploaded to correct would still hand its old, wrong figures
+  // to the planner alongside the correction.
   const documentFacts = await query<{ filename: string; summary: string | null; facts: unknown }>(
     `SELECT d.filename, e.summary, e.facts
        FROM document_extracts e JOIN documents d ON d.id = e.document_id
-      WHERE d.client_id = $1 AND d.deleted_at IS NULL AND e.status = 'done'`,
+      WHERE d.client_id = $1 AND d.deleted_at IS NULL AND d.superseded_at IS NULL
+        AND e.status = 'done'`,
     [clientId],
   );
 
@@ -147,7 +151,7 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
   const assumptions: any[] = [];
   let summary: any = null;
 
-  await runAgentLoop({
+  const loopResult = await runAgentLoop({
     system,
     tools: buildPlannerTools(),
     messages,
@@ -171,6 +175,14 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
       }
       return { content: `Unknown tool ${name}.`, is_error: true };
     },
+  });
+
+  // This is the expensive agent — one 24-turn Opus run per draft — so this
+  // is the number most worth watching over time.
+  await audit("agent.usage", {
+    actorUserId: createdBy,
+    clientId,
+    payload: { agent: "planner", model: MODEL, ...loopResult.usage },
   });
 
   const result = await tx(async (c) => {

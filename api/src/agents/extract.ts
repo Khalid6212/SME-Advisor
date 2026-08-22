@@ -15,7 +15,7 @@
  */
 
 import { type ContentBlock, EXTRACT_MODEL, type Message, runAgentLoop } from "../anthropic.ts";
-import { one, query } from "../db.ts";
+import { audit, one, query } from "../db.ts";
 import { storage } from "../storage.ts";
 
 const SUPPORTED_DOCUMENT = new Set(["application/pdf"]);
@@ -172,7 +172,7 @@ export async function extractDocument(documentId: string): Promise<void> {
   let extraction: any = null;
 
   try {
-    await runAgentLoop({
+    const loopResult = await runAgentLoop({
       system: EXTRACT_SYSTEM,
       tools: [RECORD_TOOL],
       messages,
@@ -186,6 +186,10 @@ export async function extractDocument(documentId: string): Promise<void> {
         }
         return { content: `Unknown tool ${name}.`, is_error: true };
       },
+    });
+    await audit("agent.usage", {
+      clientId: doc.client_id,
+      payload: { agent: "extract", model: EXTRACT_MODEL, ...loopResult.usage },
     });
   } catch {
     await recordStatus(documentId, "failed");

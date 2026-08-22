@@ -13,6 +13,7 @@ import { z } from "zod";
 import { requireManager } from "../auth.ts";
 import { audit, one, query } from "../db.ts";
 import { buildPlanDocx } from "../docx.ts";
+import { informationRequestMail, sendMail } from "../mailer.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import { type Audience, sectionsForAudience } from "../../../src/planner/types.ts";
 import { editDistance } from "../../../src/learning/types.ts";
@@ -33,6 +34,11 @@ const sectionSchema = z.object({
   status: z.enum(["drafted", "edited", "approved"]).optional(),
   /** Why the manager changed it. Far higher signal than the diff (D19). */
   note: z.string().trim().max(2000).optional(),
+});
+
+const requestBatchSchema = z.object({
+  gap_ids: z.array(z.string().uuid()).min(1),
+  message: z.string().trim().max(2000).optional(),
 });
 
 const planInputsSchema = z.object({
@@ -291,34 +297,68 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     return { saved: true };
   });
 
-  /** Turns a gap into a question for the client, reusing the request flow. */
-  app.post("/plan-gaps/:gapId/request", async (req, reply) => {
+  /**
+   * Turns one or more gaps into questions for the client, bundled into a
+   * single email — a client getting five separate emails for five gaps
+   * answers none of them. Each gap still becomes its own `requests` row
+   * (so it can resolve independently when replied to); only the
+   * notification is combined.
+   */
+  app.post("/plan-gaps/request-batch", async (req, reply) => {
     const user = requireManager(req, reply);
     if (!user) return;
-    const { gapId } = req.params as { gapId: string };
 
-    const gap = await one<{ id: string; question: string; client_id: string; request_id: string | null }>(
+    const parsed = requestBatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+
+    const gaps = await query<{ id: string; question: string; client_id: string; request_id: string | null }>(
       `SELECT g.id, g.question, p.client_id, g.request_id
          FROM plan_gaps g JOIN plans p ON p.id = g.plan_id
-        WHERE g.id = $1`,
-      [gapId],
+        WHERE g.id = ANY($1)`,
+      [parsed.data.gap_ids],
     );
-    if (!gap) return reply.code(404).send({ error: "not_found" });
-    if (gap.request_id) return reply.code(409).send({ error: "already_requested" });
+    if (gaps.length === 0) return reply.code(404).send({ error: "not_found" });
 
-    const request = await one<{ id: string }>(
-      `INSERT INTO requests (client_id, body, created_by) VALUES ($1,$2,$3) RETURNING id`,
-      [gap.client_id, gap.question, user.id],
+    const clientIds = new Set(gaps.map((g) => g.client_id));
+    if (clientIds.size > 1) return reply.code(400).send({ error: "mixed_clients" });
+    const clientId = gaps[0]!.client_id;
+
+    const eligible = gaps.filter((g) => !g.request_id);
+    if (eligible.length === 0) return reply.code(409).send({ error: "already_requested" });
+
+    const created: { gap_id: string; request_id: string }[] = [];
+    for (const g of eligible) {
+      const request = await one<{ id: string }>(
+        `INSERT INTO requests (client_id, body, created_by) VALUES ($1,$2,$3) RETURNING id`,
+        [clientId, g.question, user.id],
+      );
+      await query(`UPDATE plan_gaps SET request_id = $2 WHERE id = $1`, [g.id, request!.id]);
+      created.push({ gap_id: g.id, request_id: request!.id });
+    }
+
+    const contact = await one<{ email: string; name: string }>(
+      `SELECT u.email, c.name FROM clients c JOIN users u ON u.id = c.owner_user_id WHERE c.id = $1`,
+      [clientId],
     );
-    await query(`UPDATE plan_gaps SET request_id = $2 WHERE id = $1`, [gapId, request!.id]);
+    if (contact) {
+      await sendMail(
+        informationRequestMail(contact.email, contact.name, eligible.map((g) => g.question), parsed.data.message),
+      );
+    }
 
-    await audit("plan.gap_requested", {
+    await query(
+      `INSERT INTO reminders (client_id, target, request_ids, message, sent_by)
+       VALUES ($1, 'request', $2, $3, $4)`,
+      [clientId, created.map((c) => c.request_id), parsed.data.message ?? null, user.id],
+    );
+
+    await audit("plan.gaps_requested", {
       actorUserId: user.id,
-      clientId: gap.client_id,
-      payload: { gap_id: gapId, request_id: request!.id },
+      clientId,
+      payload: { gap_ids: eligible.map((g) => g.id), request_ids: created.map((c) => c.request_id) },
     });
 
-    return { request_id: request!.id };
+    return { requested: created.length, request_ids: created.map((c) => c.request_id) };
   });
 
   // ─── export, gated on approval ───────────────────────────────────────────

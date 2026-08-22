@@ -11,7 +11,7 @@ import { assessReadiness } from "../../../src/core/readiness.ts";
 import { getPack } from "../../../src/sectors/registry.ts";
 import { renderRules, selectRules } from "../../../src/learning/rules.ts";
 import type { HouseRule } from "../../../src/learning/types.ts";
-import { runAgentLoop, textOf, type Message } from "../anthropic.ts";
+import { MODEL, runAgentLoop, textOf, type Message } from "../anthropic.ts";
 import { audit, one, query, tx } from "../db.ts";
 
 interface InterviewRow {
@@ -212,6 +212,13 @@ export async function runTurn(
   });
 
   await persistMessages(interview.id, result.messages, startIndex);
+
+  // Visibility first — cost cannot be managed on a guess. Cheap enough to log
+  // every turn: this is one insert against a table nothing else reads hot.
+  await audit("agent.usage", {
+    clientId: interview.client_id,
+    payload: { agent: "interview", model: MODEL, ...result.usage },
+  });
 
   const last = result.messages[result.messages.length - 1];
   return {
