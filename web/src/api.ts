@@ -153,6 +153,12 @@ export interface InterviewSummary {
   claims: Claim[];
 }
 
+export interface CompetitorNote {
+  name: string;
+  strengths: string;
+  weaknesses: string;
+}
+
 export interface PlanInputs {
   revenue_growth_pct: number | null;
   growth_basis: string | null;
@@ -164,6 +170,15 @@ export interface PlanInputs {
   loan_term_years: number | null;
   loan_interest_rate_pct: number | null;
   asset_useful_life_years: number | null;
+  market_size_tam: number | null;
+  market_size_sam: number | null;
+  market_size_som: number | null;
+  market_size_sources: string | null;
+  market_growth_pct: number | null;
+  market_drivers_notes: string | null;
+  competitor_notes: CompetitorNote[];
+  exit_strategy_notes: string | null;
+  unit_economics_notes: string | null;
   updated_at?: string;
 }
 
@@ -172,4 +187,5 @@ export interface FinancialLine {
   line_item: string;
   value: string;
   basis: string | null;
+  scenario: "base" | "bull" | "bear";
 }

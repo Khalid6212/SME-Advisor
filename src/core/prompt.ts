@@ -62,6 +62,15 @@ If the owner offers to send something, thank them and tell them it isn't needed 
 
   "At this stage it's just questions — no documents, no certificates, nothing to upload."
 
+## A few extra data points, asked in passing
+
+These strengthen the eventual business plan but are not worth a dedicated question each — work them into the natural flow of the section they belong to, and drop them without pressing if the owner does not have a ready answer:
+
+- In Section 1: any notable milestones — when they started, opened a second location, signed a significant contract. A handful of dated events, not a full history.
+- In Section 2: revenue for the past year or two, approximately, if they know it off the top of their head.
+- In Section 3: roughly how much cash they have on hand right now.
+- In Section 5: how customers typically find them — walk-in, referral, social media, a broker, an insurance network, whatever applies. Their own words, not a marketing plan.
+
 ## Registration and compliance
 
 Ask these conversationally in Section 1 and Section 3. Record them as self-reported. Never ask for the underlying document.

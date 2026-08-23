@@ -41,49 +41,116 @@ const LINE_ITEM_LABEL: Record<string, string> = {
   ebit: "EBIT", interest_expense: "Interest expense", net_income: "Net income",
   principal_repayment: "Principal repayment", debt_service: "Total debt service",
   dscr: "Debt service coverage ratio",
+  cash_opening: "Opening cash", cash_from_funding: "+ Funding drawn",
+  cash_from_operations: "+ Operating cash flow", cash_used_for_capex: "− Capital expenditure",
+  cash_closing: "= Closing cash",
 };
 const LINE_ITEM_ORDER = [
   "revenue", "cogs", "gross_profit", "operating_cost", "ebitda",
   "depreciation", "ebit", "interest_expense", "net_income",
   "principal_repayment", "debt_service", "dscr",
 ];
+const CASH_BRIDGE_ORDER = ["cash_opening", "cash_from_funding", "cash_from_operations", "cash_used_for_capex", "cash_closing"];
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
-function FinancialsTable({ rows }: { rows: FinancialLine[] }) {
-  if (rows.length === 0) return null;
+// DSCR is a ratio, not a currency figure; negatives read as losses, matching
+// the accounting-parens convention used in the exported documents.
+function fmtFinancial(item: string, v: string | undefined): string {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (item === "dscr") return `${n.toFixed(2)}x`;
+  const abs = Math.abs(n).toLocaleString();
+  return n < 0 ? `(${abs})` : abs;
+}
+
+function YearsByItemTable({ rows, order }: { rows: FinancialLine[]; order: string[] }) {
   const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
-  const items = LINE_ITEM_ORDER.filter((item) => rows.some((r) => r.line_item === item));
+  const items = order.filter((item) => rows.some((r) => r.line_item === item));
   const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
-  // DSCR is a ratio, not a currency figure; negatives read as losses, matching
-  // the accounting-parens convention used in the exported documents.
-  const fmt = (item: string, v: string | undefined) => {
-    if (v == null) return "—";
-    const n = Number(v);
-    if (item === "dscr") return `${n.toFixed(2)}x`;
-    const abs = Math.abs(n).toLocaleString();
-    return n < 0 ? `(${abs})` : abs;
-  };
 
   return (
-    <div className="card" style={{ overflowX: "auto" }}>
-      <table>
-        <thead>
-          <tr>
-            <th>SAR</th>
-            {years.map((y) => <th key={y}>{y === 0 ? "Base year" : `Year ${y}`}</th>)}
+    <table>
+      <thead>
+        <tr>
+          <th>SAR</th>
+          {years.map((y) => <th key={y}>{y === 0 ? "Base year" : `Year ${y}`}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((item) => (
+          <tr key={item}>
+            <td>{LINE_ITEM_LABEL[item] ?? item}</td>
+            {years.map((y) => <td key={y}>{fmtFinancial(item, byKey.get(`${y}:${item}`))}</td>)}
           </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => (
-            <tr key={item}>
-              <td>{LINE_ITEM_LABEL[item] ?? item}</td>
-              {years.map((y) => <td key={y}>{fmt(item, byKey.get(`${y}:${item}`))}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** Three distinct exhibits, not one continuous sheet — matches how the
+ *  exported documents present the same data (see api/src/docx.ts). */
+function FinancialsExhibits({ rows }: { rows: FinancialLine[] }) {
+  const base = rows.filter((r) => r.scenario === "base" && !CASH_BRIDGE_ORDER.includes(r.line_item));
+  const sensitivity = rows.filter((r) => r.scenario === "bull" || r.scenario === "bear");
+  const bridge = rows.filter((r) => r.scenario === "base" && CASH_BRIDGE_ORDER.includes(r.line_item));
+  if (base.length === 0 && sensitivity.length === 0 && bridge.length === 0) return null;
+
+  const find = (source: FinancialLine[], scenario: string, item: string, year: number) =>
+    source.find((r) => r.scenario === scenario && r.year_offset === year && r.line_item === item)?.value;
+
+  return (
+    <>
+      {base.length > 0 && (
+        <>
+          <h2>Financial projections</h2>
+          <div className="card" style={{ overflowX: "auto" }}>
+            <YearsByItemTable rows={base} order={LINE_ITEM_ORDER} />
+          </div>
+        </>
+      )}
+
+      {sensitivity.length > 0 && (() => {
+        const year = sensitivity[0]!.year_offset;
+        return (
+          <>
+            <h2>Sensitivity (year {year})</h2>
+            <div className="card" style={{ overflowX: "auto" }}>
+              <table>
+                <thead><tr><th>Scenario</th><th>Revenue</th><th>EBITDA</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td>Bear</td>
+                    <td>{fmtFinancial("revenue", find(sensitivity, "bear", "revenue", year))}</td>
+                    <td>{fmtFinancial("ebitda", find(sensitivity, "bear", "ebitda", year))}</td>
+                  </tr>
+                  <tr>
+                    <td>Base</td>
+                    <td>{fmtFinancial("revenue", find(base, "base", "revenue", year))}</td>
+                    <td>{fmtFinancial("ebitda", find(base, "base", "ebitda", year))}</td>
+                  </tr>
+                  <tr>
+                    <td>Bull</td>
+                    <td>{fmtFinancial("revenue", find(sensitivity, "bull", "revenue", year))}</td>
+                    <td>{fmtFinancial("ebitda", find(sensitivity, "bull", "ebitda", year))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        );
+      })()}
+
+      {bridge.length > 0 && (
+        <>
+          <h2>Cash-flow bridge (year 1)</h2>
+          <div className="card" style={{ overflowX: "auto" }}>
+            <YearsByItemTable rows={bridge} order={CASH_BRIDGE_ORDER} />
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
@@ -379,12 +446,7 @@ export function Plan({ clientId }: { clientId: string }) {
             </div>
           ))}
 
-          {view.financials.length > 0 && (
-            <>
-              <h2>Financial projections</h2>
-              <FinancialsTable rows={view.financials} />
-            </>
-          )}
+          <FinancialsExhibits rows={view.financials} />
 
           {view.assumptions.length > 0 && (
             <>

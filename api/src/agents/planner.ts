@@ -10,7 +10,7 @@
 
 import { PLANNER_SYSTEM, buildPlannerBrief, buildPlannerTools } from "../../../src/planner/agent.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
-import { computeProjections } from "../../../src/planner/projections.ts";
+import { computeCashFlowBridge, computeProjections, computeSensitivity } from "../../../src/planner/projections.ts";
 import type { PlanInputs } from "../../../src/planner/types.ts";
 import { renderRules, selectRules } from "../../../src/learning/rules.ts";
 import type { HouseRule } from "../../../src/learning/types.ts";
@@ -78,7 +78,10 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
   const planInputs = await one<PlanInputs>(
     `SELECT revenue_growth_pct, growth_basis, projection_years, management_assessment,
             positioning_notes, risk_mitigants, use_of_funds_notes,
-            loan_term_years, loan_interest_rate_pct, asset_useful_life_years
+            loan_term_years, loan_interest_rate_pct, asset_useful_life_years,
+            market_size_tam, market_size_sam, market_size_som, market_size_sources,
+            market_growth_pct, market_drivers_notes, competitor_notes,
+            exit_strategy_notes, unit_economics_notes
        FROM plan_inputs WHERE client_id = $1`,
     [clientId],
   );
@@ -109,17 +112,23 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
     [clientId],
   );
 
-  const projections = computeProjections(
-    {
-      annualRevenue: profile.data?.revenue_and_customers?.annual_revenue ?? null,
-      grossMarginPct: profile.data?.financial_health?.gross_margin_pct ?? null,
-      monthlyOperatingCost: profile.data?.financial_health?.monthly_operating_cost ?? null,
-      // The facility being requested already lives in the profile — no
-      // separate capture needed for what the debt schedule is based on.
-      loanAmount: profile.data?.funding_need?.amount_requested ?? null,
-    },
-    planInputs,
+  const projectionBase = {
+    annualRevenue: profile.data?.revenue_and_customers?.annual_revenue ?? null,
+    grossMarginPct: profile.data?.financial_health?.gross_margin_pct ?? null,
+    monthlyOperatingCost: profile.data?.financial_health?.monthly_operating_cost ?? null,
+    // The facility being requested already lives in the profile — no
+    // separate capture needed for what the debt schedule is based on.
+    loanAmount: profile.data?.funding_need?.amount_requested ?? null,
+  };
+
+  const baseProjections = computeProjections(projectionBase, planInputs);
+  const sensitivity = computeSensitivity(projectionBase, planInputs);
+  const cashFlowBridge = computeCashFlowBridge(
+    profile.data?.financial_health?.cash_on_hand ?? null,
+    profile.data?.funding_need?.amount_requested ?? null,
+    baseProjections,
   );
+  const financials = [...baseProjections, ...sensitivity, ...cashFlowBridge];
 
   const rules = await houseRules(client!.sector_id);
   const system = [PLANNER_SYSTEM, buildPlannerBrief(template), rules].filter(Boolean).join("\n\n");
@@ -143,9 +152,17 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
           ? `DOCUMENT FACTS — extracted from uploaded documents:\n${JSON.stringify(documentFacts, null, 2)}`
           : "DOCUMENT FACTS: none extracted yet.",
         "",
-        projections.length > 0
-          ? `COMPUTED FINANCIAL PROJECTIONS — narrate these exactly, do not recompute them:\n${JSON.stringify(projections, null, 2)}`
+        baseProjections.length > 0
+          ? `COMPUTED FINANCIAL PROJECTIONS (base case) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
           : "COMPUTED FINANCIAL PROJECTIONS: none — base revenue or a growth assumption is missing. Flag the projections section as a gap.",
+        "",
+        sensitivity.length > 0
+          ? `COMPUTED SENSITIVITY (bull/bear, final projection year only) — present as a range, do not recompute:\n${JSON.stringify(sensitivity, null, 2)}`
+          : "COMPUTED SENSITIVITY: none computed.",
+        "",
+        cashFlowBridge.length > 0
+          ? `COMPUTED CASH-FLOW BRIDGE (year 1) — present as given:\n${JSON.stringify(cashFlowBridge, null, 2)}`
+          : "COMPUTED CASH-FLOW BRIDGE: none — current cash on hand was not recorded.",
       ].join("\n"),
     },
   ];
@@ -242,11 +259,11 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
       );
     }
 
-    for (const p of projections) {
+    for (const p of financials) {
       await c.query(
-        `INSERT INTO plan_financials (plan_id, year_offset, line_item, value, basis)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [plan.id, p.year_offset, p.line_item, p.value, p.basis],
+        `INSERT INTO plan_financials (plan_id, year_offset, line_item, value, basis, scenario)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [plan.id, p.year_offset, p.line_item, p.value, p.basis, p.scenario],
       );
     }
 

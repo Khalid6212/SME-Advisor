@@ -52,6 +52,14 @@ export interface Assumption {
   source: "owner" | "manager" | "profile_derived";
 }
 
+/** One named competitor, with the advisor's own assessment — not the
+ *  owner's self-report, which is the wrong source for a rival's weaknesses. */
+export interface CompetitorNote {
+  name: string;
+  strengths: string;
+  weaknesses: string;
+}
+
 /**
  * The advisor's own judgment, captured before drafting rather than only as an
  * edit afterward. One row per client — this is what the plan is regenerated
@@ -69,14 +77,36 @@ export interface PlanInputs {
   loan_term_years: number | null;
   loan_interest_rate_pct: number | null;
   asset_useful_life_years: number | null;
+  // Market sizing — the advisor's own research, with sources cited, since
+  // the planner is forbidden from inventing market statistics.
+  market_size_tam: number | null;
+  market_size_sam: number | null;
+  market_size_som: number | null;
+  market_size_sources: string | null;
+  market_growth_pct: number | null;
+  market_drivers_notes: string | null;
+  competitor_notes: CompetitorNote[];
+  /** The advisor's read on likely exit pathways and any comparable
+   *  transactions known — not something the planner may infer. */
+  exit_strategy_notes: string | null;
+  /**
+   * How one location or unit performs, and what it costs to add another.
+   * Free text rather than structured fields — the shape of "a unit" varies
+   * too much across sectors (a clinic, a truck, a store) to generalise.
+   */
+  unit_economics_notes: string | null;
 }
 
-/** One computed line in the financial projection table. */
+/** One computed line in the financial projection table. `scenario` separates
+ *  the base-case P&L from the bull/bear sensitivity summary and the
+ *  cash-flow bridge, which live in the same table but read as distinct
+ *  small exhibits rather than one continuous sheet. */
 export interface FinancialLine {
   year_offset: number;
   line_item: string;
   value: number;
   basis: string | null;
+  scenario: "base" | "bull" | "bear";
 }
 
 export const SECTION_STATUS = ["empty", "drafted", "edited", "approved"] as const;

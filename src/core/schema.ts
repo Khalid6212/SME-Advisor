@@ -123,6 +123,10 @@ export const BUSINESS_IDENTITY = obj({
     "Structure only. Do not record owner names or identity references.",
   ),
   owner_has_other_businesses: nul(bool()),
+  milestones: arr(
+    obj({ year: nul(int()), description: str() }),
+    "Notable points in the business's history the owner volunteers — do not press for a complete timeline.",
+  ),
 });
 
 export const REVENUE_AND_CUSTOMERS = obj({
@@ -142,6 +146,14 @@ export const REVENUE_AND_CUSTOMERS = obj({
   contract_basis: oneOf(CONTRACT_BASIS),
   seasonality: oneOf(SEASONALITY),
   seasonality_notes: nul(str()),
+  revenue_history: arr(
+    obj({
+      years_ago: int("1 = last year, 2 = the year before, and so on."),
+      revenue: nul(num("SAR.")),
+      precision: oneOf(PRECISION),
+    }),
+    "Approximate prior-year revenue, as far back as the owner can readily recall. Do not press past what they know off the top of their head — a gap here is normal, not a failure.",
+  ),
 });
 
 export const FINANCIAL_HEALTH = obj({
@@ -149,6 +161,7 @@ export const FINANCIAL_HEALTH = obj({
   net_margin_pct: nul(num()),
   margin_precision: oneOf(PRECISION),
   monthly_operating_cost: nul(num("SAR.")),
+  cash_on_hand: nul(num("SAR. Current balance, approximate — grounds the cash-flow bridge in a funding plan.")),
   cash_runway_months: nul(num()),
   receivable_days: nul(num()),
   payable_days: nul(num()),
@@ -197,6 +210,13 @@ export const MARKET_POSITION = obj({
   differentiation: str(),
   market_trend: oneOf(MARKET_TREND),
   key_risks: arr(str()),
+  acquisition_channels: arr(
+    obj({
+      channel: str("e.g. 'walk-in', 'referral', 'social media', 'tender', 'broker', 'insurance network'."),
+      share_pct: nul(num("Rough share of new business from this channel.")),
+    }),
+    "How customers actually find the business, in the owner's own terms — not a formal marketing plan.",
+  ),
 });
 
 export const FUNDING_NEED = obj({

@@ -154,6 +154,7 @@ const LINE_ITEM_ORDER = [
   "depreciation", "ebit", "interest_expense", "net_income",
   "principal_repayment", "debt_service", "dscr",
 ] as const;
+const CASH_BRIDGE_ORDER = ["cash_opening", "cash_from_funding", "cash_from_operations", "cash_used_for_capex", "cash_closing"] as const;
 const LINE_ITEM_LABEL: Record<string, string> = {
   revenue: "Revenue",
   cogs: "Cost of goods sold",
@@ -167,24 +168,32 @@ const LINE_ITEM_LABEL: Record<string, string> = {
   principal_repayment: "Principal repayment",
   debt_service: "Total debt service",
   dscr: "Debt service coverage ratio",
+  cash_opening: "Opening cash",
+  cash_from_funding: "+ Funding drawn",
+  cash_from_operations: "+ Operating cash flow",
+  cash_used_for_capex: "− Capital expenditure",
+  cash_closing: "= Closing cash",
 };
 
-function financialsTable(rows: { year_offset: number; line_item: string; value: string }[]): Table | null {
+type FinRow = { year_offset: number; line_item: string; value: string; scenario: string };
+
+// Accounting convention, matching how the model itself writes a loss in
+// prose ("a loss of SAR 10.4m") — a bare minus sign reads as a typo next to
+// it. DSCR is a ratio, not a currency figure, so it gets its own format.
+function fmtFinancial(item: string, v: string | undefined): string {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (item === "dscr") return `${n.toFixed(2)}x`;
+  const abs = Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return n < 0 ? `(${abs})` : abs;
+}
+
+function yearsByItemTable(rows: FinRow[], order: readonly string[]): Table | null {
   if (rows.length === 0) return null;
 
   const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
-  const items = LINE_ITEM_ORDER.filter((item) => rows.some((r) => r.line_item === item));
+  const items = order.filter((item) => rows.some((r) => r.line_item === item));
   const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
-  // Accounting convention, matching how the model itself writes a loss in
-  // prose ("a loss of SAR 10.4m") — a bare minus sign reads as a typo next to it.
-  // DSCR is a ratio, not a currency figure, so it gets its own format.
-  const fmt = (item: string, v: string | undefined) => {
-    if (v == null) return "—";
-    const n = Number(v);
-    if (item === "dscr") return `${n.toFixed(2)}x`;
-    const abs = Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
-    return n < 0 ? `(${abs})` : abs;
-  };
 
   const header = new TableRow({
     children: [
@@ -197,12 +206,42 @@ function financialsTable(rows: { year_offset: number; line_item: string; value: 
       new TableRow({
         children: [
           tableCell(LINE_ITEM_LABEL[item] ?? item),
-          ...years.map((y) => tableCell(fmt(item, byKey.get(`${y}:${item}`)))),
+          ...years.map((y) => tableCell(fmtFinancial(item, byKey.get(`${y}:${item}`)))),
         ],
       }),
   );
 
   return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [header, ...body] });
+}
+
+function sensitivityTable(baseRows: FinRow[], sensitivityRows: FinRow[]): { table: Table; year: number } | null {
+  if (sensitivityRows.length === 0) return null;
+  const year = sensitivityRows[0]!.year_offset;
+  const find = (rows: FinRow[], scenario: string, item: string) =>
+    fmtFinancial(item, rows.find((r) => r.scenario === scenario && r.year_offset === year && r.line_item === item)?.value);
+
+  const header = new TableRow({
+    children: [tableCell("Scenario", true), tableCell("Revenue", true), tableCell("EBITDA", true)],
+  });
+  const row = (label: string, scenario: string, source: FinRow[]) =>
+    new TableRow({
+      children: [tableCell(label), tableCell(find(source, scenario, "revenue")), tableCell(find(source, scenario, "ebitda"))],
+    });
+
+  const table = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [header, row("Bear", "bear", sensitivityRows), row("Base", "base", baseRows), row("Bull", "bull", sensitivityRows)],
+  });
+  return { table, year };
+}
+
+function cashBridgeTable(rows: FinRow[]): Table | null {
+  if (rows.length === 0) return null;
+  const byItem = new Map(rows.map((r) => [r.line_item, r.value]));
+  const body = CASH_BRIDGE_ORDER.filter((item) => byItem.has(item)).map(
+    (item) => new TableRow({ children: [tableCell(LINE_ITEM_LABEL[item]!), tableCell(fmtFinancial(item, byItem.get(item)))] }),
+  );
+  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: body });
 }
 
 function assumptionsTable(rows: { label: string; value: string; basis: string }[]): Table | null {
@@ -224,7 +263,7 @@ export async function buildPlanDocx(opts: {
   audienceLabel: string;
   approvedAt: Date | null;
   sections: { title_en: string; content: string }[];
-  financials: { year_offset: number; line_item: string; value: string }[];
+  financials: FinRow[];
   assumptions: { label: string; value: string; basis: string }[];
 }): Promise<Buffer> {
   const meta = [
@@ -250,11 +289,33 @@ export async function buildPlanDocx(opts: {
     children.push(heading(s.title_en, HeadingLevel.HEADING_1), ...paragraphs(s.content));
   }
 
-  const finTable = financialsTable(opts.financials);
+  const baseRows = opts.financials.filter((r) => r.scenario === "base" && !CASH_BRIDGE_ORDER.includes(r.line_item as any));
+  const sensitivityRows = opts.financials.filter((r) => r.scenario === "bull" || r.scenario === "bear");
+  const bridgeRows = opts.financials.filter((r) => r.scenario === "base" && CASH_BRIDGE_ORDER.includes(r.line_item as any));
+
+  const finTable = yearsByItemTable(baseRows, LINE_ITEM_ORDER);
   if (finTable) {
     children.push(
       heading("Financial projections", HeadingLevel.HEADING_1),
       finTable,
+      new Paragraph({ text: "", spacing: { after: 200 } }),
+    );
+  }
+
+  const sensitivity = sensitivityTable(baseRows, sensitivityRows);
+  if (sensitivity) {
+    children.push(
+      heading(`Sensitivity (year ${sensitivity.year})`, HeadingLevel.HEADING_1),
+      sensitivity.table,
+      new Paragraph({ text: "", spacing: { after: 200 } }),
+    );
+  }
+
+  const bridge = cashBridgeTable(bridgeRows);
+  if (bridge) {
+    children.push(
+      heading("Cash-flow bridge (year 1)", HeadingLevel.HEADING_1),
+      bridge,
       new Paragraph({ text: "", spacing: { after: 200 } }),
     );
   }

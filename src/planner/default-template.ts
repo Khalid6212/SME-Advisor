@@ -1,20 +1,27 @@
 /**
  * The business plan. One canonical document, drafted once per profile.
  *
- * Audience-specific documents (a lender pack, an internal operating plan)
- * are *views* over this — `sectionsForAudience` filters and orders the same
- * drafted sections — not separate drafts. A figure cannot say one thing to
- * the bank and another to the owner if there is only ever one draft of it.
+ * Restructured to match the depth and shape of a real investment-grade
+ * business plan for a traditional SME (D-plan-depth) — company overview,
+ * market sizing, competitive landscape, unit economics, traction, and exit
+ * strategy alongside the sections that already existed. Audience-specific
+ * documents (a lender pack, an internal operating plan) are *views* over
+ * this — `sectionsForAudience` filters and orders the same drafted
+ * sections — not separate drafts. A figure cannot say one thing to the
+ * bank and another to the owner if there is only ever one draft of it.
+ *
+ * `draftable_from_profile: false` means the profile alone cannot ground
+ * this section — it needs the advisor's planning input (plan_inputs) or an
+ * uploaded document. It does not mean "always a gap": once those other
+ * sources exist, the planner drafts from them instead of flagging a
+ * question. Appendices are handled at export time from the data room's
+ * accepted documents, not drafted here — listing what exists is bookkeeping,
+ * not judgment, and does not need an agent turn.
  *
  * ⚠️ DRAFT — review against what your lenders and programme officers actually
  * ask for before this reaches a client. Section order and emphasis vary by
  * institution, and a plan that omits what a particular reviewer looks for
  * first will read as thin regardless of its quality.
- *
- * `draftable_from_profile: false` means the profile alone cannot ground this
- * section — it needs the advisor's planning input (plan_inputs) or an
- * uploaded document. It does not mean "always a gap": once those other
- * sources exist, the planner drafts from them instead of flagging a question.
  */
 
 import type { PlanTemplate } from "./types.ts";
@@ -23,7 +30,7 @@ const BOTH = ["lender", "internal"] as const;
 
 export const businessPlanTemplate: PlanTemplate = {
   key: "sme-business-plan",
-  version: "0.2.0-draft",
+  version: "0.3.0-draft",
   name: { en: "Business plan", ar: "خطة العمل" },
   purpose:
     "A single business plan serving two readers from the same facts: a credit officer assessing repayment capacity, and an owner deciding what to do next. Never invent a figure or a claim to serve one reader that the other's version would need to contradict.",
@@ -33,15 +40,15 @@ export const businessPlanTemplate: PlanTemplate = {
       key: "executive_summary",
       title: { en: "Executive summary", ar: "الملخص التنفيذي" },
       guidance:
-        "One page. What the business does, how it performs today, what it is asking for and why, and what the money will produce. Write this last, from the finished sections — never draft it first and then make the rest agree with it.",
+        "One page. What the business does, how it performs today, what it is asking for and why, and what the money will produce. Write this last, from the finished sections — never draft it first and then make the rest agree with it. If any finished section is blocked or thin, say so here plainly rather than writing a summary the rest of the document cannot support.",
       draws_on: ["business_identity", "revenue_and_customers", "funding_need"],
       draftable_from_profile: true,
       required: true,
       audiences: [...BOTH],
     },
     {
-      key: "business_description",
-      title: { en: "The business", ar: "نبذة عن المنشأة" },
+      key: "company_overview",
+      title: { en: "Company overview", ar: "نبذة عن المنشأة" },
       guidance:
         "Legal form, year established, ownership structure, locations, headcount. Factual and short. This section should contain no adjectives a lender could dispute.",
       draws_on: ["business_identity", "operations.premises"],
@@ -50,32 +57,72 @@ export const businessPlanTemplate: PlanTemplate = {
       audiences: [...BOTH],
     },
     {
+      key: "market_need",
+      title: { en: "Market need", ar: "الحاجة في السوق" },
+      guidance:
+        "The gap this business fills, quantified, and who feels it most. Use the market-sizing input's drivers and sources for the quantified part — the profile alone tells you the business exists and roughly how it competes, not the size of the gap or why it is growing. Structure: describe the gap, cite what quantifies it, name the segment that feels it most.",
+      draws_on: ["market_position"],
+      draftable_from_profile: false,
+      required: false,
+      audiences: [...BOTH],
+    },
+    {
+      key: "value_proposition",
+      title: { en: "Value proposition", ar: "القيمة المقترحة" },
+      guidance:
+        "What the business actually delivers and why a customer chooses it over the alternative, in one or two concrete sentences a customer would recognise as true. Draw on the stated differentiation and the products and services themselves — do not restate the market-need section, answer it.",
+      draws_on: ["market_position.differentiation", "revenue_and_customers.revenue_streams"],
+      draftable_from_profile: true,
+      required: true,
+      audiences: [...BOTH],
+    },
+    {
       key: "products_and_services",
       title: { en: "Products and services", ar: "المنتجات والخدمات" },
       guidance:
-        "What is actually sold or delivered, how, and the pricing basis. Revenue streams with their share of the total. Concrete and specific — this is what most readers picture least well after a first read.",
+        "What is actually sold or delivered, how, and the pricing basis. Revenue streams with their share of the total, as a table or a short list of label/value lines — never a markdown table. Concrete and specific — this is what most readers picture least well after a first read.",
       draws_on: ["revenue_and_customers.revenue_streams", "sector_detail"],
       draftable_from_profile: true,
       required: true,
       audiences: [...BOTH],
     },
     {
-      key: "market_and_customers",
-      title: { en: "Market and customers", ar: "السوق والعملاء" },
+      key: "business_model_and_unit_economics",
+      title: { en: "Business model and unit economics", ar: "نموذج العمل واقتصاديات الوحدة" },
       guidance:
-        "Geography served, customer type, contract basis, named competitors, and stated differentiation. Where revenue is concentrated in a few customers, say so plainly — a lender will find it anyway, and finding it themselves reads worse. Do not include market sizing, sector growth rates, or share figures unless they were supplied — those are the statistics most often invented, and the easiest for a lender to check.",
-      draws_on: ["market_position", "revenue_and_customers.customer_type", "revenue_and_customers.top_customer_share_pct"],
-      draftable_from_profile: true,
-      required: true,
+        "How the business actually makes money, in mechanism terms (who pays whom, for what, and what varies with volume). Where the business operates more than one location, vehicle, or comparable unit, present the unit economics the advisor supplied: does one unit work, what does it cost to add another, and how long until it pays back. For a single-site business, a brief note that unit economics do not apply here is enough — do not force a template that does not fit the business.",
+      draws_on: ["revenue_and_customers", "financial_health"],
+      draftable_from_profile: false,
+      required: false,
       audiences: [...BOTH],
     },
     {
-      key: "marketing_and_sales",
-      title: { en: "Marketing and sales approach", ar: "التسويق والمبيعات" },
+      key: "market_analysis",
+      title: { en: "Market analysis", ar: "تحليل السوق" },
       guidance:
-        "How the business actually wins and keeps customers today, and the advisor's assessment of positioning — this is judgment, not a self-report, so it grounds in the planning input's positioning notes, not the profile.",
-      draws_on: [],
+        "Market size and growth, using exactly the figures and sources supplied in the market-sizing input — cite the source inline (\"per [source]\") the way the input states it. Never round, extrapolate, or restate a market figure differently than given. If no market-sizing input was supplied, flag this as a gap rather than estimating a market size — an invented TAM is exactly the kind of statistic a reader checks first and forgives least.",
+      draws_on: ["market_position"],
       draftable_from_profile: false,
+      required: false,
+      audiences: [...BOTH],
+    },
+    {
+      key: "competitive_landscape",
+      title: { en: "Competitive landscape", ar: "المشهد التنافسي" },
+      guidance:
+        "Name real competitors and compare on the dimensions that matter to this business. Use the advisor's competitor assessment for strengths and weaknesses — the owner's own view of a competitor's weaknesses is not a reliable source and should not be presented as fact. The profile's named competitors and differentiation still ground which competitors matter and how this business positions against them.",
+      draws_on: ["market_position.named_competitors", "market_position.differentiation"],
+      draftable_from_profile: false,
+      required: false,
+      audiences: [...BOTH],
+    },
+    {
+      key: "sales_and_marketing",
+      title: { en: "Sales and marketing", ar: "المبيعات والتسويق" },
+      guidance:
+        "How customers actually find and choose this business today — the acquisition channels recorded at interview, in the owner's own terms, not a formal marketing plan invented for this document. Add the advisor's positioning judgment where it goes beyond the channel list: is the current mix defensible, and against whom.",
+      draws_on: ["market_position.acquisition_channels", "market_position.differentiation"],
+      draftable_from_profile: true,
       required: false,
       audiences: [...BOTH],
     },
@@ -85,6 +132,16 @@ export const businessPlanTemplate: PlanTemplate = {
       guidance:
         "How the work actually gets done: premises, systems, capacity, and the operational metrics captured during discovery. Owner dependency belongs here, stated neutrally with whatever mitigation exists.",
       draws_on: ["operations", "sector_detail.derived_metrics"],
+      draftable_from_profile: true,
+      required: true,
+      audiences: [...BOTH],
+    },
+    {
+      key: "regulatory_licensing_compliance",
+      title: { en: "Regulatory, licensing, and compliance", ar: "التنظيم والتراخيص والامتثال" },
+      guidance:
+        "Legal form and registration, VAT/Zakat/GOSI/Nitaqat standing, and any licences held, presented as a status list — what is current, what is pending, what was not provided. State plainly that all of this is self-reported and has not been independently verified unless a document confirmed it. A reader in a regulated sector checks this section early; give them a clean list, not prose scattered across other sections.",
+      draws_on: ["business_identity.legal_form", "business_identity.year_registered", "financial_health.compliance", "operations.licences_held"],
       draftable_from_profile: true,
       required: true,
       audiences: [...BOTH],
@@ -100,21 +157,21 @@ export const businessPlanTemplate: PlanTemplate = {
       audiences: [...BOTH],
     },
     {
-      key: "growth_strategy",
-      title: { en: "Growth strategy", ar: "خطة النمو" },
+      key: "traction_and_milestones",
+      title: { en: "Traction and milestones", ar: "الإنجازات والمحطات الرئيسية" },
       guidance:
-        "What the business intends to do next and how the funding enables it. Needs the advisor's planning input — a discovery interview does not capture strategy, and inventing one from a funding request is exactly the guessing this document exists to avoid.",
-      draws_on: ["funding_need"],
-      draftable_from_profile: false,
-      required: true,
+        "What the business has actually done, not what it plans to do — numbers beat narrative here. Use the milestones and prior-year revenue recorded at interview to build a short dated history; use the sector's derived metrics for the current operating snapshot. A thin history is still worth presenting honestly — do not pad a two-line timeline into paragraphs.",
+      draws_on: ["business_identity.milestones", "revenue_and_customers.revenue_history", "sector_detail.derived_metrics"],
+      draftable_from_profile: true,
+      required: false,
       audiences: [...BOTH],
     },
     {
       key: "financial_position",
       title: { en: "Financial position", ar: "الوضع المالي" },
       guidance:
-        "Historical performance from the profile: revenue, margins, cash cycle, existing debt and its service. State once, plainly, that figures are owner-reported unless a document has confirmed them — then say which, and prefer the document's figure over the owner's estimate where they differ.",
-      draws_on: ["financial_health"],
+        "Historical performance: current revenue, margins, cash cycle, existing debt and its service, and — where prior-year figures were recorded — a short trend table rather than a single year in isolation. State once, plainly, that figures are owner-reported unless a document has confirmed them — then say which, and prefer the document's figure over the owner's estimate where they differ.",
+      draws_on: ["financial_health", "revenue_and_customers.revenue_history"],
       draftable_from_profile: true,
       required: true,
       audiences: [...BOTH],
@@ -123,7 +180,7 @@ export const businessPlanTemplate: PlanTemplate = {
       key: "financial_projections",
       title: { en: "Financial projections", ar: "التوقعات المالية" },
       guidance:
-        "Narrate the computed projection table you were given — do not recompute or restate the figures differently. Every line traces to the growth assumption in the planning input. If no projection table was supplied, flag the gap rather than building one from a single revenue figure and a growth rate nobody supplied.",
+        "Narrate the computed projection table you were given — do not recompute or restate the figures differently. Every line traces to the growth assumption in the planning input. Where bull/bear scenarios were computed, present them as a range with the variance stated, not as separate forecasts requiring separate belief. Where a cash-flow bridge was computed, walk through it as the answer to \"does the money last\" — that is the question it exists to answer. If no projection table was supplied, flag the gap rather than building one from a single revenue figure and a growth rate nobody supplied.",
       draws_on: ["financial_health"],
       draftable_from_profile: false,
       required: true,
@@ -133,7 +190,7 @@ export const businessPlanTemplate: PlanTemplate = {
       key: "funding_request",
       title: { en: "Funding request", ar: "طلب التمويل" },
       guidance:
-        "Amount, purpose, timing, instrument, collateral offered, and a use-of-funds breakdown that sums to the amount requested. If it does not sum, say so rather than adjusting a line to make it balance.",
+        "Amount, purpose, timing, instrument, collateral offered, and a use-of-funds breakdown that sums to the amount requested, as a short list of label/value lines — never a markdown table. If it does not sum, say so rather than adjusting a line to make it balance.",
       draws_on: ["funding_need"],
       draftable_from_profile: true,
       required: true,
@@ -146,6 +203,26 @@ export const businessPlanTemplate: PlanTemplate = {
         "Draw from the profile's key risks, concentration, owner dependency, and compliance standing, plus any mitigants the advisor has recorded. A section with no risks reads as naive; one that lists risks without mitigations reads as unprepared.",
       draws_on: ["market_position.key_risks", "revenue_and_customers.top_customer_share_pct"],
       draftable_from_profile: true,
+      required: true,
+      audiences: [...BOTH],
+    },
+    {
+      key: "exit_strategy",
+      title: { en: "Exit strategy", ar: "استراتيجية الخروج" },
+      guidance:
+        "Only relevant where equity or investment financing is on the table — for a straightforward bank facility, a brief note that this does not apply is enough and honest. Where the advisor supplied exit-strategy notes, present the pathways and any comparable transactions exactly as given; do not invent comparable deals or valuations.",
+      draws_on: ["funding_need.instruments_considered"],
+      draftable_from_profile: false,
+      required: false,
+      audiences: [...BOTH],
+    },
+    {
+      key: "growth_strategy",
+      title: { en: "Growth strategy", ar: "خطة النمو" },
+      guidance:
+        "What the business intends to do next and how the funding enables it. Needs the advisor's planning input — a discovery interview does not capture strategy, and inventing one from a funding request is exactly the guessing this document exists to avoid.",
+      draws_on: ["funding_need"],
+      draftable_from_profile: false,
       required: true,
       audiences: [...BOTH],
     },

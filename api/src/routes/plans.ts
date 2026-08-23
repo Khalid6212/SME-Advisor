@@ -42,6 +42,12 @@ const requestBatchSchema = z.object({
   message: z.string().trim().max(2000).optional(),
 });
 
+const competitorNoteSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  strengths: z.string().trim().max(1000),
+  weaknesses: z.string().trim().max(1000),
+});
+
 const planInputsSchema = z.object({
   revenue_growth_pct: z.number().min(-100).max(1000).nullable().optional(),
   growth_basis: z.string().trim().max(2000).nullable().optional(),
@@ -54,6 +60,17 @@ const planInputsSchema = z.object({
   loan_term_years: z.number().int().min(1).max(30).nullable().optional(),
   loan_interest_rate_pct: z.number().min(0).max(50).nullable().optional(),
   asset_useful_life_years: z.number().int().min(1).max(30).nullable().optional(),
+  // Market sizing, competitive judgment, exit strategy, unit economics —
+  // the advisor's own research, since the planner may not invent any of it.
+  market_size_tam: z.number().min(0).nullable().optional(),
+  market_size_sam: z.number().min(0).nullable().optional(),
+  market_size_som: z.number().min(0).nullable().optional(),
+  market_size_sources: z.string().trim().max(1000).nullable().optional(),
+  market_growth_pct: z.number().min(-100).max(1000).nullable().optional(),
+  market_drivers_notes: z.string().trim().max(4000).nullable().optional(),
+  competitor_notes: z.array(competitorNoteSchema).max(10).optional(),
+  exit_strategy_notes: z.string().trim().max(4000).nullable().optional(),
+  unit_economics_notes: z.string().trim().max(4000).nullable().optional(),
 });
 
 export async function planRoutes(app: FastifyInstance): Promise<void> {
@@ -80,7 +97,10 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const row = await one(
       `SELECT revenue_growth_pct, growth_basis, projection_years, management_assessment,
               positioning_notes, risk_mitigants, use_of_funds_notes,
-              loan_term_years, loan_interest_rate_pct, asset_useful_life_years, updated_at
+              loan_term_years, loan_interest_rate_pct, asset_useful_life_years,
+              market_size_tam, market_size_sam, market_size_som, market_size_sources,
+              market_growth_pct, market_drivers_notes, competitor_notes,
+              exit_strategy_notes, unit_economics_notes, updated_at
          FROM plan_inputs WHERE client_id = $1`,
       [id],
     );
@@ -99,8 +119,11 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       `INSERT INTO plan_inputs
          (client_id, revenue_growth_pct, growth_basis, projection_years,
           management_assessment, positioning_notes, risk_mitigants, use_of_funds_notes,
-          loan_term_years, loan_interest_rate_pct, asset_useful_life_years, created_by)
-       VALUES ($1,$2,$3,COALESCE($4,3),$5,$6,$7,$8,$9,$10,$11,$12)
+          loan_term_years, loan_interest_rate_pct, asset_useful_life_years,
+          market_size_tam, market_size_sam, market_size_som, market_size_sources,
+          market_growth_pct, market_drivers_notes, competitor_notes,
+          exit_strategy_notes, unit_economics_notes, created_by)
+       VALUES ($1,$2,$3,COALESCE($4,3),$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        ON CONFLICT (client_id) DO UPDATE SET
          revenue_growth_pct      = EXCLUDED.revenue_growth_pct,
          growth_basis            = EXCLUDED.growth_basis,
@@ -112,6 +135,15 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
          loan_term_years         = EXCLUDED.loan_term_years,
          loan_interest_rate_pct  = EXCLUDED.loan_interest_rate_pct,
          asset_useful_life_years = EXCLUDED.asset_useful_life_years,
+         market_size_tam         = EXCLUDED.market_size_tam,
+         market_size_sam         = EXCLUDED.market_size_sam,
+         market_size_som         = EXCLUDED.market_size_som,
+         market_size_sources     = EXCLUDED.market_size_sources,
+         market_growth_pct       = EXCLUDED.market_growth_pct,
+         market_drivers_notes    = EXCLUDED.market_drivers_notes,
+         competitor_notes        = EXCLUDED.competitor_notes,
+         exit_strategy_notes     = EXCLUDED.exit_strategy_notes,
+         unit_economics_notes    = EXCLUDED.unit_economics_notes,
          updated_at              = now()`,
       [
         id,
@@ -125,6 +157,15 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         parsed.data.loan_term_years ?? null,
         parsed.data.loan_interest_rate_pct ?? null,
         parsed.data.asset_useful_life_years ?? null,
+        parsed.data.market_size_tam ?? null,
+        parsed.data.market_size_sam ?? null,
+        parsed.data.market_size_som ?? null,
+        parsed.data.market_size_sources ?? null,
+        parsed.data.market_growth_pct ?? null,
+        parsed.data.market_drivers_notes ?? null,
+        JSON.stringify(parsed.data.competitor_notes ?? []),
+        parsed.data.exit_strategy_notes ?? null,
+        parsed.data.unit_economics_notes ?? null,
         user.id,
       ],
     );
@@ -174,8 +215,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       query(`SELECT label, value, basis, source FROM plan_assumptions WHERE plan_id = $1`, [planId]),
       query(`SELECT id, section_key, question, why_it_matters, blocking, request_id, resolved_at
                FROM plan_gaps WHERE plan_id = $1 ORDER BY blocking DESC`, [planId]),
-      query(`SELECT year_offset, line_item, value, basis FROM plan_financials
-              WHERE plan_id = $1 ORDER BY line_item, year_offset`, [planId]),
+      query(`SELECT year_offset, line_item, value, basis, scenario FROM plan_financials
+              WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`, [planId]),
     ]);
 
     // Audience is a template-level fact, not stored per row — attached here
@@ -408,9 +449,9 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       `SELECT label, value, basis FROM plan_assumptions WHERE plan_id = $1`,
       [planId],
     );
-    const financials = await query<{ year_offset: number; line_item: string; value: string }>(
-      `SELECT year_offset, line_item, value FROM plan_financials
-        WHERE plan_id = $1 ORDER BY line_item, year_offset`,
+    const financials = await query<{ year_offset: number; line_item: string; value: string; scenario: string }>(
+      `SELECT year_offset, line_item, value, scenario FROM plan_financials
+        WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`,
       [planId],
     );
 
@@ -418,14 +459,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       `# ${plan.client_name} — ${AUDIENCE_LABEL[audience]}`,
       "",
       ...sections.flatMap((s) => [`## ${s.title_en}`, "", s.content || "_Not yet drafted._", ""]),
-      ...(financials.length
-        ? [
-            "## Financial projections",
-            "",
-            ...financialsMarkdown(financials),
-            "",
-          ]
-        : []),
+      ...financialExhibitsMarkdown(financials),
       ...(assumptions.length
         ? [
             "## Assumptions",
@@ -473,9 +507,9 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       `SELECT label, value, basis FROM plan_assumptions WHERE plan_id = $1`,
       [planId],
     );
-    const financials = await query<{ year_offset: number; line_item: string; value: string }>(
-      `SELECT year_offset, line_item, value FROM plan_financials
-        WHERE plan_id = $1 ORDER BY line_item, year_offset`,
+    const financials = await query<{ year_offset: number; line_item: string; value: string; scenario: string }>(
+      `SELECT year_offset, line_item, value, scenario FROM plan_financials
+        WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`,
       [planId],
     );
 
@@ -508,32 +542,85 @@ const FINANCIAL_LINE_ORDER = [
   "depreciation", "ebit", "interest_expense", "net_income",
   "principal_repayment", "debt_service", "dscr",
 ];
+const CASH_BRIDGE_ORDER = ["cash_opening", "cash_from_funding", "cash_from_operations", "cash_used_for_capex", "cash_closing"];
 const FINANCIAL_LINE_LABEL: Record<string, string> = {
   revenue: "Revenue", cogs: "Cost of goods sold", gross_profit: "Gross profit",
   operating_cost: "Operating costs", ebitda: "EBITDA", depreciation: "Depreciation",
   ebit: "EBIT", interest_expense: "Interest expense", net_income: "Net income",
   principal_repayment: "Principal repayment", debt_service: "Total debt service",
   dscr: "Debt service coverage ratio",
+  cash_opening: "Opening cash", cash_from_funding: "+ Funding drawn",
+  cash_from_operations: "+ Operating cash flow", cash_used_for_capex: "− Capital expenditure",
+  cash_closing: "= Closing cash",
 };
 
-function financialsMarkdown(rows: { year_offset: number; line_item: string; value: string }[]): string[] {
-  const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
-  const items = FINANCIAL_LINE_ORDER.filter((item) => rows.some((r) => r.line_item === item));
-  const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
-  const fmt = (item: string, v: string | undefined) => {
-    if (v == null) return "—";
-    const n = Number(v);
-    if (item === "dscr") return `${n.toFixed(2)}x`;
-    const abs = Math.abs(n).toLocaleString("en-US");
-    return n < 0 ? `(${abs})` : abs;
-  };
+type FinRow = { year_offset: number; line_item: string; value: string; scenario: string };
 
-  const header = `| SAR | ${years.map((y) => (y === 0 ? "Base year" : `Year ${y}`)).join(" | ")} |`;
+function fmtFinancial(item: string, v: string | undefined): string {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (item === "dscr") return `${n.toFixed(2)}x`;
+  const abs = Math.abs(n).toLocaleString("en-US");
+  return n < 0 ? `(${abs})` : abs;
+}
+
+function tableMarkdown(rows: FinRow[], order: string[], yearLabel: (y: number) => string): string[] {
+  const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
+  const items = order.filter((item) => rows.some((r) => r.line_item === item));
+  const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
+
+  const header = `| SAR | ${years.map(yearLabel).join(" | ")} |`;
   const sep = `|---|${years.map(() => "---").join("|")}|`;
   const body = items.map(
     (item) =>
-      `| ${FINANCIAL_LINE_LABEL[item] ?? item} | ${years.map((y) => fmt(item, byKey.get(`${y}:${item}`))).join(" | ")} |`,
+      `| ${FINANCIAL_LINE_LABEL[item] ?? item} | ${years.map((y) => fmtFinancial(item, byKey.get(`${y}:${item}`))).join(" | ")} |`,
   );
-
   return [header, sep, ...body];
+}
+
+/** Three distinct exhibits, not one continuous sheet: the base-case P&L, a
+ *  bull/bear range for the final projection year, and — where current cash
+ *  was recorded — a year-1 cash-flow bridge. */
+function financialExhibitsMarkdown(rows: FinRow[]): string[] {
+  const base = rows.filter((r) => r.scenario === "base" && !CASH_BRIDGE_ORDER.includes(r.line_item));
+  const sensitivity = rows.filter((r) => r.scenario === "bull" || r.scenario === "bear");
+  const bridge = rows.filter((r) => r.scenario === "base" && CASH_BRIDGE_ORDER.includes(r.line_item));
+
+  const out: string[] = [];
+
+  if (base.length > 0) {
+    out.push("## Financial projections", "", ...tableMarkdown(base, FINANCIAL_LINE_ORDER, (y) => (y === 0 ? "Base year" : `Year ${y}`)), "");
+  }
+
+  if (sensitivity.length > 0) {
+    const year = sensitivity[0]!.year_offset;
+    const byScenario = (scenario: string, item: string) =>
+      fmtFinancial(item, sensitivity.find((r) => r.scenario === scenario && r.line_item === item)?.value);
+    out.push(
+      `## Sensitivity (year ${year})`,
+      "",
+      "| Scenario | Revenue | EBITDA |",
+      "|---|---|---|",
+      `| Bear | ${byScenario("bear", "revenue")} | ${byScenario("bear", "ebitda")} |`,
+      `| Base | ${fmtFinancial("revenue", base.find((r) => r.year_offset === year && r.line_item === "revenue")?.value)} | ${fmtFinancial("ebitda", base.find((r) => r.year_offset === year && r.line_item === "ebitda")?.value)} |`,
+      `| Bull | ${byScenario("bull", "revenue")} | ${byScenario("bull", "ebitda")} |`,
+      "",
+    );
+  }
+
+  if (bridge.length > 0) {
+    const byItem = new Map(bridge.map((r) => [r.line_item, r.value]));
+    out.push(
+      "## Cash-flow bridge (year 1)",
+      "",
+      "| | SAR |",
+      "|---|---|",
+      ...CASH_BRIDGE_ORDER.filter((item) => byItem.has(item)).map(
+        (item) => `| ${FINANCIAL_LINE_LABEL[item]} | ${fmtFinancial(item, byItem.get(item))} |`,
+      ),
+      "",
+    );
+  }
+
+  return out;
 }
