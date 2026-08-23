@@ -1,32 +1,36 @@
 /* Dark is the default palette — matches the app's history and needs no
  * explicit theme to render correctly before JS runs. Light overrides the
- * same eleven tokens; nothing else in this file references a raw color. */
+ * same tokens; nothing else in this file references a raw color. */
 :root {
-  --bg: #11111b;
-  --panel: #1e1e2e;
-  --line: #313244;
-  --text: #cdd6f4;
-  --dim: #a6adc8;
-  --faint: #6c7086;
-  --accent: #1a5c3a;
-  --good: #a6e3a1;
-  --info: #89b4fa;
-  --warn: #f9e2af;
-  --bad: #f38ba8;
+  --bg: #0a1120;
+  --panel: #121b2e;
+  --line: #223052;
+  --text: #e8edf9;
+  --dim: #a6b3cf;
+  --faint: #67759c;
+  --accent: #5079e6;
+  --accent-strong: #6f95f2;
+  --good: #34d399;
+  --info: #38bdf8;
+  --warn: #f2b84b;
+  --bad: #f2617a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px rgba(0, 0, 0, 0.28);
 }
 
 :root[data-theme="light"] {
-  --bg: #eff1f5;
-  --panel: #ffffff;
-  --line: #ccd0da;
-  --text: #4c4f69;
-  --dim: #5c5f77;
-  --faint: #8c8fa1;
-  --accent: #1a5c3a;
-  --good: #40a02b;
-  --info: #1e66f5;
-  --warn: #df8e1d;
-  --bad: #d20f39;
+  --bg: #ffffff;
+  --panel: #f6f8fc;
+  --line: #dde4f0;
+  --text: #16213e;
+  --dim: #4d5b7d;
+  --faint: #8894b0;
+  --accent: #2f5bd7;
+  --accent-strong: #24429c;
+  --good: #16a34a;
+  --info: #0284c7;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 28px rgba(15, 23, 42, 0.07);
 }
 
 * { box-sizing: border-box; }
@@ -48,8 +52,9 @@ button {
   padding: 8px 16px;
   border-radius: 10px;
   cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
-button:hover:not(:disabled) { border-color: var(--info); color: var(--info); }
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 button:disabled { opacity: 0.45; cursor: default; }
 button.primary {
   background: var(--accent);
@@ -57,11 +62,11 @@ button.primary {
   color: #fff;
   font-weight: 600;
 }
-button.primary:hover:not(:disabled) { filter: brightness(1.25); color: #fff; }
+button.primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
 
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid var(--info);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -74,10 +79,11 @@ input, textarea, select {
   border-radius: 10px;
   outline: none;
   width: 100%;
+  transition: border-color 0.15s ease;
 }
-input:focus, textarea:focus { border-color: var(--info); }
+input:focus, textarea:focus { border-color: var(--accent); }
 
-a { color: var(--info); }
+a { color: var(--accent); }
 
 .shell { max-width: 1100px; margin: 0 auto; padding: 0 24px 64px; }
 
@@ -102,7 +108,8 @@ a { color: var(--info); }
 
 .card {
   background: var(--panel); border: 1px solid var(--line);
-  border-radius: 14px; padding: 18px; margin-bottom: 12px;
+  border-radius: 16px; padding: 18px; margin-bottom: 12px;
+  box-shadow: var(--shadow);
 }
 
 .muted { color: var(--faint); }
@@ -135,7 +142,7 @@ h2 { font-size: 17px; margin: 28px 0 10px; }
 .chat { display: flex; flex-direction: column; gap: 12px; padding: 8px 0 20px; }
 .bubble { padding: 12px 16px; border-radius: 18px; max-width: 78%; white-space: pre-wrap; }
 .bubble.assistant { background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
-.bubble.user { background: var(--accent); color: #e8f5e9; align-self: flex-end; border-bottom-right-radius: 4px; }
+.bubble.user { background: var(--accent); color: #eef3ff; align-self: flex-end; border-bottom-right-radius: 4px; }
 
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
@@ -150,8 +157,8 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--text) 2%, transpare
   display: flex; flex-direction: column; gap: 8px; max-width: 360px;
 }
 .toast {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: 12px 16px; font-size: 13px; box-shadow: 0 8px 24px color-mix(in srgb, #000 25%, transparent);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 16px; font-size: 13px; box-shadow: var(--shadow);
 }
 .toast.bad { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
 .toast.good { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
@@ -161,8 +168,8 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--text) 2%, transpare
   display: flex; align-items: center; justify-content: center; z-index: 200; padding: 20px;
 }
 .dialog {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-  padding: 22px; max-width: 400px; width: 100%;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+  padding: 22px; max-width: 400px; width: 100%; box-shadow: var(--shadow);
 }
 
 /* ─── landing page ───────────────────────────────────────────────────────── */

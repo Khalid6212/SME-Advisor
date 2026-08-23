@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import { api, type CompetitorNote, type PlanInputs as PlanInputsData } from "../api";
+import { api, ApiError, type CompetitorNote, type PlanInputs as PlanInputsData, type ResearchSuggestion } from "../api";
+
+function fmtSar(n: number | null): string {
+  return n === null ? "—" : `SAR ${n.toLocaleString()}`;
+}
 
 const EMPTY: PlanInputsData = {
   revenue_growth_pct: null,
@@ -36,6 +40,9 @@ export function PlanInputs({ clientId }: { clientId: string }) {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [research, setResearch] = useState<ResearchSuggestion | null>(null);
+  const [researching, setResearching] = useState(false);
+  const [researchError, setResearchError] = useState<string | null>(null);
 
   useEffect(() => {
     api.get<PlanInputsData | null>(`/clients/${clientId}/plan-inputs`).then((d) => {
@@ -69,6 +76,45 @@ export function PlanInputs({ clientId }: { clientId: string }) {
   const removeCompetitor = (i: number) => {
     setSaved(false);
     setData((prev) => ({ ...prev, competitor_notes: prev.competitor_notes.filter((_, j) => j !== i) }));
+  };
+
+  const runResearch = async () => {
+    setResearching(true);
+    setResearchError(null);
+    try {
+      const r = await api.post<ResearchSuggestion>(`/clients/${clientId}/plan-inputs/research`);
+      setResearch(r);
+    } catch (err) {
+      setResearchError(
+        err instanceof ApiError && err.code === "no_profile"
+          ? "The interview needs a business description first — this can't run yet."
+          : "Research didn't come back. Try again in a moment.",
+      );
+    }
+    setResearching(false);
+  };
+
+  const applyMarketSizing = () => {
+    if (!research) return;
+    setSaved(false);
+    setData((prev) => ({
+      ...prev,
+      market_size_tam: research.market_size_tam,
+      market_size_sam: research.market_size_sam,
+      market_size_som: research.market_size_som,
+      market_size_sources: research.market_size_sources,
+      market_growth_pct: research.market_growth_pct,
+      market_drivers_notes: research.market_drivers_notes,
+    }));
+  };
+
+  const addSuggestedCompetitor = (c: CompetitorNote) => {
+    setSaved(false);
+    setData((prev) =>
+      prev.competitor_notes.some((existing) => existing.name.trim().toLowerCase() === c.name.trim().toLowerCase())
+        ? prev
+        : { ...prev, competitor_notes: [...prev.competitor_notes, c] },
+    );
   };
 
   const save = async () => {
@@ -194,6 +240,73 @@ export function PlanInputs({ clientId }: { clientId: string }) {
         </div>
 
         <div>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>Research assistant</div>
+            <button onClick={runResearch} disabled={researching}>
+              {researching ? "Researching…" : "Research market & competitors"}
+            </button>
+          </div>
+          <p className="muted" style={{ fontSize: 12, margin: "2px 0 8px" }}>
+            Runs a real web search for market size, growth, and named competitors, grounded in what it
+            actually finds — nothing invented. Review it, then apply what holds up; the rest of this
+            form is yours to adjust either way.
+          </p>
+          {researchError && <p style={{ color: "var(--bad)", fontSize: 13 }}>{researchError}</p>}
+
+          {research && (
+            <div className="card" style={{ borderColor: "var(--info)", marginBottom: 12 }}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <span className="pill info">Suggested — from web research</span>
+                <button onClick={() => setResearch(null)}>Dismiss</button>
+              </div>
+
+              <div className="stack" style={{ gap: 4, marginTop: 12 }}>
+                <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
+                  <span className="muted" style={{ fontSize: 12 }}>TAM {fmtSar(research.market_size_tam)}</span>
+                  <span className="muted" style={{ fontSize: 12 }}>SAM {fmtSar(research.market_size_sam)}</span>
+                  <span className="muted" style={{ fontSize: 12 }}>SOM {fmtSar(research.market_size_som)}</span>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    Growth {research.market_growth_pct === null ? "—" : `${research.market_growth_pct}%/yr`}
+                  </span>
+                </div>
+                {research.market_size_sources && (
+                  <p style={{ fontSize: 12, margin: "6px 0 0" }}>
+                    <strong>Sources:</strong> {research.market_size_sources}
+                  </p>
+                )}
+                {research.market_drivers_notes && (
+                  <p style={{ fontSize: 12, margin: "4px 0 0" }}>
+                    <strong>Drivers:</strong> {research.market_drivers_notes}
+                  </p>
+                )}
+                <div>
+                  <button className="primary" style={{ marginTop: 8 }} onClick={applyMarketSizing}>
+                    Apply market sizing
+                  </button>
+                </div>
+              </div>
+
+              {research.competitor_notes.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 600, fontSize: 12 }}>Competitors found</div>
+                  {research.competitor_notes.map((c, i) => (
+                    <div key={i} className="row" style={{ justifyContent: "space-between", marginTop: 6, gap: 8 }}>
+                      <div style={{ fontSize: 12 }}>
+                        <strong>{c.name}</strong>
+                        <span className="muted"> — {c.strengths}{c.weaknesses ? `; weaknesses: ${c.weaknesses}` : ""}</span>
+                      </div>
+                      <button onClick={() => addSuggestedCompetitor(c)}>Add</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="muted" style={{ fontSize: 11, marginTop: 12, marginBottom: 0 }}>
+                {research.confidence_note}
+              </p>
+            </div>
+          )}
+
           <div style={{ fontWeight: 600, fontSize: 13 }}>Market sizing</div>
           <p className="muted" style={{ fontSize: 12, margin: "2px 0 8px" }}>
             Your own research, with a source — the planner may not estimate a market size on its own.

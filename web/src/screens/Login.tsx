@@ -57,8 +57,8 @@ export function Login({ onBack }: { onBack?: () => void }) {
         </a>
       )}
       <div style={{ textAlign: "center", marginBottom: 28 }}>
-        <div style={{ fontSize: 26, fontWeight: 700 }}>مستشار الجاهزية الاستثمارية</div>
-        <div className="dim" style={{ fontSize: 15 }}>SME Investment Readiness</div>
+        <div style={{ fontSize: 26, fontWeight: 700 }}>SME Advisor</div>
+        <div className="dim" style={{ fontSize: 15 }}>Investment readiness for Saudi SMEs</div>
       </div>
 
       {sent ? (

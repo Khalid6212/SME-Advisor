@@ -13,6 +13,9 @@ export const MODEL = "claude-opus-5";
 /** Document extraction is read-and-summarise, not multi-step reasoning — a
  *  faster, cheaper model is the right fit and keeps per-upload cost small. */
 export const EXTRACT_MODEL = "claude-haiku-4-5-20251001";
+/** Web-search-grounded research — needs real reasoning over search results,
+ *  but not Opus-level depth for a single-turn lookup task. */
+export const RESEARCH_MODEL = "claude-sonnet-5";
 
 export type ContentBlock = Record<string, any>;
 export type Message = { role: "user" | "assistant"; content: string | ContentBlock[] };

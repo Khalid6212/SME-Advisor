@@ -182,6 +182,17 @@ export interface PlanInputs {
   updated_at?: string;
 }
 
+export interface ResearchSuggestion {
+  market_size_tam: number | null;
+  market_size_sam: number | null;
+  market_size_som: number | null;
+  market_size_sources: string | null;
+  market_growth_pct: number | null;
+  market_drivers_notes: string | null;
+  competitor_notes: CompetitorNote[];
+  confidence_note: string;
+}
+
 export interface FinancialLine {
   year_offset: number;
   line_item: string;

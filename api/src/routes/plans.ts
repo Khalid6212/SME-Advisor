@@ -19,6 +19,8 @@ import { type Audience, sectionsForAudience } from "../../../src/planner/types.t
 import { editDistance } from "../../../src/learning/types.ts";
 import { generatePlan, TEMPLATES } from "../agents/planner.ts";
 import { distillEdit } from "../agents/distiller.ts";
+import { researchMarket } from "../agents/research.ts";
+import { RESEARCH_MODEL } from "../anthropic.ts";
 
 const AUDIENCE_LABEL: Record<Audience | "full", string> = {
   lender: "Lender pack",
@@ -173,6 +175,52 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     await audit("plan_inputs.updated", { actorUserId: user.id, clientId: id });
 
     return { saved: true };
+  });
+
+  /**
+   * A real web-search-grounded suggestion, not an autofill — the advisor
+   * reviews and edits before anything reaches plan_inputs (D-plan). Explicit
+   * button only; this spends real money on every call, so it never runs
+   * automatically.
+   */
+  app.post("/clients/:id/plan-inputs/research", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const client = await one<{ name: string }>(`SELECT name FROM clients WHERE id = $1`, [id]);
+    if (!client) return reply.code(404).send({ error: "not_found" });
+
+    const profile = await one<{ data: any }>(
+      `SELECT data FROM profiles WHERE client_id = $1 AND superseded_at IS NULL`,
+      [id],
+    );
+    if (!profile?.data?.business_identity?.business_description) {
+      return reply.code(409).send({
+        error: "no_profile",
+        message: "The interview needs a business description before market research can run.",
+      });
+    }
+
+    try {
+      const result = await researchMarket({
+        clientName: client.name,
+        businessDescription: profile.data.business_identity.business_description,
+        geographies: profile.data.market_position?.geographies ?? [],
+        ownerNamedCompetitors: profile.data.market_position?.named_competitors ?? [],
+      });
+
+      await audit("agent.usage", {
+        actorUserId: user.id,
+        clientId: id,
+        payload: { agent: "research", model: RESEARCH_MODEL, ...result.usage },
+      });
+
+      return result.suggestion;
+    } catch (err: any) {
+      req.log.error({ err, clientId: id }, "market research failed");
+      return reply.code(502).send({ error: "agent_unavailable" });
+    }
   });
 
   // ─── the plan itself ─────────────────────────────────────────────────────
