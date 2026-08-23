@@ -14,16 +14,20 @@ import { z } from "zod";
 import { requireManager, requireUser } from "../auth.ts";
 import { audit, one, query } from "../db.ts";
 import { runErasure } from "../privacy/run.ts";
-import { generateNotice } from "../../../src/privacy/notice.ts";
+import { generateNoticeBlocks, renderNoticeText } from "../../../src/privacy/notice.ts";
 import { INVENTORY } from "../../../src/privacy/inventory.ts";
 import { config } from "../config.ts";
 
 /** PDPL response deadlines are enforceable, so the clock starts on receipt. */
 const RESPONSE_DAYS = 30;
 
-const ORG_NAME = "Falak";
-const PRIVACY_CONTACT = "privacy@falak.sa";
-export const NOTICE_VERSION = "2026-08-01";
+const ORG_NAME = "SME Advisor";
+const PRIVACY_CONTACT = "advisor@businesswizard.app";
+// Bumped: the notice text changed (org name, contact, and no longer claims a
+// signed data processing agreement that does not yet exist). A consent
+// recorded against the old version keeps its own stored text regardless —
+// this only affects what a new agreement is shown and recorded against.
+export const NOTICE_VERSION = "2026-08-23";
 
 const requestSchema = z.object({
   kind: z.enum(["access", "correction", "erasure", "withdraw_consent"]),
@@ -39,7 +43,7 @@ export async function privacyRoutes(app: FastifyInstance): Promise<void> {
   /** Public. Versioned so a consent record can name the text it referred to. */
   app.get("/privacy/notice", async () => ({
     version: NOTICE_VERSION,
-    text: generateNotice(ORG_NAME, PRIVACY_CONTACT),
+    blocks: generateNoticeBlocks(ORG_NAME, PRIVACY_CONTACT),
   }));
 
   app.post("/me/privacy/consents", async (req, reply) => {
@@ -51,7 +55,7 @@ export async function privacyRoutes(app: FastifyInstance): Promise<void> {
 
     // The exact text is stored, not a reference to it. Notice wording changes;
     // what someone agreed to does not.
-    const notice = generateNotice(ORG_NAME, PRIVACY_CONTACT);
+    const notice = renderNoticeText(generateNoticeBlocks(ORG_NAME, PRIVACY_CONTACT));
     const row = await one<{ id: string }>(
       `INSERT INTO consents (user_id, client_id, purpose, notice_text, notice_version,
                              ip_address, user_agent)

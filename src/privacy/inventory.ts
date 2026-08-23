@@ -149,7 +149,7 @@ export const INVENTORY: DataElement[] = [
     erasure: "delete",
     retention_note:
       "Bank statements and registration documents contain identifiers and financial detail about named individuals. Shortest retention of anything here, and consent is captured per upload.",
-    processors: ["hosting"],
+    processors: ["hosting", "model_api"],
   },
   {
     location: "plans / plan_sections",
