@@ -10,7 +10,7 @@ import { z } from "zod";
 import { requireManager } from "../auth.ts";
 import { getInterview, loadMessages } from "../agents/interview.ts";
 import { textOf } from "../anthropic.ts";
-import { buildInterviewDocx } from "../docx.ts";
+import { buildInterviewDocx, firmIdentity } from "../docx.ts";
 import { audit, one, query } from "../db.ts";
 
 const closeSchema = z.object({
@@ -213,6 +213,7 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
     ]);
 
     const buffer = await buildInterviewDocx({
+      firm: firmIdentity(),
       clientName: client.name,
       readiness: profile?.provisional_readiness_tier ?? null,
       sectionsComplete: sections.filter((s) => s.complete).length,

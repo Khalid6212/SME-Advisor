@@ -28,6 +28,13 @@ const schema = z.object({
   SMTP_URL: z.string().optional(),
   MAIL_FROM: z.string().default("SME Advisor <no-reply@localhost>"),
 
+  /** Letterhead identity on generated documents — the cover page and footer
+   *  of every exported plan. Text only for now; no logo support yet. */
+  FIRM_NAME: z.string().default("SME Advisor"),
+  FIRM_CONTACT_EMAIL: z.string().default("advisor@businesswizard.app"),
+  FIRM_PHONE: z.string().optional(),
+  FIRM_WEBSITE: z.string().optional(),
+
   ANTHROPIC_API_KEY: z.string().optional(),
 
   /**

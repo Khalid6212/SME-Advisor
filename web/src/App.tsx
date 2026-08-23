@@ -9,6 +9,7 @@ import { ManagerInterview } from "./screens/ManagerInterview";
 import { DataRoom } from "./screens/DataRoom";
 import { Plan } from "./screens/Plan";
 import { Admin } from "./screens/Admin";
+import { HouseRules } from "./screens/HouseRules";
 import { ThemeToggle } from "./components/ThemeToggle";
 
 const READINESS: Record<string, string> = {
@@ -129,7 +130,7 @@ export default function App() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [open, setOpen] = useState<ClientRow | null>(null);
   const [tab, setTab] = useState("Data room");
-  const [view, setView] = useState<"pipeline" | "admin">("pipeline");
+  const [view, setView] = useState<"pipeline" | "admin" | "rules">("pipeline");
   const [residency, setResidency] = useState<string | null>(null);
   const [unauthView, setUnauthView] = useState<"landing" | "login">("landing");
 
@@ -188,6 +189,14 @@ export default function App() {
             Team
           </button>
         )}
+        {manager && (
+          <button
+            style={view === "rules" ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
+            onClick={() => setView(view === "rules" ? "pipeline" : "rules")}
+          >
+            House rules
+          </button>
+        )}
         <div className="spacer" />
         <ThemeToggle />
         <span className="muted" style={{ fontSize: 13 }}>{user.email}</span>
@@ -202,6 +211,15 @@ export default function App() {
             <h1>Team</h1>
             <p className="sub">Advisors and admins who can access the platform.</p>
             <Admin currentUserId={user.id} />
+          </>
+        ) : view === "rules" ? (
+          <>
+            <h1>House rules</h1>
+            <p className="sub">
+              Patterns the team's edits have taught the drafting agents — nothing here applies
+              until you approve it.
+            </p>
+            <HouseRules />
           </>
         ) : manager ? (
           open ? (

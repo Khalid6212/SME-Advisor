@@ -23,9 +23,32 @@ import {
   TextRun,
   WidthType,
 } from "docx";
+import { config } from "./config.ts";
 
 const MUTED = "666666";
 const FAINT = "999999";
+
+export interface FirmIdentity {
+  name: string;
+  contactEmail: string;
+  phone?: string;
+  website?: string;
+}
+
+/** One place reading the letterhead config, so every export call site
+ *  doesn't re-derive the same four fields from `config`. */
+export function firmIdentity(): FirmIdentity {
+  return {
+    name: config.FIRM_NAME,
+    contactEmail: config.FIRM_CONTACT_EMAIL,
+    phone: config.FIRM_PHONE,
+    website: config.FIRM_WEBSITE,
+  };
+}
+
+function firmContactLine(firm: FirmIdentity): string {
+  return [firm.contactEmail, firm.phone, firm.website].filter(Boolean).join(" · ");
+}
 
 function heading(text: string, level: (typeof HeadingLevel)[keyof typeof HeadingLevel]) {
   return new Paragraph({ text, heading: level, spacing: { before: 240, after: 120 } });
@@ -47,14 +70,15 @@ function dateLabel(d: Date): string {
   return d.toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
 }
 
-function headerFooter(title: string) {
+function headerFooter(firm: FirmIdentity, title: string) {
+  const contact = firmContactLine(firm);
   return {
     headers: {
       default: new Header({
         children: [
           new Paragraph({
             alignment: AlignmentType.RIGHT,
-            children: [new TextRun({ text: title, size: 16, color: FAINT })],
+            children: [new TextRun({ text: `${firm.name} — ${title}`, size: 16, color: FAINT })],
           }),
         ],
       }),
@@ -72,6 +96,14 @@ function headerFooter(title: string) {
               }),
             ],
           }),
+          ...(contact
+            ? [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new TextRun({ text: contact, size: 16, color: FAINT })],
+                }),
+              ]
+            : []),
         ],
       }),
     },
@@ -85,9 +117,24 @@ function tableCell(text: string, bold = false): TableCell {
   });
 }
 
-function coverAndToc(title: string, subtitle: string, metaLines: string[]): FileChild[] {
+/** The letterhead block at the top of the cover page — firm identity first,
+ *  document title second, same order a printed letterhead would carry. */
+function coverAndToc(firm: FirmIdentity, title: string, subtitle: string, metaLines: string[]): FileChild[] {
+  const contact = firmContactLine(firm);
   return [
-    new Paragraph({ text: title, heading: HeadingLevel.TITLE, spacing: { before: 2400, after: 200 } }),
+    new Paragraph({
+      children: [new TextRun({ text: firm.name, bold: true, size: 24 })],
+      spacing: { before: 600, after: contact ? 40 : 900 },
+    }),
+    ...(contact
+      ? [
+          new Paragraph({
+            children: [new TextRun({ text: contact, size: 18, color: MUTED })],
+            spacing: { after: 900 },
+          }),
+        ]
+      : []),
+    new Paragraph({ text: title, heading: HeadingLevel.TITLE, spacing: { after: 200 } }),
     new Paragraph({ children: [new TextRun({ text: subtitle, size: 28 })], spacing: { after: 300 } }),
     ...metaLines.map(
       (line) =>
@@ -172,6 +219,7 @@ function assumptionsTable(rows: { label: string; value: string; basis: string }[
 }
 
 export async function buildPlanDocx(opts: {
+  firm: FirmIdentity;
   clientName: string;
   audienceLabel: string;
   approvedAt: Date | null;
@@ -185,7 +233,7 @@ export async function buildPlanDocx(opts: {
   ];
 
   const children: FileChild[] = [
-    ...coverAndToc(opts.clientName, opts.audienceLabel, meta),
+    ...coverAndToc(opts.firm, opts.clientName, opts.audienceLabel, meta),
     new Paragraph({
       children: [
         new TextRun({
@@ -225,7 +273,7 @@ export async function buildPlanDocx(opts: {
 
   const doc = new Document({
     sections: [
-      { ...headerFooter(`${opts.clientName} — ${opts.audienceLabel}`), children },
+      { ...headerFooter(opts.firm, `${opts.clientName} — ${opts.audienceLabel}`), children },
     ],
   });
   return Buffer.from(await Packer.toBuffer(doc));
@@ -234,6 +282,7 @@ export async function buildPlanDocx(opts: {
 // ─── interview summary ──────────────────────────────────────────────────────
 
 export async function buildInterviewDocx(opts: {
+  firm: FirmIdentity;
   clientName: string;
   readiness: string | null;
   sectionsComplete: number;
@@ -241,7 +290,7 @@ export async function buildInterviewDocx(opts: {
   claims: { field_path: string; stated_value: string | null; owner_quote: string; materiality: string }[];
 }): Promise<Buffer> {
   const children: FileChild[] = [
-    ...coverAndToc("Interview summary", opts.clientName, [`Prepared ${dateLabel(new Date())}`]),
+    ...coverAndToc(opts.firm, "Interview summary", opts.clientName, [`Prepared ${dateLabel(new Date())}`]),
     new Paragraph({
       children: [
         new TextRun(
@@ -293,7 +342,7 @@ export async function buildInterviewDocx(opts: {
   );
 
   const doc = new Document({
-    sections: [{ ...headerFooter(`${opts.clientName} — Interview summary`), children }],
+    sections: [{ ...headerFooter(opts.firm, `${opts.clientName} — Interview summary`), children }],
   });
   return Buffer.from(await Packer.toBuffer(doc));
 }

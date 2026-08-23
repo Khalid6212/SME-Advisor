@@ -12,12 +12,13 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireManager } from "../auth.ts";
 import { audit, one, query } from "../db.ts";
-import { buildPlanDocx } from "../docx.ts";
+import { buildPlanDocx, firmIdentity } from "../docx.ts";
 import { informationRequestMail, sendMail } from "../mailer.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import { type Audience, sectionsForAudience } from "../../../src/planner/types.ts";
 import { editDistance } from "../../../src/learning/types.ts";
 import { generatePlan, TEMPLATES } from "../agents/planner.ts";
+import { distillEdit } from "../agents/distiller.ts";
 
 const AUDIENCE_LABEL: Record<Audience | "full", string> = {
   lender: "Lender pack",
@@ -292,11 +293,11 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (changed) {
       const audiences = businessPlanTemplate.sections.find((s) => s.key === before.key)?.audiences ?? [];
       const audience = audiences.length === 1 ? audiences[0] : null;
-      await query(
+      const editRow = await one<{ id: string }>(
         `INSERT INTO section_edits
            (agent, client_id, plan_id, section_key, audience, sector_id,
             before_text, after_text, edit_distance, manager_note, edited_by)
-         VALUES ('planner',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+         VALUES ('planner',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
         [
           before.client_id, before.plan_id, before.key, audience, before.sector_id,
           before.content, parsed.data.content,
@@ -304,6 +305,12 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
           parsed.data.note ?? null, user.id,
         ],
       );
+
+      // Best-effort enrichment, not part of the save — a slow or failed
+      // distillation must never hold up the manager's own edit.
+      if (editRow) {
+        distillEdit(editRow.id).catch((err) => req.log.error({ err, editId: editRow.id }, "distillation failed"));
+      }
     }
 
     return { saved: true };
@@ -473,6 +480,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     );
 
     const buffer = await buildPlanDocx({
+      firm: firmIdentity(),
       clientName: plan.client_name,
       audienceLabel: AUDIENCE_LABEL[audience],
       approvedAt: plan.approved_at,
