@@ -49,6 +49,10 @@ const planInputsSchema = z.object({
   positioning_notes: z.string().trim().max(4000).nullable().optional(),
   risk_mitigants: z.string().trim().max(4000).nullable().optional(),
   use_of_funds_notes: z.string().trim().max(4000).nullable().optional(),
+  // Illustrative only — the advisor's estimate, not a lender-quoted term.
+  loan_term_years: z.number().int().min(1).max(30).nullable().optional(),
+  loan_interest_rate_pct: z.number().min(0).max(50).nullable().optional(),
+  asset_useful_life_years: z.number().int().min(1).max(30).nullable().optional(),
 });
 
 export async function planRoutes(app: FastifyInstance): Promise<void> {
@@ -74,7 +78,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
 
     const row = await one(
       `SELECT revenue_growth_pct, growth_basis, projection_years, management_assessment,
-              positioning_notes, risk_mitigants, use_of_funds_notes, updated_at
+              positioning_notes, risk_mitigants, use_of_funds_notes,
+              loan_term_years, loan_interest_rate_pct, asset_useful_life_years, updated_at
          FROM plan_inputs WHERE client_id = $1`,
       [id],
     );
@@ -92,17 +97,21 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     await query(
       `INSERT INTO plan_inputs
          (client_id, revenue_growth_pct, growth_basis, projection_years,
-          management_assessment, positioning_notes, risk_mitigants, use_of_funds_notes, created_by)
-       VALUES ($1,$2,$3,COALESCE($4,3),$5,$6,$7,$8,$9)
+          management_assessment, positioning_notes, risk_mitigants, use_of_funds_notes,
+          loan_term_years, loan_interest_rate_pct, asset_useful_life_years, created_by)
+       VALUES ($1,$2,$3,COALESCE($4,3),$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (client_id) DO UPDATE SET
-         revenue_growth_pct    = EXCLUDED.revenue_growth_pct,
-         growth_basis          = EXCLUDED.growth_basis,
-         projection_years      = COALESCE(EXCLUDED.projection_years, plan_inputs.projection_years),
-         management_assessment = EXCLUDED.management_assessment,
-         positioning_notes     = EXCLUDED.positioning_notes,
-         risk_mitigants        = EXCLUDED.risk_mitigants,
-         use_of_funds_notes    = EXCLUDED.use_of_funds_notes,
-         updated_at            = now()`,
+         revenue_growth_pct      = EXCLUDED.revenue_growth_pct,
+         growth_basis            = EXCLUDED.growth_basis,
+         projection_years        = COALESCE(EXCLUDED.projection_years, plan_inputs.projection_years),
+         management_assessment   = EXCLUDED.management_assessment,
+         positioning_notes       = EXCLUDED.positioning_notes,
+         risk_mitigants          = EXCLUDED.risk_mitigants,
+         use_of_funds_notes      = EXCLUDED.use_of_funds_notes,
+         loan_term_years         = EXCLUDED.loan_term_years,
+         loan_interest_rate_pct  = EXCLUDED.loan_interest_rate_pct,
+         asset_useful_life_years = EXCLUDED.asset_useful_life_years,
+         updated_at              = now()`,
       [
         id,
         parsed.data.revenue_growth_pct ?? null,
@@ -112,6 +121,9 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         parsed.data.positioning_notes ?? null,
         parsed.data.risk_mitigants ?? null,
         parsed.data.use_of_funds_notes ?? null,
+        parsed.data.loan_term_years ?? null,
+        parsed.data.loan_interest_rate_pct ?? null,
+        parsed.data.asset_useful_life_years ?? null,
         user.id,
       ],
     );
@@ -483,22 +495,36 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
   });
 }
 
+const FINANCIAL_LINE_ORDER = [
+  "revenue", "cogs", "gross_profit", "operating_cost", "ebitda",
+  "depreciation", "ebit", "interest_expense", "net_income",
+  "principal_repayment", "debt_service", "dscr",
+];
+const FINANCIAL_LINE_LABEL: Record<string, string> = {
+  revenue: "Revenue", cogs: "Cost of goods sold", gross_profit: "Gross profit",
+  operating_cost: "Operating costs", ebitda: "EBITDA", depreciation: "Depreciation",
+  ebit: "EBIT", interest_expense: "Interest expense", net_income: "Net income",
+  principal_repayment: "Principal repayment", debt_service: "Total debt service",
+  dscr: "Debt service coverage ratio",
+};
+
 function financialsMarkdown(rows: { year_offset: number; line_item: string; value: string }[]): string[] {
-  const label: Record<string, string> = {
-    revenue: "Revenue", cogs: "Cost of goods sold", gross_profit: "Gross profit",
-    operating_cost: "Operating costs", net_income: "Net income",
-  };
   const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
-  const items = ["revenue", "cogs", "gross_profit", "operating_cost", "net_income"].filter((item) =>
-    rows.some((r) => r.line_item === item),
-  );
+  const items = FINANCIAL_LINE_ORDER.filter((item) => rows.some((r) => r.line_item === item));
   const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
-  const fmt = (v: string | undefined) => (v == null ? "—" : Number(v).toLocaleString("en-US"));
+  const fmt = (item: string, v: string | undefined) => {
+    if (v == null) return "—";
+    const n = Number(v);
+    if (item === "dscr") return `${n.toFixed(2)}x`;
+    const abs = Math.abs(n).toLocaleString("en-US");
+    return n < 0 ? `(${abs})` : abs;
+  };
 
   const header = `| SAR | ${years.map((y) => (y === 0 ? "Base year" : `Year ${y}`)).join(" | ")} |`;
   const sep = `|---|${years.map(() => "---").join("|")}|`;
   const body = items.map(
-    (item) => `| ${label[item] ?? item} | ${years.map((y) => fmt(byKey.get(`${y}:${item}`))).join(" | ")} |`,
+    (item) =>
+      `| ${FINANCIAL_LINE_LABEL[item] ?? item} | ${years.map((y) => fmt(item, byKey.get(`${y}:${item}`))).join(" | ")} |`,
   );
 
   return [header, sep, ...body];

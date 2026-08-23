@@ -3,7 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#11111b" />
     <title>SME Advisor</title>
+    <script>
+      // Sets the theme attribute before first paint — doing this in a React
+      // effect instead would still show the wrong theme for one frame.
+      (function () {
+        var stored = localStorage.getItem("sme-theme");
+        var theme = stored || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

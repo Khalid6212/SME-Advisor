@@ -6,7 +6,7 @@ import { api, ApiError } from "../api";
  * what gets you there in the first place, and what gets you back in if the
  * password is forgotten — one mechanism for both, not two to keep in sync.
  */
-export function Login() {
+export function Login({ onBack }: { onBack?: () => void }) {
   const [mode, setMode] = useState<"password" | "link">("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -51,6 +51,11 @@ export function Login() {
 
   return (
     <div style={{ maxWidth: 420, margin: "12vh auto", padding: "0 24px" }}>
+      {onBack && (
+        <a href="#" onClick={(e) => { e.preventDefault(); onBack(); }} style={{ fontSize: 13 }}>
+          ← Back
+        </a>
+      )}
       <div style={{ textAlign: "center", marginBottom: 28 }}>
         <div style={{ fontSize: 26, fontWeight: 700 }}>مستشار الجاهزية الاستثمارية</div>
         <div className="dim" style={{ fontSize: 15 }}>SME Investment Readiness</div>

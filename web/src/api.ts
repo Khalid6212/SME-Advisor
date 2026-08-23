@@ -161,6 +161,9 @@ export interface PlanInputs {
   positioning_notes: string | null;
   risk_mitigants: string | null;
   use_of_funds_notes: string | null;
+  loan_term_years: number | null;
+  loan_interest_rate_pct: number | null;
+  asset_useful_life_years: number | null;
   updated_at?: string;
 }
 

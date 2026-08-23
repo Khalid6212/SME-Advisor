@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type ClientRow, type User } from "./api";
+import { Landing } from "./screens/Landing";
 import { Login } from "./screens/Login";
 import { SetPassword } from "./screens/SetPassword";
 import { Consent } from "./screens/Consent";
@@ -8,6 +9,7 @@ import { ManagerInterview } from "./screens/ManagerInterview";
 import { DataRoom } from "./screens/DataRoom";
 import { Plan } from "./screens/Plan";
 import { Admin } from "./screens/Admin";
+import { ThemeToggle } from "./components/ThemeToggle";
 
 const READINESS: Record<string, string> = {
   ready: "good", near_ready: "info", needs_work: "warn", not_ready: "bad",
@@ -109,10 +111,12 @@ function Tabs({ tabs, active, onChange }: {
   tabs: string[]; active: string; onChange: (t: string) => void;
 }) {
   return (
-    <div className="row" style={{ gap: 6, margin: "18px 0" }}>
+    <div className="row" role="tablist" style={{ gap: 6, margin: "18px 0" }}>
       {tabs.map((t) => (
-        <button key={t} onClick={() => onChange(t)}
-          style={t === active ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}>
+        <button
+          key={t} role="tab" aria-selected={t === active} onClick={() => onChange(t)}
+          style={t === active ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
+        >
           {t}
         </button>
       ))}
@@ -127,6 +131,7 @@ export default function App() {
   const [tab, setTab] = useState("Data room");
   const [view, setView] = useState<"pipeline" | "admin">("pipeline");
   const [residency, setResidency] = useState<string | null>(null);
+  const [unauthView, setUnauthView] = useState<"landing" | "login">("landing");
 
   useEffect(() => {
     api.get<User>("/auth/me").then(setUser).catch(() => setUser(null));
@@ -141,8 +146,12 @@ export default function App() {
     }
   }, [user]);
 
-  if (user === "loading") return <p className="muted" style={{ padding: 40 }}>Loading…</p>;
-  if (!user) return <Login />;
+  if (user === "loading") return <p className="muted" style={{ padding: 40 }} aria-live="polite">Loading…</p>;
+  if (!user) {
+    return unauthView === "landing"
+      ? <Landing onSignIn={() => setUnauthView("login")} />
+      : <Login onBack={() => setUnauthView("landing")} />;
+  }
   // The only way to reach this with has_password false is a magic link that
   // just verified — there's a real session already, it just can't be used
   // for anything else until this step closes.
@@ -180,6 +189,7 @@ export default function App() {
           </button>
         )}
         <div className="spacer" />
+        <ThemeToggle />
         <span className="muted" style={{ fontSize: 13 }}>{user.email}</span>
         <button onClick={() => api.post("/auth/logout").then(() => location.reload())}>
           Sign out

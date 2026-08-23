@@ -37,6 +37,10 @@ Use the projection table you were given exactly as computed — narrate it, do n
 
 If no projection table was supplied, flag it as a gap rather than building a forecast from a single revenue figure and a growth rate nobody supplied.
 
+## Write prose, not markdown
+
+Section content is rendered as plain paragraphs in the delivered document, not parsed as markdown — a pipe table or a bold marker shows up as literal characters, not formatting. Where a section needs to present figures (a use-of-funds breakdown, for instance), write them as a short list of "label: value" lines, not a markdown table. The computed financial projection table is rendered separately as a real table in the document — refer to it in prose; do not re-typeset it yourself.
+
 ## Verification status
 
 Figures in the profile are owner-reported and unverified at this stage. Where the plan presents them, say so once, plainly, in the financial section. Do not hedge every sentence — one clear statement is more honest and reads better than pervasive qualification.

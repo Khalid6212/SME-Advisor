@@ -37,9 +37,16 @@ const AUDIENCE_LABEL: Record<string, string> = {
 
 const LINE_ITEM_LABEL: Record<string, string> = {
   revenue: "Revenue", cogs: "Cost of goods sold", gross_profit: "Gross profit",
-  operating_cost: "Operating costs", net_income: "Net income",
+  operating_cost: "Operating costs", ebitda: "EBITDA", depreciation: "Depreciation",
+  ebit: "EBIT", interest_expense: "Interest expense", net_income: "Net income",
+  principal_repayment: "Principal repayment", debt_service: "Total debt service",
+  dscr: "Debt service coverage ratio",
 };
-const LINE_ITEM_ORDER = ["revenue", "cogs", "gross_profit", "operating_cost", "net_income"];
+const LINE_ITEM_ORDER = [
+  "revenue", "cogs", "gross_profit", "operating_cost", "ebitda",
+  "depreciation", "ebit", "interest_expense", "net_income",
+  "principal_repayment", "debt_service", "dscr",
+];
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
@@ -48,7 +55,15 @@ function FinancialsTable({ rows }: { rows: FinancialLine[] }) {
   const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
   const items = LINE_ITEM_ORDER.filter((item) => rows.some((r) => r.line_item === item));
   const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
-  const fmt = (v: string | undefined) => (v == null ? "—" : Number(v).toLocaleString());
+  // DSCR is a ratio, not a currency figure; negatives read as losses, matching
+  // the accounting-parens convention used in the exported documents.
+  const fmt = (item: string, v: string | undefined) => {
+    if (v == null) return "—";
+    const n = Number(v);
+    if (item === "dscr") return `${n.toFixed(2)}x`;
+    const abs = Math.abs(n).toLocaleString();
+    return n < 0 ? `(${abs})` : abs;
+  };
 
   return (
     <div className="card" style={{ overflowX: "auto" }}>
@@ -63,7 +78,7 @@ function FinancialsTable({ rows }: { rows: FinancialLine[] }) {
           {items.map((item) => (
             <tr key={item}>
               <td>{LINE_ITEM_LABEL[item] ?? item}</td>
-              {years.map((y) => <td key={y}>{fmt(byKey.get(`${y}:${item}`))}</td>)}
+              {years.map((y) => <td key={y}>{fmt(item, byKey.get(`${y}:${item}`))}</td>)}
             </tr>
           ))}
         </tbody>

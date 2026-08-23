@@ -102,13 +102,24 @@ function coverAndToc(title: string, subtitle: string, metaLines: string[]): File
 
 // ─── business plan ──────────────────────────────────────────────────────────
 
-const LINE_ITEM_ORDER = ["revenue", "cogs", "gross_profit", "operating_cost", "net_income"] as const;
+const LINE_ITEM_ORDER = [
+  "revenue", "cogs", "gross_profit", "operating_cost", "ebitda",
+  "depreciation", "ebit", "interest_expense", "net_income",
+  "principal_repayment", "debt_service", "dscr",
+] as const;
 const LINE_ITEM_LABEL: Record<string, string> = {
   revenue: "Revenue",
   cogs: "Cost of goods sold",
   gross_profit: "Gross profit",
   operating_cost: "Operating costs",
+  ebitda: "EBITDA",
+  depreciation: "Depreciation",
+  ebit: "EBIT",
+  interest_expense: "Interest expense",
   net_income: "Net income",
+  principal_repayment: "Principal repayment",
+  debt_service: "Total debt service",
+  dscr: "Debt service coverage ratio",
 };
 
 function financialsTable(rows: { year_offset: number; line_item: string; value: string }[]): Table | null {
@@ -117,8 +128,16 @@ function financialsTable(rows: { year_offset: number; line_item: string; value: 
   const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
   const items = LINE_ITEM_ORDER.filter((item) => rows.some((r) => r.line_item === item));
   const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
-  const fmt = (v: string | undefined) =>
-    v == null ? "—" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  // Accounting convention, matching how the model itself writes a loss in
+  // prose ("a loss of SAR 10.4m") — a bare minus sign reads as a typo next to it.
+  // DSCR is a ratio, not a currency figure, so it gets its own format.
+  const fmt = (item: string, v: string | undefined) => {
+    if (v == null) return "—";
+    const n = Number(v);
+    if (item === "dscr") return `${n.toFixed(2)}x`;
+    const abs = Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+    return n < 0 ? `(${abs})` : abs;
+  };
 
   const header = new TableRow({
     children: [
@@ -131,7 +150,7 @@ function financialsTable(rows: { year_offset: number; line_item: string; value: 
       new TableRow({
         children: [
           tableCell(LINE_ITEM_LABEL[item] ?? item),
-          ...years.map((y) => tableCell(fmt(byKey.get(`${y}:${item}`)))),
+          ...years.map((y) => tableCell(fmt(item, byKey.get(`${y}:${item}`)))),
         ],
       }),
   );

@@ -9,6 +9,9 @@ const EMPTY: PlanInputsData = {
   positioning_notes: null,
   risk_mitigants: null,
   use_of_funds_notes: null,
+  loan_term_years: null,
+  loan_interest_rate_pct: null,
+  asset_useful_life_years: null,
 };
 
 /**
@@ -119,6 +122,39 @@ export function PlanInputs({ clientId }: { clientId: string }) {
             value={data.use_of_funds_notes ?? ""}
             onChange={(e) => set("use_of_funds_notes", e.target.value || null)}
           />
+        </div>
+
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>Facility assumptions</div>
+          <p className="muted" style={{ fontSize: 12, margin: "2px 0 8px" }}>
+            Illustrative only, for the debt-service projection — not a lender-quoted term.
+          </p>
+          <div className="row" style={{ gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="muted" style={{ fontSize: 12 }}>Loan term (years)</label>
+              <input
+                type="number" min={1} max={30} style={{ width: "100%", marginTop: 4 }}
+                value={data.loan_term_years ?? ""}
+                onChange={(e) => set("loan_term_years", e.target.value === "" ? null : Number(e.target.value))}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="muted" style={{ fontSize: 12 }}>Interest rate (%)</label>
+              <input
+                type="number" step="0.1" min={0} max={50} style={{ width: "100%", marginTop: 4 }}
+                value={data.loan_interest_rate_pct ?? ""}
+                onChange={(e) => set("loan_interest_rate_pct", e.target.value === "" ? null : Number(e.target.value))}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="muted" style={{ fontSize: 12 }}>Asset useful life (years)</label>
+              <input
+                type="number" min={1} max={30} style={{ width: "100%", marginTop: 4 }}
+                value={data.asset_useful_life_years ?? ""}
+                onChange={(e) => set("asset_useful_life_years", e.target.value === "" ? null : Number(e.target.value))}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="row">

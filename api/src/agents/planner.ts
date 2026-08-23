@@ -77,7 +77,8 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
 
   const planInputs = await one<PlanInputs>(
     `SELECT revenue_growth_pct, growth_basis, projection_years, management_assessment,
-            positioning_notes, risk_mitigants, use_of_funds_notes
+            positioning_notes, risk_mitigants, use_of_funds_notes,
+            loan_term_years, loan_interest_rate_pct, asset_useful_life_years
        FROM plan_inputs WHERE client_id = $1`,
     [clientId],
   );
@@ -113,6 +114,9 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
       annualRevenue: profile.data?.revenue_and_customers?.annual_revenue ?? null,
       grossMarginPct: profile.data?.financial_health?.gross_margin_pct ?? null,
       monthlyOperatingCost: profile.data?.financial_health?.monthly_operating_cost ?? null,
+      // The facility being requested already lives in the profile — no
+      // separate capture needed for what the debt schedule is based on.
+      loanAmount: profile.data?.funding_need?.amount_requested ?? null,
     },
     planInputs,
   );
