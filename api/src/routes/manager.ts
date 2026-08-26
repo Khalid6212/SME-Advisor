@@ -271,12 +271,19 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
       return docs.rows.map((r) => r.storage_key);
     });
 
-    // Row deletion is already committed at this point — a blob that resists
-    // purging is logged, not retried automatically, and does not undo the
-    // delete. This is a manual, one-shot action, not the retention sweep.
+    // Row deletion is already committed at this point — a blob purge that
+    // errors outright or resists deletion is logged, not retried
+    // automatically, and must not make an already-successful delete look
+    // like it failed by throwing out of the request.
     let storageFailed = 0;
     if (storageKeys.length > 0) {
-      const result = await purge(storageKeys);
+      let result: { purged: number; failed: string[] };
+      try {
+        result = await purge(storageKeys);
+      } catch (err) {
+        req.log.error({ err, clientId: id }, "storage purge failed after client delete");
+        result = { purged: 0, failed: storageKeys };
+      }
       storageFailed = result.failed.length;
       if (storageFailed > 0) {
         await audit("client.delete_storage_incomplete", {

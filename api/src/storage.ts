@@ -163,6 +163,12 @@ class S3Driver implements StorageDriver {
         new this.sdk.DeleteObjectsCommand({
           Bucket: this.bucket,
           Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: false },
+          // Unlike Put/Get, DeleteObjects has always required an integrity
+          // header on the request body — the WHEN_REQUIRED setting above
+          // doesn't infer that on its own against Oracle's endpoint, and the
+          // request is rejected outright without one. Naming an algorithm
+          // here forces the SDK to attach it for this call specifically.
+          ChecksumAlgorithm: "CRC32",
         }),
       );
       for (const d of res.Deleted ?? []) removed.push(d.Key);
