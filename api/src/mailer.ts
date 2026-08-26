@@ -65,6 +65,27 @@ export function magicLinkMail(to: string, url: string): Mail {
   };
 }
 
+/** Distinct from magicLinkMail — this is someone's first contact with the
+ *  platform, not a returning user asking to sign back in, so it says who
+ *  invited them and what to do next rather than just handing over a link. */
+export function clientInviteMail(to: string, businessName: string, url: string, ttlHours: number): Mail {
+  return {
+    to,
+    subject: `You're invited to ${businessName}'s investment-readiness assessment`,
+    text: [
+      "Your adviser has set up an account for you on SME Advisor.",
+      "",
+      "Use this link to get started — it will ask you to set a password, and you'll be",
+      "signed in right away:",
+      "",
+      url,
+      "",
+      `This link works once and expires in ${ttlHours} hours.`,
+      "If you weren't expecting this, you can ignore this email.",
+    ].join("\n"),
+  };
+}
+
 /** A follow-up nudge for items already requested once — see the initial
  *  request email in dataroom.ts's /publish route, which this echoes. */
 export function documentReminderMail(

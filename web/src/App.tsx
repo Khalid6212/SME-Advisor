@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type ClientRow, type User } from "./api";
+import { api, ApiError, type ClientRow, type User } from "./api";
 import { Landing } from "./screens/Landing";
 import { Login } from "./screens/Login";
 import { SetPassword } from "./screens/SetPassword";
@@ -16,43 +16,124 @@ const READINESS: Record<string, string> = {
   ready: "good", near_ready: "info", needs_work: "warn", not_ready: "bad",
 };
 
-function Pipeline({ onOpen }: { onOpen: (c: ClientRow) => void }) {
-  const [rows, setRows] = useState<ClientRow[] | null>(null);
-  useEffect(() => { api.get<ClientRow[]>("/clients").then(setRows); }, []);
+/** Onboards a client the advisor already has a relationship with, rather
+ *  than waiting for them to find the login page and self-serve. Mirrors
+ *  Admin.tsx's "Invite an advisor" form — same shape, different endpoint
+ *  and a longer-lived link, since this is someone's first contact with the
+ *  platform rather than a returning teammate signing back in. */
+function InviteClient({ onInvited }: { onInvited: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [invited, setInvited] = useState<string | null>(null);
 
-  if (!rows) return <p className="muted">Loading…</p>;
-  if (rows.length === 0) return <div className="card muted">No clients yet.</div>;
+  const invite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setInvited(null);
+    try {
+      await api.post("/clients/invite", { email: email.trim(), name: name.trim() });
+      setInvited(email.trim());
+      setEmail("");
+      setName("");
+      onInvited();
+    } catch (err: unknown) {
+      setError(
+        err instanceof ApiError && err.code === "email_is_team_member"
+          ? "That address already belongs to someone on the team."
+          : "Couldn't send the invite. Check the address and try again.",
+      );
+    }
+    setBusy(false);
+  };
+
+  if (!open) {
+    return (
+      <button className="primary" style={{ marginBottom: 12 }} onClick={() => setOpen(true)}>
+        + Invite client
+      </button>
+    );
+  }
 
   return (
-    <div className="card" style={{ padding: 4 }}>
-      <table>
-        <thead>
-          <tr>
-            <th>Business</th><th>Status</th><th>Readiness</th>
-            <th>Claims</th><th>Open</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((c) => (
-            <tr key={c.id} className="clickable" onClick={() => onOpen(c)}>
-              <td>
-                <div>{c.name}</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  {c.contact_email}{c.group_name ? ` · ${c.group_name}` : ""}
-                </div>
-              </td>
-              <td><span className="pill grey">{c.status.replace(/_/g, " ")}</span></td>
-              <td>
-                {c.readiness
-                  ? <span className={`pill ${READINESS[c.readiness]}`}>{c.readiness.replace(/_/g, " ")}</span>
-                  : <span className="muted">—</span>}
-              </td>
-              <td className="muted">{c.high_claims ?? "0"} high</td>
-              <td className="muted">{c.open_requests ?? "0"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="card">
+      <div style={{ fontWeight: 600, marginBottom: 10 }}>Invite a client</div>
+      <form onSubmit={invite}>
+        <div className="row" style={{ gap: 8 }}>
+          <input
+            required value={name} placeholder="Business name" autoFocus
+            onChange={(e) => setName(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <input
+            type="email" required value={email} placeholder="owner@company.sa"
+            onChange={(e) => setEmail(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <button className="primary" disabled={busy || !email.trim() || !name.trim()}>
+            {busy ? "Sending…" : "Send invite"}
+          </button>
+          <button type="button" onClick={() => setOpen(false)}>Cancel</button>
+        </div>
+      </form>
+      {invited && (
+        <p className="muted" style={{ fontSize: 13, marginTop: 10, marginBottom: 0 }}>
+          Invite sent to <strong className="dim">{invited}</strong>. The link works once, expires
+          in 48 hours, and takes them straight to setting a password.
+        </p>
+      )}
+      {error && <p style={{ color: "var(--bad)", fontSize: 13, marginTop: 10, marginBottom: 0 }}>{error}</p>}
+    </div>
+  );
+}
+
+function Pipeline({ onOpen }: { onOpen: (c: ClientRow) => void }) {
+  const [rows, setRows] = useState<ClientRow[] | null>(null);
+  const load = () => api.get<ClientRow[]>("/clients").then(setRows);
+  useEffect(() => { void load(); }, []);
+
+  return (
+    <div>
+      <InviteClient onInvited={load} />
+      {!rows ? (
+        <p className="muted">Loading…</p>
+      ) : rows.length === 0 ? (
+        <div className="card muted">No clients yet.</div>
+      ) : (
+        <div className="card" style={{ padding: 4 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Business</th><th>Status</th><th>Readiness</th>
+                <th>Claims</th><th>Open</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((c) => (
+                <tr key={c.id} className="clickable" onClick={() => onOpen(c)}>
+                  <td>
+                    <div>{c.name}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {c.contact_email}{c.group_name ? ` · ${c.group_name}` : ""}
+                    </div>
+                  </td>
+                  <td><span className="pill grey">{c.status.replace(/_/g, " ")}</span></td>
+                  <td>
+                    {c.readiness
+                      ? <span className={`pill ${READINESS[c.readiness]}`}>{c.readiness.replace(/_/g, " ")}</span>
+                      : <span className="muted">—</span>}
+                  </td>
+                  <td className="muted">{c.high_claims ?? "0"} high</td>
+                  <td className="muted">{c.open_requests ?? "0"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

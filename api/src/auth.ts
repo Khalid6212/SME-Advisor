@@ -123,19 +123,27 @@ export function requireAdmin(req: FastifyRequest, reply: FastifyReply): AuthUser
 /**
  * Shared by self-signup and admin-invited accounts — the invite and the
  * first login are the same event, not two mechanisms to keep in sync.
+ * `/auth/verify` treats every link identically regardless of its TTL or who
+ * triggered it, so a manager-invited client's link works exactly the same
+ * way a self-serve sign-in link does once clicked.
  *
  * API_ORIGIN, not APP_ORIGIN — /auth/verify is an API route which sets the
  * cookie and then redirects to the SPA.
  */
-export async function issueMagicLink(userId: string, email: string): Promise<void> {
+export async function issueMagicLink(
+  userId: string,
+  email: string,
+  opts?: { ttlMinutes?: number; mail?: (url: string) => { to: string; subject: string; text: string } },
+): Promise<void> {
   const token = crypto.randomBytes(32).toString("base64url");
-  const expires = new Date(Date.now() + config.MAGIC_LINK_TTL_MINUTES * 60_000);
+  const ttlMinutes = opts?.ttlMinutes ?? config.MAGIC_LINK_TTL_MINUTES;
+  const expires = new Date(Date.now() + ttlMinutes * 60_000);
   await query(
     `INSERT INTO magic_links (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
     [userId, sha256(token), expires],
   );
   const url = `${config.API_ORIGIN}/auth/verify?token=${token}`;
-  await sendMail(magicLinkMail(email, url));
+  await sendMail(opts?.mail ? opts.mail(url) : magicLinkMail(email, url));
 }
 
 // ─── routes ─────────────────────────────────────────────────────────────────

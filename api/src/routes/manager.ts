@@ -7,15 +7,22 @@
 
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireManager } from "../auth.ts";
+import { issueMagicLink, requireManager } from "../auth.ts";
 import { getInterview, loadMessages } from "../agents/interview.ts";
 import { textOf } from "../anthropic.ts";
 import { buildInterviewDocx, firmIdentity } from "../docx.ts";
-import { audit, one, query } from "../db.ts";
+import { clientInviteMail } from "../mailer.ts";
+import { config } from "../config.ts";
+import { audit, one, query, tx } from "../db.ts";
 
 const closeSchema = z.object({
   reason: z.enum(["delivered", "abandoned"]),
   note: z.string().trim().max(2000).optional(),
+});
+
+const inviteClientSchema = z.object({
+  email: z.string().email().max(320),
+  name: z.string().trim().min(1).max(200),
 });
 
 const claimEditSchema = z
@@ -52,6 +59,64 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
         ORDER BY c.updated_at DESC`,
       [status ?? null, sector ?? null],
     );
+  });
+
+  /**
+   * Onboards a client the advisor already has a relationship with, rather
+   * than waiting for them to find the login page and self-serve. Reuses the
+   * same magic-link mechanism self-signup does (issueMagicLink) — only the
+   * TTL and the email wording differ, since this is someone's first contact
+   * with the platform, not a returning user asking to sign back in.
+   */
+  app.post("/clients/invite", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+
+    const parsed = inviteClientSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+    const email = parsed.data.email.trim().toLowerCase();
+
+    const existing = await one<{ id: string; role: string }>(
+      `SELECT id, role FROM users WHERE email = $1`,
+      [email],
+    );
+    // A teammate's own address is not a client to be onboarded — inviting it
+    // here would quietly attach a business to an advisor's own account.
+    if (existing && existing.role !== "client") {
+      return reply.code(409).send({ error: "email_is_team_member" });
+    }
+
+    const { clientId, userId } = await tx(async (c) => {
+      const u = await c.query<{ id: string }>(
+        `INSERT INTO users (email, role) VALUES ($1, 'client')
+         ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+         RETURNING id`,
+        [email],
+      );
+      const userId = u.rows[0]!.id;
+
+      const cl = await c.query<{ id: string }>(
+        `INSERT INTO clients (owner_user_id, name) VALUES ($1, $2) RETURNING id`,
+        [userId, parsed.data.name],
+      );
+      const clientId = cl.rows[0]!.id;
+      await c.query(`INSERT INTO interviews (client_id) VALUES ($1)`, [clientId]);
+
+      return { clientId, userId };
+    });
+
+    await issueMagicLink(userId, email, {
+      ttlMinutes: config.INVITE_TTL_HOURS * 60,
+      mail: (url) => clientInviteMail(email, parsed.data.name, url, config.INVITE_TTL_HOURS),
+    });
+
+    await audit("client.invited", {
+      actorUserId: user.id,
+      clientId,
+      payload: { email, name: parsed.data.name },
+    });
+
+    return reply.code(201).send({ client_id: clientId, email, name: parsed.data.name });
   });
 
   /**

@@ -24,6 +24,9 @@ const schema = z.object({
   SESSION_SECRET: z.string().min(32),
   SESSION_TTL_HOURS: z.coerce.number().default(24 * 14),
   MAGIC_LINK_TTL_MINUTES: z.coerce.number().default(15),
+  /** A first invite has to survive someone checking their email later, not
+   *  just an active sign-in attempt — hence far longer than MAGIC_LINK_TTL_MINUTES. */
+  INVITE_TTL_HOURS: z.coerce.number().default(48),
 
   SMTP_URL: z.string().optional(),
   MAIL_FROM: z.string().default("SME Advisor <no-reply@localhost>"),
