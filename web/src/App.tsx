@@ -11,10 +11,55 @@ import { Plan } from "./screens/Plan";
 import { Admin } from "./screens/Admin";
 import { HouseRules } from "./screens/HouseRules";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 
 const READINESS: Record<string, string> = {
   ready: "good", near_ready: "info", needs_work: "warn", not_ready: "bad",
 };
+
+/** Permanent — the business, its interview, documents, and any plan are all
+ *  gone, at any stage, not just early ones. Available to managers and admins
+ *  alike (requireManager on the API side covers both), which is why this
+ *  lives right on the client header rather than behind an admin-only screen. */
+function DeleteClientButton({ client, onDeleted }: { client: ClientRow; onDeleted: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const confirmDelete = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.del(`/clients/${client.id}`);
+      onDeleted();
+    } catch {
+      setError("Couldn't delete this client. Try again.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        style={{ borderColor: "var(--bad)", color: "var(--bad)" }}
+        onClick={() => setConfirming(true)}
+      >
+        Delete client
+      </button>
+      {error && <span style={{ color: "var(--bad)", fontSize: 13, marginLeft: 10 }}>{error}</span>}
+      <ConfirmDialog
+        open={confirming}
+        danger
+        title={`Delete ${client.name}?`}
+        message="This permanently removes the business, its interview, every document, and any plan — there is no undo. This bypasses the usual retention period, so make sure this is really what you want."
+        confirmLabel="Delete permanently"
+        busy={busy}
+        onConfirm={confirmDelete}
+        onCancel={() => setConfirming(false)}
+      />
+    </>
+  );
+}
 
 /** Onboards a client the advisor already has a relationship with, rather
  *  than waiting for them to find the login page and self-serve. Mirrors
@@ -337,7 +382,10 @@ export default function App() {
         ) : manager ? (
           open ? (
             <>
-              <button onClick={() => setOpen(null)} style={{ marginTop: 20 }}>← Pipeline</button>
+              <div className="row" style={{ marginTop: 20, justifyContent: "space-between" }}>
+                <button onClick={() => setOpen(null)}>← Pipeline</button>
+                <DeleteClientButton client={open} onDeleted={() => setOpen(null)} />
+              </div>
               <h1>{open.name}</h1>
               <p className="sub">{open.contact_email} · {open.status.replace(/_/g, " ")}</p>
               <Tabs tabs={["Interview", "Data room", "Plans"]} active={tab} onChange={setTab} />

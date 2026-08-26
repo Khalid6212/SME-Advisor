@@ -15,6 +15,7 @@ import { clientCredentialsMail, clientInviteMail, sendMail } from "../mailer.ts"
 import { generateTemporaryPassword, hashPassword } from "../password.ts";
 import { config } from "../config.ts";
 import { audit, one, query, tx } from "../db.ts";
+import { purge } from "../storage.ts";
 
 const closeSchema = z.object({
   reason: z.enum(["delivered", "abandoned"]),
@@ -214,6 +215,73 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
     await audit("client.reopened", { actorUserId: user.id, clientId: id });
     // Retention clocks reset. Anything already swept is gone for good.
     return { reopened: true };
+  });
+
+  /**
+   * Permanent, unconditional, at any stage — deliberately not gated on
+   * engagement status. This bypasses the 7-year advisory-record retention
+   * policy in src/privacy/policy.ts (clients / profiles.data / plans are
+   * normally "retained with basis" and only swept after closed_at + 84
+   * months); that tradeoff is intentional here, not an oversight.
+   *
+   * Deletion order matters: plans must go before the clients cascade reaches
+   * profiles, because plans.profile_id -> profiles is ON DELETE RESTRICT
+   * (profiles cannot vanish out from under a plan that cites it) while
+   * plans.client_id -> clients and profiles.client_id -> clients are both
+   * CASCADE. Deleting plans by client_id first removes that RESTRICT
+   * conflict before the final DELETE FROM clients cascades everything else
+   * (documents, data room, interviews, plan_inputs, requests, reminders,
+   * consents). audit_events.client_id and section_edits.client_id are
+   * ON DELETE SET NULL, not CASCADE, so the audit trail and anything learned
+   * via the distiller survive with the client reference simply detached —
+   * the identifying details are captured in this action's own payload
+   * instead, since the FK won't hold them past this transaction.
+   */
+  app.delete("/clients/:id", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const client = await one<{ id: string; name: string; sector_id: string }>(
+      `SELECT id, name, sector_id FROM clients WHERE id = $1`,
+      [id],
+    );
+    if (!client) return reply.code(404).send({ error: "not_found" });
+
+    const storageKeys = await tx(async (c) => {
+      const docs = await c.query<{ storage_key: string }>(
+        `DELETE FROM documents WHERE client_id = $1 RETURNING storage_key`,
+        [id],
+      );
+      await c.query(`DELETE FROM plans WHERE client_id = $1`, [id]);
+      await c.query(`DELETE FROM clients WHERE id = $1`, [id]);
+
+      await audit("client.deleted", {
+        actorUserId: user.id,
+        clientId: id,
+        payload: { client_id: id, name: client.name, sector_id: client.sector_id },
+        client: c,
+      });
+
+      return docs.rows.map((r) => r.storage_key);
+    });
+
+    // Row deletion is already committed at this point — a blob that resists
+    // purging is logged, not retried automatically, and does not undo the
+    // delete. This is a manual, one-shot action, not the retention sweep.
+    let storageFailed = 0;
+    if (storageKeys.length > 0) {
+      const result = await purge(storageKeys);
+      storageFailed = result.failed.length;
+      if (storageFailed > 0) {
+        await audit("client.delete_storage_incomplete", {
+          actorUserId: user.id,
+          payload: { client_id: id, failed_keys: result.failed },
+        });
+      }
+    }
+
+    return { deleted: true, storage_purge_failed: storageFailed };
   });
 
   /**
