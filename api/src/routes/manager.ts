@@ -254,14 +254,19 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
         [id],
       );
       await c.query(`DELETE FROM plans WHERE client_id = $1`, [id]);
-      await c.query(`DELETE FROM clients WHERE id = $1`, [id]);
 
+      // Written before the client row goes, not after — audit_events.client_id
+      // still has to point at a real row at INSERT time (SET NULL only fires
+      // for rows that already exist when their reference disappears; a fresh
+      // insert against an id that's already gone is just a plain FK violation).
       await audit("client.deleted", {
         actorUserId: user.id,
         clientId: id,
         payload: { client_id: id, name: client.name, sector_id: client.sector_id },
         client: c,
       });
+
+      await c.query(`DELETE FROM clients WHERE id = $1`, [id]);
 
       return docs.rows.map((r) => r.storage_key);
     });
