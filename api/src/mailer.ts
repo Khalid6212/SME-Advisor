@@ -86,6 +86,35 @@ export function clientInviteMail(to: string, businessName: string, url: string, 
   };
 }
 
+/** Deliberately distinct from clientInviteMail: a temporary password has no
+ *  expiry of its own once it's sent, so the account is created with
+ *  must_change_password set, and this email says so — the recipient should
+ *  expect to be asked for a new password the moment they sign in. */
+export function clientCredentialsMail(
+  to: string,
+  businessName: string,
+  password: string,
+  appOrigin: string,
+): Mail {
+  return {
+    to,
+    subject: `Your account for ${businessName}'s investment-readiness assessment`,
+    text: [
+      "Your adviser has set up an account for you on SME Advisor.",
+      "",
+      `Sign in here: ${appOrigin}`,
+      "",
+      `Email: ${to}`,
+      `Temporary password: ${password}`,
+      "",
+      "You'll be asked to set your own password the moment you sign in — the one",
+      "above only works once.",
+      "",
+      "If you weren't expecting this, you can ignore this email.",
+    ].join("\n"),
+  };
+}
+
 /** A follow-up nudge for items already requested once — see the initial
  *  request email in dataroom.ts's /publish route, which this echoes. */
 export function documentReminderMail(

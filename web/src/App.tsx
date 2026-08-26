@@ -21,22 +21,25 @@ const READINESS: Record<string, string> = {
  *  Admin.tsx's "Invite an advisor" form — same shape, different endpoint
  *  and a longer-lived link, since this is someone's first contact with the
  *  platform rather than a returning teammate signing back in. */
+type Delivery = "link" | "credentials";
+
 function InviteClient({ onInvited }: { onInvited: () => void }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [delivery, setDelivery] = useState<Delivery>("link");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [invited, setInvited] = useState<string | null>(null);
+  const [result, setResult] = useState<{ email: string; delivery: Delivery } | null>(null);
 
   const invite = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    setInvited(null);
+    setResult(null);
     try {
-      await api.post("/clients/invite", { email: email.trim(), name: name.trim() });
-      setInvited(email.trim());
+      await api.post("/clients/invite", { email: email.trim(), name: name.trim(), delivery });
+      setResult({ email: email.trim(), delivery });
       setEmail("");
       setName("");
       onInvited();
@@ -44,7 +47,9 @@ function InviteClient({ onInvited }: { onInvited: () => void }) {
       setError(
         err instanceof ApiError && err.code === "email_is_team_member"
           ? "That address already belongs to someone on the team."
-          : "Couldn't send the invite. Check the address and try again.",
+          : err instanceof ApiError && err.code === "client_already_has_account"
+            ? "That client already has an account with its own password — they can sign in as usual."
+            : "Couldn't send the invite. Check the address and try again.",
       );
     }
     setBusy(false);
@@ -73,16 +78,35 @@ function InviteClient({ onInvited }: { onInvited: () => void }) {
             onChange={(e) => setEmail(e.target.value)}
             style={{ flex: 1 }}
           />
+        </div>
+        <div className="stack" style={{ gap: 4, margin: "10px 0" }}>
+          <label className="row" style={{ gap: 8, fontSize: 13, cursor: "pointer" }}>
+            <input
+              type="radio" name="delivery" checked={delivery === "link"}
+              onChange={() => setDelivery("link")} style={{ width: "auto" }}
+            />
+            Email a sign-in link (recommended) — expires in 48 hours, verifies their address
+          </label>
+          <label className="row" style={{ gap: 8, fontSize: 13, cursor: "pointer" }}>
+            <input
+              type="radio" name="delivery" checked={delivery === "credentials"}
+              onChange={() => setDelivery("credentials")} style={{ width: "auto" }}
+            />
+            Email login credentials directly — no link to click, but a weaker first step
+          </label>
+        </div>
+        <div className="row" style={{ gap: 8 }}>
           <button className="primary" disabled={busy || !email.trim() || !name.trim()}>
             {busy ? "Sending…" : "Send invite"}
           </button>
           <button type="button" onClick={() => setOpen(false)}>Cancel</button>
         </div>
       </form>
-      {invited && (
+      {result && (
         <p className="muted" style={{ fontSize: 13, marginTop: 10, marginBottom: 0 }}>
-          Invite sent to <strong className="dim">{invited}</strong>. The link works once, expires
-          in 48 hours, and takes them straight to setting a password.
+          {result.delivery === "link"
+            ? <>Invite sent to <strong className="dim">{result.email}</strong>. The link works once, expires in 48 hours, and takes them straight to setting a password.</>
+            : <>Credentials emailed to <strong className="dim">{result.email}</strong>. They'll be forced to set their own password the moment they sign in.</>}
         </p>
       )}
       {error && <p style={{ color: "var(--bad)", fontSize: 13, marginTop: 10, marginBottom: 0 }}>{error}</p>}
@@ -235,10 +259,18 @@ export default function App() {
       : <Login onBack={() => setUnauthView("landing")} />;
   }
   // The only way to reach this with has_password false is a magic link that
-  // just verified — there's a real session already, it just can't be used
-  // for anything else until this step closes.
-  if (!user.has_password) {
-    return <SetPassword email={user.email} onDone={() => location.reload()} />;
+  // just verified; must_change_password is the other route in — an
+  // advisor-generated password that's only valid for this one sign-in.
+  // Either way there's a real session already, it just can't be used for
+  // anything else until this step closes.
+  if (!user.has_password || user.must_change_password) {
+    return (
+      <SetPassword
+        email={user.email}
+        reason={user.must_change_password ? "temporary_password" : "magic_link"}
+        onDone={() => location.reload()}
+      />
+    );
   }
   // Clients only — a manager account was provisioned deliberately, not
   // self-signed-up, so the interview consent gate does not apply to them.

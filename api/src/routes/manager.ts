@@ -11,7 +11,8 @@ import { issueMagicLink, requireManager } from "../auth.ts";
 import { getInterview, loadMessages } from "../agents/interview.ts";
 import { textOf } from "../anthropic.ts";
 import { buildInterviewDocx, firmIdentity } from "../docx.ts";
-import { clientInviteMail } from "../mailer.ts";
+import { clientCredentialsMail, clientInviteMail, sendMail } from "../mailer.ts";
+import { generateTemporaryPassword, hashPassword } from "../password.ts";
 import { config } from "../config.ts";
 import { audit, one, query, tx } from "../db.ts";
 
@@ -23,6 +24,11 @@ const closeSchema = z.object({
 const inviteClientSchema = z.object({
   email: z.string().email().max(320),
   name: z.string().trim().min(1).max(200),
+  /** "link" (default): the existing 48-hour magic link, verified by click.
+   *  "credentials": a system-generated password emailed directly, no
+   *  click-through step — weaker (a plaintext credential with no expiry of
+   *  its own), so it's paired with must_change_password at creation time. */
+  delivery: z.enum(["link", "credentials"]).default("link"),
 });
 
 const claimEditSchema = z
@@ -75,9 +81,10 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
     const parsed = inviteClientSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
     const email = parsed.data.email.trim().toLowerCase();
+    const { name, delivery } = parsed.data;
 
-    const existing = await one<{ id: string; role: string }>(
-      `SELECT id, role FROM users WHERE email = $1`,
+    const existing = await one<{ id: string; role: string; has_password: boolean }>(
+      `SELECT id, role, (password_hash IS NOT NULL) AS has_password FROM users WHERE email = $1`,
       [email],
     );
     // A teammate's own address is not a client to be onboarded — inviting it
@@ -85,19 +92,31 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
     if (existing && existing.role !== "client") {
       return reply.code(409).send({ error: "email_is_team_member" });
     }
+    // The credentials path would otherwise silently overwrite a password its
+    // owner already chose — the link path never touches password_hash, so it
+    // has no equivalent risk and doesn't need this guard.
+    if (delivery === "credentials" && existing?.has_password) {
+      return reply.code(409).send({ error: "client_already_has_account" });
+    }
+
+    const temporaryPassword = delivery === "credentials" ? generateTemporaryPassword() : null;
+    const passwordHash = temporaryPassword ? await hashPassword(temporaryPassword) : null;
 
     const { clientId, userId } = await tx(async (c) => {
       const u = await c.query<{ id: string }>(
-        `INSERT INTO users (email, role) VALUES ($1, 'client')
-         ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+        `INSERT INTO users (email, role, password_hash, must_change_password)
+         VALUES ($1, 'client', $2, $3)
+         ON CONFLICT (email) DO UPDATE SET
+           password_hash = COALESCE(EXCLUDED.password_hash, users.password_hash),
+           must_change_password = users.must_change_password OR EXCLUDED.must_change_password
          RETURNING id`,
-        [email],
+        [email, passwordHash, temporaryPassword !== null],
       );
       const userId = u.rows[0]!.id;
 
       const cl = await c.query<{ id: string }>(
         `INSERT INTO clients (owner_user_id, name) VALUES ($1, $2) RETURNING id`,
-        [userId, parsed.data.name],
+        [userId, name],
       );
       const clientId = cl.rows[0]!.id;
       await c.query(`INSERT INTO interviews (client_id) VALUES ($1)`, [clientId]);
@@ -105,18 +124,22 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
       return { clientId, userId };
     });
 
-    await issueMagicLink(userId, email, {
-      ttlMinutes: config.INVITE_TTL_HOURS * 60,
-      mail: (url) => clientInviteMail(email, parsed.data.name, url, config.INVITE_TTL_HOURS),
-    });
+    if (temporaryPassword) {
+      await sendMail(clientCredentialsMail(email, name, temporaryPassword, config.APP_ORIGIN));
+    } else {
+      await issueMagicLink(userId, email, {
+        ttlMinutes: config.INVITE_TTL_HOURS * 60,
+        mail: (url) => clientInviteMail(email, name, url, config.INVITE_TTL_HOURS),
+      });
+    }
 
     await audit("client.invited", {
       actorUserId: user.id,
       clientId,
-      payload: { email, name: parsed.data.name },
+      payload: { email, name, delivery },
     });
 
-    return reply.code(201).send({ client_id: clientId, email, name: parsed.data.name });
+    return reply.code(201).send({ client_id: clientId, email, name, delivery });
   });
 
   /**

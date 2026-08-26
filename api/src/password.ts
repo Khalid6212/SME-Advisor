@@ -32,3 +32,10 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
   return derived.length === expected.length && crypto.timingSafeEqual(derived, expected);
 }
+
+/** For the credentials-by-email path only — an advisor never types this, so
+ *  it only has to be strong, not memorable. Comfortably above the 10-char
+ *  minimum set-password itself enforces. */
+export function generateTemporaryPassword(): string {
+  return crypto.randomBytes(15).toString("base64url");
+}

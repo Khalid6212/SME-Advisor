@@ -17,6 +17,10 @@ export interface AuthUser {
   has_password: boolean;
   /** Only meaningful for clients — managers/admins never see the gate this guards. */
   has_consented: boolean;
+  /** True only for an advisor-generated password emailed without a
+   *  click-through verification step — forces a self-chosen replacement
+   *  before anything else is reachable, same gate position as has_password. */
+  must_change_password: boolean;
 }
 
 // Computed once, so a login attempt against an email with no password set
@@ -70,6 +74,7 @@ export async function loadUser(req: FastifyRequest): Promise<void> {
 
   const row = await one<AuthUser>(
     `SELECT u.id, u.email, u.role, (u.password_hash IS NOT NULL) AS has_password,
+            u.must_change_password,
             EXISTS(
               SELECT 1 FROM consents
                WHERE user_id = u.id AND purpose = $2 AND withdrawn_at IS NULL
@@ -243,8 +248,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return user;
   });
 
-  /** Only reachable once already signed in via a magic link — this sets the
-   *  password an ordinary /auth/login can use from then on. */
+  /** Reachable once already signed in — either via a just-verified magic
+   *  link (first password ever) or via an advisor-generated temporary
+   *  password (must_change_password gate). Either way this is what sets the
+   *  password an ordinary /auth/login uses from then on, and clears the
+   *  forced-change flag so it's a one-time gate, not a recurring one. */
   app.post("/auth/set-password", async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
@@ -253,7 +261,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) return reply.code(400).send({ error: "weak_password" });
 
     const hash = await hashPassword(parsed.data.password);
-    await query(`UPDATE users SET password_hash = $2 WHERE id = $1`, [user.id, hash]);
+    await query(
+      `UPDATE users SET password_hash = $2, must_change_password = false WHERE id = $1`,
+      [user.id, hash],
+    );
     await audit("auth.password_set", { actorUserId: user.id });
 
     return reply.code(204).send();

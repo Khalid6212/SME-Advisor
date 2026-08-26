@@ -2,10 +2,20 @@ import { useState } from "react";
 import { api } from "../api";
 
 /**
- * The only way here is a just-verified magic link — there's already a
- * session by the time this renders, so this just attaches a password to it.
+ * Reached two ways: a just-verified magic link with no password yet, or an
+ * advisor-generated temporary password that must be replaced before anything
+ * else is reachable. Either way there's already a session by the time this
+ * renders — this just attaches a permanent password to it.
  */
-export function SetPassword({ email, onDone }: { email: string; onDone: () => void }) {
+export function SetPassword({
+  email,
+  reason = "magic_link",
+  onDone,
+}: {
+  email: string;
+  reason?: "magic_link" | "temporary_password";
+  onDone: () => void;
+}) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,8 +46,9 @@ export function SetPassword({ email, onDone }: { email: string; onDone: () => vo
 
       <form className="card" onSubmit={submit}>
         <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
-          You're signed in via the link that was just emailed to you. Set a password now
-          and use it to sign in from here on — the link stays useful if you ever forget it.
+          {reason === "temporary_password"
+            ? "You signed in with a temporary password your adviser emailed you. Set your own now — the temporary one won't work again."
+            : "You're signed in via the link that was just emailed to you. Set a password now and use it to sign in from here on — the link stays useful if you ever forget it."}
         </p>
         <label className="muted" style={{ fontSize: 12 }}>New password</label>
         <input

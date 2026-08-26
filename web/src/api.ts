@@ -62,6 +62,7 @@ export interface User {
   role: "client" | "manager" | "admin";
   has_password: boolean;
   has_consented: boolean;
+  must_change_password: boolean;
 }
 
 export interface AccountRow {
