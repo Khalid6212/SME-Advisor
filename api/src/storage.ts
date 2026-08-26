@@ -152,26 +152,30 @@ class S3Driver implements StorageDriver {
     return Buffer.from(await res.Body.transformToByteArray());
   }
 
+  /**
+   * One DELETE per key, not the batch DeleteObjectsCommand.
+   *
+   * DeleteObjects has a request body (the XML list of keys), and that body
+   * has always required an integrity header — naming ChecksumAlgorithm on
+   * the command did not make the SDK attach one against this endpoint
+   * either, and the whole batch was rejected outright with nothing removed.
+   * A single-object DELETE has no body at all, so there is nothing to
+   * checksum and nothing for this provider to reject it over. One request
+   * per key costs more round trips, but document counts per client are
+   * small, and a per-key try/catch is more resilient than an all-or-nothing
+   * batch besides — mirrors LocalDriver.remove() below.
+   */
   async remove(keys: string[]): Promise<string[]> {
     if (keys.length === 0) return [];
     await this.load();
     const removed: string[] = [];
-    // DeleteObjects caps at 1000 per call.
-    for (let i = 0; i < keys.length; i += 1000) {
-      const batch = keys.slice(i, i + 1000);
-      const res = await this.client.send(
-        new this.sdk.DeleteObjectsCommand({
-          Bucket: this.bucket,
-          Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: false },
-          // Unlike Put/Get, DeleteObjects has always required an integrity
-          // header on the request body — the WHEN_REQUIRED setting above
-          // doesn't infer that on its own against Oracle's endpoint, and the
-          // request is rejected outright without one. Naming an algorithm
-          // here forces the SDK to attach it for this call specifically.
-          ChecksumAlgorithm: "CRC32",
-        }),
-      );
-      for (const d of res.Deleted ?? []) removed.push(d.Key);
+    for (const key of keys) {
+      try {
+        await this.client.send(new this.sdk.DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+        removed.push(key);
+      } catch {
+        // Left out of `removed` — the caller treats it as still present.
+      }
     }
     return removed;
   }
