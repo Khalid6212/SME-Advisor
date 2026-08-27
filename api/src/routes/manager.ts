@@ -104,8 +104,10 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: "admin_only" });
     }
 
-    const existing = await one<{ id: string; role: string; has_password: boolean }>(
-      `SELECT id, role, (password_hash IS NOT NULL) AS has_password FROM users WHERE email = $1`,
+    const existing = await one<{ id: string; role: string; has_password: boolean; has_any_client: boolean }>(
+      `SELECT u.id, u.role, (u.password_hash IS NOT NULL) AS has_password,
+              EXISTS(SELECT 1 FROM clients c WHERE c.owner_user_id = u.id) AS has_any_client
+         FROM users u WHERE u.email = $1`,
       [email],
     );
     // A teammate's own address is not a client to be onboarded — inviting it
@@ -116,7 +118,11 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
     // Both password-setting paths would otherwise silently overwrite a
     // password its owner already chose — the link path never touches
     // password_hash, so it has no equivalent risk and doesn't need this guard.
-    if (delivery !== "link" && existing?.has_password) {
+    // Gated on has_any_client, not just has_password: deleting a client never
+    // deletes the underlying user row (one person can own several
+    // businesses), so a fully-deleted client's email would otherwise stay
+    // permanently blocked by a password that has nothing left attached to it.
+    if (delivery !== "link" && existing?.has_password && existing?.has_any_client) {
       return reply.code(409).send({ error: "client_already_has_account" });
     }
 
