@@ -83,6 +83,7 @@ export interface ClientRow {
   created_at: string;
   closed_at: string | null;
   group_name: string | null;
+  owner_user_id?: string;
   contact_email?: string;
   readiness: string | null;
   high_claims?: string;

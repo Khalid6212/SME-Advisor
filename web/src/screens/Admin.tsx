@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type AccountRow } from "../api";
+import { ResetPasswordButton } from "../components/ResetPasswordButton";
 
 const ROLE_PILL: Record<string, string> = { admin: "info", manager: "good", client: "grey" };
 
@@ -85,14 +86,17 @@ export function Admin({ currentUserId }: { currentUserId: string }) {
                     {u.last_seen_at ? new Date(u.last_seen_at).toLocaleDateString() : "never"}
                   </td>
                   <td>
-                    {u.id !== currentUserId && (
-                      <button
-                        disabled={busy === u.id}
-                        onClick={() => setStatus(u.id, u.status === "active" ? "disabled" : "active")}
-                      >
-                        {busy === u.id ? "…" : u.status === "active" ? "Disable" : "Re-enable"}
-                      </button>
-                    )}
+                    <div className="row" style={{ gap: 8 }}>
+                      {u.id !== currentUserId && (
+                        <button
+                          disabled={busy === u.id}
+                          onClick={() => setStatus(u.id, u.status === "active" ? "disabled" : "active")}
+                        >
+                          {busy === u.id ? "…" : u.status === "active" ? "Disable" : "Re-enable"}
+                        </button>
+                      )}
+                      <ResetPasswordButton userId={u.id} />
+                    </div>
                   </td>
                 </tr>
               ))}

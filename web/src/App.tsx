@@ -12,6 +12,7 @@ import { Admin } from "./screens/Admin";
 import { HouseRules } from "./screens/HouseRules";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { ResetPasswordButton } from "./components/ResetPasswordButton";
 
 const READINESS: Record<string, string> = {
   ready: "good", near_ready: "info", needs_work: "warn", not_ready: "bad",
@@ -66,35 +67,47 @@ function DeleteClientButton({ client, onDeleted }: { client: ClientRow; onDelete
  *  Admin.tsx's "Invite an advisor" form — same shape, different endpoint
  *  and a longer-lived link, since this is someone's first contact with the
  *  platform rather than a returning teammate signing back in. */
-type Delivery = "link" | "credentials";
+type Delivery = "link" | "credentials" | "permanent";
 
-function InviteClient({ onInvited }: { onInvited: () => void }) {
+function InviteClient({ isAdmin, onInvited }: { isAdmin: boolean; onInvited: () => void }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [delivery, setDelivery] = useState<Delivery>("link");
+  const [password, setPassword] = useState("");
+  const [sendEmail, setSendEmail] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ email: string; delivery: Delivery } | null>(null);
+  const [result, setResult] = useState<{ email: string; delivery: Delivery; emailed: boolean } | null>(null);
 
   const invite = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (delivery === "permanent" && password.length < 10) {
+      setError("Password needs at least 10 characters.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setResult(null);
     try {
-      await api.post("/clients/invite", { email: email.trim(), name: name.trim(), delivery });
-      setResult({ email: email.trim(), delivery });
+      const r = await api.post<{ emailed: boolean }>("/clients/invite", {
+        email: email.trim(),
+        name: name.trim(),
+        delivery,
+        ...(delivery === "permanent" ? { password, send_email: sendEmail } : {}),
+      });
+      setResult({ email: email.trim(), delivery, emailed: r.emailed });
       setEmail("");
       setName("");
+      setPassword("");
       onInvited();
     } catch (err: unknown) {
       setError(
         err instanceof ApiError && err.code === "email_is_team_member"
           ? "That address already belongs to someone on the team."
           : err instanceof ApiError && err.code === "client_already_has_account"
-            ? "That client already has an account with its own password — they can sign in as usual."
-            : "Couldn't send the invite. Check the address and try again.",
+            ? "That client already has an account with its own password — use Reset password instead."
+            : "Couldn't send the invite. Check the details and try again.",
       );
     }
     setBusy(false);
@@ -139,7 +152,31 @@ function InviteClient({ onInvited }: { onInvited: () => void }) {
             />
             Email login credentials directly — no link to click, but a weaker first step
           </label>
+          {isAdmin && (
+            <label className="row" style={{ gap: 8, fontSize: 13, cursor: "pointer" }}>
+              <input
+                type="radio" name="delivery" checked={delivery === "permanent"}
+                onChange={() => setDelivery("permanent")} style={{ width: "auto" }}
+              />
+              Set a permanent password myself (admin only) — no login or setup step for them at all
+            </label>
+          )}
         </div>
+        {delivery === "permanent" && (
+          <div className="stack" style={{ gap: 8, margin: "0 0 10px" }}>
+            <input
+              type="password" required value={password} placeholder="Password (min. 10 characters)"
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <label className="row" style={{ gap: 8, fontSize: 13, cursor: "pointer" }}>
+              <input
+                type="checkbox" checked={sendEmail}
+                onChange={(e) => setSendEmail(e.target.checked)} style={{ width: "auto" }}
+              />
+              Also email these credentials to the client
+            </label>
+          </div>
+        )}
         <div className="row" style={{ gap: 8 }}>
           <button className="primary" disabled={busy || !email.trim() || !name.trim()}>
             {busy ? "Sending…" : "Send invite"}
@@ -151,7 +188,11 @@ function InviteClient({ onInvited }: { onInvited: () => void }) {
         <p className="muted" style={{ fontSize: 13, marginTop: 10, marginBottom: 0 }}>
           {result.delivery === "link"
             ? <>Invite sent to <strong className="dim">{result.email}</strong>. The link works once, expires in 48 hours, and takes them straight to setting a password.</>
-            : <>Credentials emailed to <strong className="dim">{result.email}</strong>. They'll be forced to set their own password the moment they sign in.</>}
+            : result.delivery === "credentials"
+              ? <>Credentials emailed to <strong className="dim">{result.email}</strong>. They'll be forced to set their own password the moment they sign in.</>
+              : result.emailed
+                ? <>Account created for <strong className="dim">{result.email}</strong> and credentials emailed. The password stays as set — no forced change.</>
+                : <>Account created for <strong className="dim">{result.email}</strong>. Nothing was emailed — you'll need to share the password yourself.</>}
         </p>
       )}
       {error && <p style={{ color: "var(--bad)", fontSize: 13, marginTop: 10, marginBottom: 0 }}>{error}</p>}
@@ -159,14 +200,14 @@ function InviteClient({ onInvited }: { onInvited: () => void }) {
   );
 }
 
-function Pipeline({ onOpen }: { onOpen: (c: ClientRow) => void }) {
+function Pipeline({ isAdmin, onOpen }: { isAdmin: boolean; onOpen: (c: ClientRow) => void }) {
   const [rows, setRows] = useState<ClientRow[] | null>(null);
   const load = () => api.get<ClientRow[]>("/clients").then(setRows);
   useEffect(() => { void load(); }, []);
 
   return (
     <div>
-      <InviteClient onInvited={load} />
+      <InviteClient isAdmin={isAdmin} onInvited={load} />
       {!rows ? (
         <p className="muted">Loading…</p>
       ) : rows.length === 0 ? (
@@ -384,7 +425,12 @@ export default function App() {
             <>
               <div className="row" style={{ marginTop: 20, justifyContent: "space-between" }}>
                 <button onClick={() => setOpen(null)}>← Pipeline</button>
-                <DeleteClientButton client={open} onDeleted={() => setOpen(null)} />
+                <div className="row" style={{ gap: 8 }}>
+                  {user.role === "admin" && open.owner_user_id && (
+                    <ResetPasswordButton userId={open.owner_user_id} />
+                  )}
+                  <DeleteClientButton client={open} onDeleted={() => setOpen(null)} />
+                </div>
               </div>
               <h1>{open.name}</h1>
               <p className="sub">{open.contact_email} · {open.status.replace(/_/g, " ")}</p>
@@ -399,7 +445,7 @@ export default function App() {
             <>
               <h1>Client pipeline</h1>
               <p className="sub">Assessments awaiting review, and engagements in progress.</p>
-              <Pipeline onOpen={(c) => { setOpen(c); setTab("Data room"); }} />
+              <Pipeline isAdmin={user.role === "admin"} onOpen={(c) => { setOpen(c); setTab("Data room"); }} />
             </>
           )
         ) : (

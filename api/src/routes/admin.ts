@@ -10,10 +10,12 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { issueMagicLink, requireAdmin } from "../auth.ts";
+import { hashPassword } from "../password.ts";
 import { audit, one, query } from "../db.ts";
 
 const inviteSchema = z.object({ email: z.string().email().max(320) });
 const statusSchema = z.object({ status: z.enum(["active", "disabled"]) });
+const resetPasswordSchema = z.object({ password: z.string().min(10).max(200) });
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   /** Team accounts only — clients already have a view of their own (the
@@ -88,5 +90,47 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       payload: { user_id: id, status: parsed.data.status },
     });
     return { updated: true };
+  });
+
+  /**
+   * Works on any role — client, manager, or admin. This is deliberately
+   * admin-only rather than shared with requireManager the way client-facing
+   * actions are elsewhere: an advisor being able to reset a manager's or
+   * another admin's password would be a real privilege-escalation path, and
+   * "for every account type" is exactly the case that needs the stricter
+   * gate, not an exception to it.
+   *
+   * Sets the password outright and clears must_change_password — this is the
+   * admin choosing a new password on the account holder's behalf, not a
+   * temporary one that expects to be replaced. Revokes existing sessions so
+   * the reset actually takes effect immediately, not just on next expiry.
+   */
+  app.post("/admin/users/:id/reset-password", async (req, reply) => {
+    const user = requireAdmin(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const parsed = resetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "weak_password" });
+
+    const target = await one<{ id: string; email: string; role: string }>(
+      `SELECT id, email, role FROM users WHERE id = $1`,
+      [id],
+    );
+    if (!target) return reply.code(404).send({ error: "not_found" });
+
+    const hash = await hashPassword(parsed.data.password);
+    await query(
+      `UPDATE users SET password_hash = $2, must_change_password = false WHERE id = $1`,
+      [id, hash],
+    );
+    await query(`UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [id]);
+
+    await audit("admin.password_reset", {
+      actorUserId: user.id,
+      payload: { user_id: id, email: target.email, role: target.role },
+    });
+
+    return { reset: true };
   });
 }

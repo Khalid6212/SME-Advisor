@@ -86,15 +86,17 @@ export function clientInviteMail(to: string, businessName: string, url: string, 
   };
 }
 
-/** Deliberately distinct from clientInviteMail: a temporary password has no
- *  expiry of its own once it's sent, so the account is created with
- *  must_change_password set, and this email says so — the recipient should
- *  expect to be asked for a new password the moment they sign in. */
+/** Deliberately distinct from clientInviteMail: a password sent this way has
+ *  no expiry of its own, so the wording differs by whether it's temporary
+ *  (must_change_password set, the recipient will be asked to replace it on
+ *  first sign-in) or permanent (an admin chose it directly and it stays in
+ *  effect until someone changes or resets it). */
 export function clientCredentialsMail(
   to: string,
   businessName: string,
   password: string,
   appOrigin: string,
+  permanent = false,
 ): Mail {
   return {
     to,
@@ -105,10 +107,11 @@ export function clientCredentialsMail(
       `Sign in here: ${appOrigin}`,
       "",
       `Email: ${to}`,
-      `Temporary password: ${password}`,
+      `${permanent ? "Password" : "Temporary password"}: ${password}`,
       "",
-      "You'll be asked to set your own password the moment you sign in — the one",
-      "above only works once.",
+      permanent
+        ? "This password stays in effect until it's changed or reset — you can update it any time once signed in."
+        : "You'll be asked to set your own password the moment you sign in — the one above only works once.",
       "",
       "If you weren't expecting this, you can ignore this email.",
     ].join("\n"),

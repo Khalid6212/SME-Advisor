@@ -22,15 +22,27 @@ const closeSchema = z.object({
   note: z.string().trim().max(2000).optional(),
 });
 
-const inviteClientSchema = z.object({
-  email: z.string().email().max(320),
-  name: z.string().trim().min(1).max(200),
-  /** "link" (default): the existing 48-hour magic link, verified by click.
-   *  "credentials": a system-generated password emailed directly, no
-   *  click-through step — weaker (a plaintext credential with no expiry of
-   *  its own), so it's paired with must_change_password at creation time. */
-  delivery: z.enum(["link", "credentials"]).default("link"),
-});
+const inviteClientSchema = z
+  .object({
+    email: z.string().email().max(320),
+    name: z.string().trim().min(1).max(200),
+    /** "link" (default): the existing 48-hour magic link, verified by click.
+     *  "credentials": a system-generated temporary password emailed directly
+     *  — no click-through, but must_change_password forces a replacement on
+     *  first sign-in. "permanent": an admin-chosen password with no forced
+     *  change at all — admin-only (see the role check in the route below). */
+    delivery: z.enum(["link", "credentials", "permanent"]).default("link"),
+    password: z.string().min(10).max(200).optional(),
+    /** "permanent" only — the admin already knows the password they just
+     *  typed, so emailing it is optional. Meaningless for the other two
+     *  modes: "link" always mails the link, and "credentials" always mails
+     *  the generated password since there is no other way to learn it. */
+    send_email: z.boolean().default(true),
+  })
+  .refine((v) => v.delivery !== "permanent" || !!v.password, {
+    message: "password required for permanent delivery",
+    path: ["password"],
+  });
 
 const claimEditSchema = z
   .object({
@@ -50,6 +62,7 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
     return query(
       `SELECT c.id, c.name, c.status, c.sector_id, c.created_at, c.closed_at,
               g.name AS group_name,
+              u.id AS owner_user_id,
               u.email AS contact_email,
               p.provisional_readiness_tier AS readiness,
               p.version AS profile_version,
@@ -84,6 +97,13 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
     const email = parsed.data.email.trim().toLowerCase();
     const { name, delivery } = parsed.data;
 
+    // A permanent, admin-chosen password is the strongest form of control
+    // over a client's own credential — restricted the same way inviting a
+    // manager is, not opened up to every advisor.
+    if (delivery === "permanent" && user.role !== "admin") {
+      return reply.code(403).send({ error: "admin_only" });
+    }
+
     const existing = await one<{ id: string; role: string; has_password: boolean }>(
       `SELECT id, role, (password_hash IS NOT NULL) AS has_password FROM users WHERE email = $1`,
       [email],
@@ -93,15 +113,19 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
     if (existing && existing.role !== "client") {
       return reply.code(409).send({ error: "email_is_team_member" });
     }
-    // The credentials path would otherwise silently overwrite a password its
-    // owner already chose — the link path never touches password_hash, so it
-    // has no equivalent risk and doesn't need this guard.
-    if (delivery === "credentials" && existing?.has_password) {
+    // Both password-setting paths would otherwise silently overwrite a
+    // password its owner already chose — the link path never touches
+    // password_hash, so it has no equivalent risk and doesn't need this guard.
+    if (delivery !== "link" && existing?.has_password) {
       return reply.code(409).send({ error: "client_already_has_account" });
     }
 
     const temporaryPassword = delivery === "credentials" ? generateTemporaryPassword() : null;
-    const passwordHash = temporaryPassword ? await hashPassword(temporaryPassword) : null;
+    const password = temporaryPassword ?? (delivery === "permanent" ? parsed.data.password! : null);
+    const passwordHash = password ? await hashPassword(password) : null;
+    // Only the generated-and-emailed path forces a change — a password the
+    // admin chose on purpose stays exactly as set until it's reset.
+    const mustChangePassword = temporaryPassword !== null;
 
     const { clientId, userId } = await tx(async (c) => {
       const u = await c.query<{ id: string }>(
@@ -109,9 +133,12 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
          VALUES ($1, 'client', $2, $3)
          ON CONFLICT (email) DO UPDATE SET
            password_hash = COALESCE(EXCLUDED.password_hash, users.password_hash),
-           must_change_password = users.must_change_password OR EXCLUDED.must_change_password
+           must_change_password = CASE
+             WHEN EXCLUDED.password_hash IS NOT NULL THEN EXCLUDED.must_change_password
+             ELSE users.must_change_password
+           END
          RETURNING id`,
-        [email, passwordHash, temporaryPassword !== null],
+        [email, passwordHash, mustChangePassword],
       );
       const userId = u.rows[0]!.id;
 
@@ -125,22 +152,28 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
       return { clientId, userId };
     });
 
-    if (temporaryPassword) {
-      await sendMail(clientCredentialsMail(email, name, temporaryPassword, config.APP_ORIGIN));
-    } else {
+    let emailed = false;
+    if (delivery === "link") {
       await issueMagicLink(userId, email, {
         ttlMinutes: config.INVITE_TTL_HOURS * 60,
         mail: (url) => clientInviteMail(email, name, url, config.INVITE_TTL_HOURS),
       });
+      emailed = true;
+    } else if (delivery === "credentials" || parsed.data.send_email) {
+      // "credentials" always mails — a generated password the admin never
+      // saw has no other way to reach the client. "permanent" only mails
+      // when asked to; the admin already knows the password they typed.
+      await sendMail(clientCredentialsMail(email, name, password!, config.APP_ORIGIN, delivery === "permanent"));
+      emailed = true;
     }
 
     await audit("client.invited", {
       actorUserId: user.id,
       clientId,
-      payload: { email, name, delivery },
+      payload: { email, name, delivery, emailed },
     });
 
-    return reply.code(201).send({ client_id: clientId, email, name, delivery });
+    return reply.code(201).send({ client_id: clientId, email, name, delivery, emailed });
   });
 
   /**
