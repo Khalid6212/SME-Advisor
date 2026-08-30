@@ -41,6 +41,7 @@ export function runDeterministicChecks(
   fixture: EvalFixture,
   drafted: DraftedSection[],
   gaps: GapRecord[],
+  financialsBlock?: string,
 ): DeterministicCheckResult {
   const failures: string[] = [];
 
@@ -63,17 +64,22 @@ export function runDeterministicChecks(
   }
 
   // Heuristic, not proof: a number is "traceable" if it appears somewhere in
-  // this section's own provenance statements, or anywhere in the fixture's
-  // input data (profile, claims, plan_inputs, document_facts) — a figure
-  // computed from two inputs (e.g. a percentage of revenue) won't match
-  // verbatim and will false-positive here, which is why this check reports
-  // as a heuristic finding, not a hard failure gate on its own.
+  // this section's own provenance statements, anywhere in the fixture's raw
+  // input data (profile, claims, plan_inputs, document_facts), or — for the
+  // financial phase — in the pre-computed financialsBlock text the agent is
+  // instructed to narrate verbatim (see computeFinancialsBlock). Without that
+  // last piece, every legitimate P&L/cash-flow/balance-sheet figure the agent
+  // correctly copies from the computed statements looks "invented" to this
+  // check, since those figures never appear in the raw fixture inputs
+  // themselves. A figure computed from two raw inputs some other way can
+  // still false-positive here, which is why this stays a heuristic finding,
+  // not a hard failure gate on its own.
   const fixtureText = JSON.stringify({
     profile: fixture.profile_data,
     claims: fixture.claims,
     planInputs: fixture.plan_inputs,
     documentFacts: fixture.document_facts,
-  });
+  }) + (financialsBlock ?? "");
   for (const d of drafted) {
     const provenanceText = d.provenance.map((p) => p.statement).join(" ");
     const numbers = d.content.match(SUBSTANTIAL_NUMBER) ?? [];

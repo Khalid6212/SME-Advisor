@@ -77,7 +77,7 @@ export async function runEvalSuite(triggeredBy: string | null, note?: string): P
     });
 
     const outcome = await runPhaseAgent(phase, system, messages);
-    const deterministic = runDeterministicChecks(fixture, outcome.drafted, outcome.gaps);
+    const deterministic = runDeterministicChecks(fixture, outcome.drafted, outcome.gaps, financialsBlock);
 
     const judgeScores: Record<string, JudgeScore | null> = {};
     const rationales: string[] = [];
