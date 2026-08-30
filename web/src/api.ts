@@ -209,3 +209,13 @@ export interface FinancialLine {
   basis: string | null;
   scenario: "base" | "bull" | "bear";
 }
+
+export interface PlanPhase {
+  phase_key: string;
+  position: number;
+  status: "pending" | "drafted" | "approved";
+  rating: number | null;
+  rating_note: string | null;
+  title: { en: string; ar: string };
+  section_keys: string[];
+}

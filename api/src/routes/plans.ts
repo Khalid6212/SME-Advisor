@@ -16,8 +16,9 @@ import { buildPlanDocx, firmIdentity } from "../docx.ts";
 import { informationRequestMail, sendMail } from "../mailer.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import { type Audience, sectionsForAudience } from "../../../src/planner/types.ts";
+import { PLAN_PHASES, phaseForSection } from "../../../src/planner/phases.ts";
 import { editDistance } from "../../../src/learning/types.ts";
-import { generatePlan, TEMPLATES } from "../agents/planner.ts";
+import { approvePhase, createPlan, draftPhase, TEMPLATES } from "../agents/planner.ts";
 import { distillEdit } from "../agents/distiller.ts";
 import { researchMarket } from "../agents/research.ts";
 import { RESEARCH_MODEL } from "../anthropic.ts";
@@ -42,6 +43,11 @@ const sectionSchema = z.object({
 const requestBatchSchema = z.object({
   gap_ids: z.array(z.string().uuid()).min(1),
   message: z.string().trim().max(2000).optional(),
+});
+
+const approvePhaseSchema = z.object({
+  rating: z.number().int().min(1).max(5).nullable().optional(),
+  rating_note: z.string().trim().max(2000).nullable().optional(),
 });
 
 const competitorNoteSchema = z.object({
@@ -255,7 +261,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     );
     if (!plan) return reply.code(404).send({ error: "not_found" });
 
-    const [sectionRows, assumptions, gaps, financials] = await Promise.all([
+    const [sectionRows, assumptions, gaps, financials, phaseRows] = await Promise.all([
       query<{ key: string; [k: string]: unknown }>(
         `SELECT id, key, position, title_en, title_ar, content, provenance,
                 confidence, status, updated_at
@@ -265,6 +271,9 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
                FROM plan_gaps WHERE plan_id = $1 ORDER BY blocking DESC`, [planId]),
       query(`SELECT year_offset, line_item, value, basis, scenario FROM plan_financials
               WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`, [planId]),
+      query<{ phase_key: string; position: number; status: string; rating: number | null; rating_note: string | null }>(
+        `SELECT phase_key, position, status, rating, rating_note
+           FROM plan_phases WHERE plan_id = $1 ORDER BY position`, [planId]),
     ]);
 
     // Audience is a template-level fact, not stored per row — attached here
@@ -275,17 +284,26 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       audiences: businessPlanTemplate.sections.find((spec) => spec.key === s.key)?.audiences ?? [],
     }));
 
-    return { plan, sections, assumptions, gaps, financials };
+    // Titles come from the phase config, not stored per row — one source,
+    // same as sections' audiences above.
+    const phases = phaseRows.map((p) => ({
+      ...p,
+      title: PLAN_PHASES.find((spec) => spec.key === p.phase_key)?.title ?? { en: p.phase_key, ar: p.phase_key },
+      section_keys: PLAN_PHASES.find((spec) => spec.key === p.phase_key)?.sectionKeys ?? [],
+    }));
+
+    return { plan, sections, assumptions, gaps, financials, phases };
   });
 
-  /** Runs the agent. Slow — tens of seconds for a full document. */
+  /** Creates the plan skeleton only — drafting is per-phase from here on,
+   *  see POST /plans/:planId/phases/:phaseKey/draft below. */
   app.post("/clients/:id/plans", async (req, reply) => {
     const user = requireManager(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
 
     try {
-      return await generatePlan(id, user.id);
+      return reply.code(201).send(await createPlan(id, user.id));
     } catch (err: any) {
       if (err.message === "no_profile") {
         return reply.code(409).send({ error: "no_profile", message: "Complete the interview first." });
@@ -296,14 +314,63 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
           message: "Fill in the advisor's planning input before drafting.",
         });
       }
-      req.log.error({ err, clientId: id }, "plan generation failed");
+      req.log.error({ err, clientId: id }, "plan creation failed");
+      return reply.code(502).send({ error: "plan_creation_failed" });
+    }
+  });
+
+  /** Drafts one phase. Slow — tens of seconds for a multi-section phase. */
+  app.post("/plans/:planId/phases/:phaseKey/draft", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { planId, phaseKey } = req.params as { planId: string; phaseKey: string };
+
+    try {
+      return await draftPhase(planId, phaseKey, user.id);
+    } catch (err: any) {
+      if (err.message === "not_found" || err.message === "unknown_phase") {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      if (err.message === "previous_phase_not_approved") {
+        return reply.code(409).send({
+          error: "previous_phase_not_approved",
+          message: "Approve the preceding phase before drafting this one.",
+        });
+      }
+      if (err.message === "no_profile" || err.message === "no_plan_inputs") {
+        return reply.code(409).send({ error: err.message });
+      }
+      req.log.error({ err, planId, phaseKey }, "phase draft failed");
       return reply.code(502).send({ error: "agent_unavailable" });
     }
   });
 
+  /** The per-phase approval gate — nothing later can draft until this fires. */
+  app.post("/plans/:planId/phases/:phaseKey/approve", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { planId, phaseKey } = req.params as { planId: string; phaseKey: string };
+
+    const parsed = approvePhaseSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+
+    try {
+      await approvePhase(planId, phaseKey, user.id, parsed.data.rating ?? null, parsed.data.rating_note ?? null);
+      return { approved: true };
+    } catch (err: any) {
+      if (err.message === "not_found") return reply.code(404).send({ error: "not_found" });
+      if (err.message === "not_drafted") {
+        return reply.code(409).send({ error: "not_drafted", message: "Draft this phase before approving it." });
+      }
+      throw err;
+    }
+  });
+
   /**
-   * The explicit approval gate. Only an approved plan can be exported in
-   * finished form — see the export routes below.
+   * The explicit whole-plan approval gate. Only an approved plan can be
+   * exported in finished form — see the export routes below. Requires every
+   * phase to already be approved — otherwise "delivered" could mean a
+   * document with undrafted stages still in it.
    */
   app.post("/plans/:planId/approve", async (req, reply) => {
     const user = requireManager(req, reply);
@@ -315,6 +382,17 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       [planId],
     );
     if (!plan) return reply.code(404).send({ error: "not_found" });
+
+    const unapproved = await one<{ n: string }>(
+      `SELECT count(*)::text AS n FROM plan_phases WHERE plan_id = $1 AND status <> 'approved'`,
+      [planId],
+    );
+    if (unapproved && unapproved.n !== "0") {
+      return reply.code(409).send({
+        error: "phases_not_approved",
+        message: "Every phase needs to be approved before the plan can be delivered.",
+      });
+    }
 
     await query(
       `UPDATE plans SET status = 'delivered', approved_by = $2, approved_at = now() WHERE id = $1`,
@@ -382,13 +460,19 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (changed) {
       const audiences = businessPlanTemplate.sections.find((s) => s.key === before.key)?.audiences ?? [];
       const audience = audiences.length === 1 ? audiences[0] : null;
+      // Which phase drafted this section, derived from the phase→section
+      // mapping (src/planner/phases.ts) rather than a stored column — so
+      // each phase's learning loop only ever learns from edits to its own
+      // sections. Falls back to the pre-phasing "planner" id for a section
+      // key that somehow predates this scheme.
+      const agent = phaseForSection(before.key)?.agent ?? "planner";
       const editRow = await one<{ id: string }>(
         `INSERT INTO section_edits
            (agent, client_id, plan_id, section_key, audience, sector_id,
             before_text, after_text, edit_distance, manager_note, edited_by)
-         VALUES ('planner',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
         [
-          before.client_id, before.plan_id, before.key, audience, before.sector_id,
+          agent, before.client_id, before.plan_id, before.key, audience, before.sector_id,
           before.content, parsed.data.content,
           editDistance(before.content, parsed.data.content),
           parsed.data.note ?? null, user.id,

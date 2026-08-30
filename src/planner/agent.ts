@@ -10,6 +10,7 @@
 import type { JSONSchema } from "../core/schema.ts";
 import type { PlanTemplate } from "./types.ts";
 import { PROVENANCE_SOURCE } from "./types.ts";
+import type { PhaseSpec } from "./phases.ts";
 
 export const PLANNER_SYSTEM = `You draft funding business plans for small and medium enterprises in Saudi Arabia, working from a structured profile produced by a discovery interview.
 
@@ -172,4 +173,61 @@ export function buildPlannerBrief(template: PlanTemplate): string {
   });
 
   return `## Plan structure\n\nDraft these sections in order.\n\n${lines.join("\n\n")}`;
+}
+
+/** Terminal tool for one phase's draft run — scoped down from SUBMIT_PLAN_TOOL,
+ *  which asks for a whole-document readiness verdict that only makes sense
+ *  once every phase exists. A phase has nothing to assess readiness over on
+ *  its own; it just needs an explicit "I'm done with this stage" signal. */
+export const SUBMIT_PHASE_TOOL = {
+  name: "submit_phase",
+  description: "Finish this phase. Call once every section listed for this phase is drafted or blocked.",
+  input_schema: {
+    type: "object",
+    properties: {
+      note_for_manager: {
+        type: "string",
+        description: "What to look at in this phase before approving it. Be specific about weak sections.",
+      },
+    },
+    required: ["note_for_manager"],
+  },
+} as const;
+
+export function buildPhaseTools() {
+  return [DRAFT_SECTION_TOOL, RECORD_ASSUMPTION_TOOL, FLAG_GAP_TOOL, SUBMIT_PHASE_TOOL];
+}
+
+/**
+ * Per-phase brief: only this phase's sections, plus the already-drafted
+ * text of every earlier phase for consistency (D-plan-depth's cross-section
+ * consistency rule needs earlier phases' content in context to honour once
+ * phases run as separate agent calls — otherwise a later phase would never
+ * see what an earlier one committed to).
+ */
+export function buildPhaseBrief(
+  phase: PhaseSpec,
+  template: PlanTemplate,
+  earlierSections: { key: string; title_en: string; content: string }[],
+): string {
+  const specs = template.sections.filter((s) => phase.sectionKeys.includes(s.key));
+  const lines = specs.map((s) => {
+    const mark = s.draftable_from_profile ? "" : "  [NEEDS INPUT — produce questions, not prose]";
+    return `### ${s.key} — ${s.title.en}${mark}\n${s.guidance}\nDraws on: ${s.draws_on.join(", ") || "nothing in the profile"}`;
+  });
+
+  const parts = [
+    `## This phase: ${phase.title.en}\n\nThis is one stage of a larger plan, drafted separately from the others. Draft only the sections listed below — the rest of the document is handled by other stages, before or after this one. Do not draft, restate, or summarise sections outside this list.\n\n${lines.join("\n\n")}`,
+  ];
+
+  if (earlierSections.length > 0) {
+    const already = earlierSections
+      .map((s) => `### ${s.key} — ${s.title_en}\n${s.content}`)
+      .join("\n\n");
+    parts.push(
+      `## Already drafted, from earlier phases\n\nFor consistency only — do not restate or summarise these, and do not contradict them. If this phase's numbers or claims would conflict with something already committed to below, flag it rather than silently picking a different figure.\n\n${already}`,
+    );
+  }
+
+  return parts.join("\n\n");
 }

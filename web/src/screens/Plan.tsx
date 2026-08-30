@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type FinancialLine } from "../api";
+import { api, type FinancialLine, type PlanPhase } from "../api";
 import { PlanInputs } from "./PlanInputs";
 
 interface Template {
@@ -25,7 +25,13 @@ interface PlanView {
   assumptions: { label: string; value: string; basis: string }[];
   gaps: Gap[];
   financials: FinancialLine[];
+  phases: PlanPhase[];
 }
+
+const PHASE_STATUS_PILL: Record<string, string> = { pending: "grey", drafted: "warn", approved: "good" };
+const PHASE_STATUS_LABEL: Record<string, string> = {
+  pending: "Not started", drafted: "Drafted — needs approval", approved: "Approved",
+};
 
 const CONFIDENCE: Record<string, string> = {
   well_supported: "good", thin: "warn", blocked: "bad",
@@ -199,6 +205,9 @@ export function Plan({ clientId }: { clientId: string }) {
   const [showInputs, setShowInputs] = useState(false);
   const [outstanding, setOutstanding] = useState<{ count: number; items: { title_en: string }[] } | null>(null);
   const [selectedGaps, setSelectedGaps] = useState<Set<string>>(new Set());
+  const [approvingPhase, setApprovingPhase] = useState<string | null>(null);
+  const [phaseRating, setPhaseRating] = useState<number | null>(null);
+  const [phaseRatingNote, setPhaseRatingNote] = useState("");
 
   const loadList = async () => setPlans(await api.get(`/clients/${clientId}/plans`));
   const loadOutstanding = async () =>
@@ -212,7 +221,7 @@ export function Plan({ clientId }: { clientId: string }) {
 
   const openPlan = async (id: string) => setView(await api.get<PlanView>(`/plans/${id}`));
 
-  const generate = async (key: string) => {
+  const startPlan = async (key: string) => {
     setBusy(key);
     setError(null);
     try {
@@ -222,13 +231,46 @@ export function Plan({ clientId }: { clientId: string }) {
     } catch (e: any) {
       setError(
         e.code === "no_profile"
-          ? "The interview needs to be completed before a plan can be drafted."
+          ? "The interview needs to be completed before a plan can be started."
+          : e.code === "no_plan_inputs"
+            ? "Fill in the planning input below before starting."
+            : "Couldn't start a new plan right now.",
+      );
+      if (e.code === "no_plan_inputs") setShowInputs(true);
+    }
+    setBusy(null);
+  };
+
+  const draftPhase = async (phaseKey: string) => {
+    if (!view) return;
+    setBusy(phaseKey);
+    setError(null);
+    try {
+      await api.post(`/plans/${view.plan.id}/phases/${phaseKey}/draft`, {});
+      await openPlan(view.plan.id);
+    } catch (e: any) {
+      setError(
+        e.code === "previous_phase_not_approved"
+          ? "Approve the preceding phase before drafting this one."
           : e.code === "no_plan_inputs"
             ? "Fill in the planning input below before drafting."
             : "The planner is unavailable right now.",
       );
-      if (e.code === "no_plan_inputs") setShowInputs(true);
     }
+    setBusy(null);
+  };
+
+  const approvePhaseAction = async (phaseKey: string) => {
+    if (!view) return;
+    setBusy(`approve-${phaseKey}`);
+    await api.post(`/plans/${view.plan.id}/phases/${phaseKey}/approve`, {
+      rating: phaseRating,
+      rating_note: phaseRatingNote.trim() || undefined,
+    });
+    setApprovingPhase(null);
+    setPhaseRating(null);
+    setPhaseRatingNote("");
+    await openPlan(view.plan.id);
     setBusy(null);
   };
 
@@ -288,6 +330,10 @@ export function Plan({ clientId }: { clientId: string }) {
   const visibleSections = (view?.sections ?? []).filter(
     (s) => audience === "full" || s.audiences.includes(audience),
   );
+  const phases = view?.phases ?? [];
+  const allPhasesApproved = phases.length > 0 && phases.every((p) => p.status === "approved");
+  const isPhaseUnlocked = (phase: PlanPhase) =>
+    phase.position === 1 || phases.find((p) => p.position === phase.position - 1)?.status === "approved";
 
   return (
     <div>
@@ -317,8 +363,8 @@ export function Plan({ clientId }: { clientId: string }) {
       <div className="card">
         <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
           {templates.map((t) => (
-            <button key={t.key} onClick={() => generate(t.key)} disabled={!!busy} className="primary">
-              {busy === t.key ? "Drafting…" : `Draft business plan`}
+            <button key={t.key} onClick={() => startPlan(t.key)} disabled={!!busy} className="primary">
+              {busy === t.key ? "Starting…" : `Start new plan`}
             </button>
           ))}
           <div style={{ flex: 1 }} />
@@ -329,8 +375,9 @@ export function Plan({ clientId }: { clientId: string }) {
           ))}
         </div>
         <p className="muted" style={{ fontSize: 12, margin: "10px 0 0" }}>
-          One plan, drafted once from the profile, the planning input above, and any verified
-          documents. Lender and operating views are the same draft, filtered.
+          One plan, from the profile, the planning input above, and any verified documents —
+          drafted one stage at a time below, each reviewed before the next can start. Lender and
+          operating views are the same draft, filtered.
         </p>
         {error && <p style={{ color: "var(--bad)", marginBottom: 0 }}>{error}</p>}
       </div>
@@ -356,10 +403,11 @@ export function Plan({ clientId }: { clientId: string }) {
             {!approved && (
               <div className="row" style={{ marginTop: 10 }}>
                 <p className="muted" style={{ fontSize: 12, flex: 1, margin: 0 }}>
-                  Approve before exporting — the formatted export is only available once a
-                  manager has explicitly signed off on this version.
+                  {allPhasesApproved
+                    ? "Every phase is approved — approve the plan as a whole before exporting."
+                    : "Every phase below needs to be drafted and approved before the plan as a whole can be approved and exported."}
                 </p>
-                <button className="primary" onClick={approve} disabled={busy === "approve"}>
+                <button className="primary" onClick={approve} disabled={busy === "approve" || !allPhasesApproved}>
                   {busy === "approve" ? "Approving…" : "Approve plan"}
                 </button>
               </div>
@@ -423,60 +471,139 @@ export function Plan({ clientId }: { clientId: string }) {
             </>
           )}
 
-          <h2>Sections</h2>
-          {visibleSections.map((s) => (
-            <div key={s.id} className="card">
-              <div className="row">
-                <strong style={{ flex: 1 }}>{s.title_en}</strong>
-                {s.confidence && (
-                  <span className={`pill ${CONFIDENCE[s.confidence] ?? "grey"}`}>{s.confidence.replace(/_/g, " ")}</span>
-                )}
-                <span className="pill grey">{s.status}</span>
-                {editing !== s.id && (
-                  <button onClick={() => { setEditing(s.id); setDraft(s.content); }}>Edit</button>
-                )}
-              </div>
+          <h2>Phases</h2>
+          {phases.map((phase) => {
+            const unlocked = isPhaseUnlocked(phase);
+            const phaseSections = visibleSections.filter((s) => phase.section_keys.includes(s.key));
 
-              {editing === s.id ? (
-                <div className="stack" style={{ marginTop: 10 }}>
-                  <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
-                            style={{ minHeight: 220, resize: "vertical" }} />
-                  {/* Optional, and worth more than the diff — see D19. */}
-                  <input value={note} onChange={(e) => setNote(e.target.value)}
-                         placeholder="Why did you change it? (optional — helps the agent learn)" />
-                  {approved && (
-                    <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-                      Saving will revoke this plan's approval — it will need re-approving before it can be exported again.
+            return (
+              <div key={phase.phase_key}>
+                <div className="card" style={{ borderColor: phase.status === "approved" ? "var(--good)" : undefined }}>
+                  <div className="row">
+                    <strong style={{ flex: 1 }}>{phase.position}. {phase.title.en}</strong>
+                    <span className={`pill ${PHASE_STATUS_PILL[phase.status]}`}>{PHASE_STATUS_LABEL[phase.status]}</span>
+                    {phase.rating && <span className="pill info">{phase.rating}/5</span>}
+                  </div>
+
+                  {phase.status === "pending" && unlocked && (
+                    <div className="row" style={{ marginTop: 10 }}>
+                      <button className="primary" onClick={() => draftPhase(phase.phase_key)} disabled={busy === phase.phase_key}>
+                        {busy === phase.phase_key ? "Drafting…" : "Draft this phase"}
+                      </button>
+                    </div>
+                  )}
+                  {phase.status === "pending" && !unlocked && (
+                    <p className="muted" style={{ fontSize: 12, margin: "10px 0 0" }}>
+                      Approve the preceding phase to unlock this one.
                     </p>
                   )}
-                  <div className="row">
-                    <button className="primary" onClick={() => save(s)} disabled={busy === s.id}>
-                      {busy === s.id ? "Saving…" : "Save"}
-                    </button>
-                    <button onClick={() => { setEditing(null); setNote(""); }}>Cancel</button>
-                  </div>
-                </div>
-              ) : (
-                <p style={{ whiteSpace: "pre-wrap", marginBottom: 0 }} dir="auto">
-                  {s.content || <span className="muted">Not drafted — see gaps above.</span>}
-                </p>
-              )}
 
-              {s.provenance?.length > 0 && editing !== s.id && (
-                <details style={{ marginTop: 10 }}>
-                  <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>
-                    {s.provenance.length} sourced statement{s.provenance.length === 1 ? "" : "s"}
-                  </summary>
-                  {s.provenance.map((p, i) => (
-                    <div key={i} className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                      <span className="pill grey">{p.source}</span> {p.statement}
-                      <span className="dim"> — {p.ref}</span>
+                  {phase.status === "drafted" && approvingPhase !== phase.phase_key && (
+                    <div className="row" style={{ marginTop: 10 }}>
+                      <button onClick={() => draftPhase(phase.phase_key)} disabled={!!busy}>
+                        {busy === phase.phase_key ? "Redrafting…" : "Redraft"}
+                      </button>
+                      <button className="primary" onClick={() => setApprovingPhase(phase.phase_key)}>Approve phase</button>
                     </div>
-                  ))}
-                </details>
-              )}
-            </div>
-          ))}
+                  )}
+                  {phase.status === "drafted" && approvingPhase === phase.phase_key && (
+                    <div className="stack" style={{ marginTop: 10, gap: 8 }}>
+                      <div className="row" style={{ gap: 6 }}>
+                        <span className="muted" style={{ fontSize: 12 }}>Rate this draft (optional):</span>
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <button
+                            key={n} onClick={() => setPhaseRating(phaseRating === n ? null : n)}
+                            style={phaseRating === n ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                      <input
+                        value={phaseRatingNote} onChange={(e) => setPhaseRatingNote(e.target.value)}
+                        placeholder="Note (optional)"
+                      />
+                      <div className="row">
+                        <button
+                          className="primary" onClick={() => approvePhaseAction(phase.phase_key)}
+                          disabled={busy === `approve-${phase.phase_key}`}
+                        >
+                          {busy === `approve-${phase.phase_key}` ? "Approving…" : "Approve phase"}
+                        </button>
+                        <button onClick={() => { setApprovingPhase(null); setPhaseRating(null); setPhaseRatingNote(""); }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {phase.status === "approved" && (
+                    <div className="row" style={{ marginTop: 10 }}>
+                      <button onClick={() => draftPhase(phase.phase_key)} disabled={!!busy}>
+                        {busy === phase.phase_key ? "Redrafting…" : "Redraft (resets later phases)"}
+                      </button>
+                    </div>
+                  )}
+                  {error && (busy === phase.phase_key || approvingPhase === phase.phase_key) && (
+                    <p style={{ color: "var(--bad)", fontSize: 13, margin: "8px 0 0" }}>{error}</p>
+                  )}
+                </div>
+
+                {phaseSections.map((s) => (
+                  <div key={s.id} className="card">
+                    <div className="row">
+                      <strong style={{ flex: 1 }}>{s.title_en}</strong>
+                      {s.confidence && (
+                        <span className={`pill ${CONFIDENCE[s.confidence] ?? "grey"}`}>{s.confidence.replace(/_/g, " ")}</span>
+                      )}
+                      <span className="pill grey">{s.status}</span>
+                      {editing !== s.id && (
+                        <button onClick={() => { setEditing(s.id); setDraft(s.content); }}>Edit</button>
+                      )}
+                    </div>
+
+                    {editing === s.id ? (
+                      <div className="stack" style={{ marginTop: 10 }}>
+                        <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+                                  style={{ minHeight: 220, resize: "vertical" }} />
+                        {/* Optional, and worth more than the diff — see D19. */}
+                        <input value={note} onChange={(e) => setNote(e.target.value)}
+                               placeholder="Why did you change it? (optional — helps the agent learn)" />
+                        {approved && (
+                          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                            Saving will revoke this plan's approval — it will need re-approving before it can be exported again.
+                          </p>
+                        )}
+                        <div className="row">
+                          <button className="primary" onClick={() => save(s)} disabled={busy === s.id}>
+                            {busy === s.id ? "Saving…" : "Save"}
+                          </button>
+                          <button onClick={() => { setEditing(null); setNote(""); }}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ whiteSpace: "pre-wrap", marginBottom: 0 }} dir="auto">
+                        {s.content || <span className="muted">Not drafted yet.</span>}
+                      </p>
+                    )}
+
+                    {s.provenance?.length > 0 && editing !== s.id && (
+                      <details style={{ marginTop: 10 }}>
+                        <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>
+                          {s.provenance.length} sourced statement{s.provenance.length === 1 ? "" : "s"}
+                        </summary>
+                        {s.provenance.map((p, i) => (
+                          <div key={i} className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                            <span className="pill grey">{p.source}</span> {p.statement}
+                            <span className="dim"> — {p.ref}</span>
+                          </div>
+                        ))}
+                      </details>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
 
           <FinancialsExhibits rows={view.financials} />
 

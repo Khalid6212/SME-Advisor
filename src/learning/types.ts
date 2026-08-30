@@ -18,7 +18,15 @@
  *      whether the feature helps or quietly hurts.
  */
 
-export const RULE_AGENT = ["interview", "planner", "review"] as const;
+// "planner" stays registered for any already-approved historical rules from
+// before the phased rewrite — new activity uses the specific phase.* ids
+// (src/planner/phases.ts) so a rule learned from the financial phase's
+// edits can never leak into the strategy phase's prompt.
+export const RULE_AGENT = [
+  "interview", "planner", "review",
+  "phase.company_market", "phase.strategy", "phase.operations",
+  "phase.financial", "phase.investment_case", "phase.summary",
+] as const;
 export type RuleAgent = (typeof RULE_AGENT)[number];
 
 /**
