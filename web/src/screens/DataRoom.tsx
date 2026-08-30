@@ -79,12 +79,24 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
   const upload = async (nodeId: string, file: File) => {
     setBusy(nodeId);
     try {
-      await api.upload(`/me/data-room/nodes/${nodeId}/documents`, file,
-        "Shared with my adviser to verify information I provided.");
+      if (manager) {
+        await api.upload(`/clients/${clientId}/data-room/nodes/${nodeId}/documents`, file,
+          "Uploaded by the advisory team on the client's behalf.");
+      } else {
+        await api.upload(`/me/data-room/nodes/${nodeId}/documents`, file,
+          "Shared with my adviser to verify information I provided.");
+      }
       await load();
     } catch (e: any) {
       setError(e.code === "unsupported_type" ? "That file type isn't accepted." : e.message);
     }
+    setBusy(null);
+  };
+
+  const setNodeStatus = async (nodeId: string, status: "accepted" | "rejected") => {
+    setBusy(nodeId);
+    await api.patch(`/data-room/nodes/${nodeId}`, { status });
+    await load();
     setBusy(null);
   };
 
@@ -130,7 +142,8 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
 
     const docs = docsFor(n.id);
     const reasons = reasonsFor(n);
-    const canUpload = !manager && ["requested", "rejected"].includes(n.status);
+    const canUpload = manager || ["requested", "rejected"].includes(n.status);
+    const canReview = manager && ["uploaded", "under_review"].includes(n.status);
 
     return (
       <div key={n.id} className="node item card" style={{ padding: 14 }}>
@@ -193,6 +206,25 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
             )}
           </div>
         ))}
+
+        {canReview && (
+          <div className="row" style={{ marginTop: 10, gap: 8 }}>
+            <button
+              style={{ borderColor: "var(--good)", color: "var(--good)" }}
+              disabled={busy === n.id}
+              onClick={() => setNodeStatus(n.id, "accepted")}
+            >
+              Accept
+            </button>
+            <button
+              style={{ borderColor: "var(--bad)", color: "var(--bad)" }}
+              disabled={busy === n.id}
+              onClick={() => setNodeStatus(n.id, "rejected")}
+            >
+              Reject
+            </button>
+          </div>
+        )}
 
         {manager && historyOpen === n.id && (() => {
           const nodeVersions = versions[n.id];

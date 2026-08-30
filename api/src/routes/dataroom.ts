@@ -464,6 +464,91 @@ export async function dataRoomRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(body);
   });
 
+  /**
+   * A manager/admin uploading on the client's own behalf — a document the
+   * advisor already has (emailed directly, sourced independently) rather
+   * than waiting for the client to find and upload it themselves. No status
+   * gate unlike the client route below: the `not_requested` restriction
+   * exists to structure what's asked *of the client*, not to constrain the
+   * advisor's own convenience, so a manager can upload to any node regardless
+   * of its current state. To upload something not on the checklist at all,
+   * a manager already has POST /clients/:id/data-room/nodes to add one first.
+   */
+  app.post("/clients/:id/data-room/nodes/:nodeId/documents", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id, nodeId } = req.params as { id: string; nodeId: string };
+
+    const node = await one<{ id: string }>(
+      `SELECT n.id
+         FROM data_room_nodes n
+         JOIN data_rooms r ON r.id = n.data_room_id
+        WHERE n.id = $1 AND r.client_id = $2 AND n.kind = 'item'`,
+      [nodeId, id],
+    );
+    if (!node) return reply.code(404).send({ error: "not_found" });
+
+    const file = await (req as any).file({ limits: { fileSize: MAX_BYTES } });
+    if (!file) return reply.code(400).send({ error: "no_file" });
+
+    if (!ALLOWED_MIME.has(file.mimetype)) {
+      return reply.code(415).send({ error: "unsupported_type", mime: file.mimetype });
+    }
+
+    const buffer = await file.toBuffer();
+    if (buffer.byteLength === 0) return reply.code(400).send({ error: "empty_file" });
+
+    const consent =
+      (file.fields?.consent?.value as string | undefined) ??
+      "Uploaded by the advisory team on the client's behalf.";
+
+    const key = storageKey(id, nodeId, file.filename);
+    await storage.put(key, buffer, file.mimetype);
+
+    const doc = await tx(async (client) => {
+      const { rows: prev } = await client.query<{ version: number }>(
+        `SELECT COALESCE(MAX(version), 0) AS version FROM documents WHERE node_id = $1`,
+        [nodeId],
+      );
+      const version = prev[0]!.version + 1;
+
+      // Re-uploads supersede rather than overwrite — same rule as the client
+      // route, so a replaced document keeps its history either way.
+      await client.query(
+        `UPDATE documents SET superseded_at = now()
+          WHERE node_id = $1 AND superseded_at IS NULL`,
+        [nodeId],
+      );
+
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO documents
+           (node_id, client_id, storage_key, filename, mime_type, size_bytes,
+            version, uploaded_by, consent_text)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+        [nodeId, id, key, file.filename, file.mimetype, buffer.byteLength, version, user.id, consent],
+      );
+
+      await client.query(
+        `UPDATE data_room_nodes SET status = 'uploaded', fulfilled_at = now(), updated_at = now()
+          WHERE id = $1`,
+        [nodeId],
+      );
+      return { id: rows[0]!.id, version };
+    });
+
+    await audit("document.uploaded", {
+      actorUserId: user.id,
+      clientId: id,
+      payload: { node_id: nodeId, filename: file.filename, bytes: buffer.byteLength, uploaded_by_manager: true },
+    });
+
+    // Best-effort enrichment, exactly as the client upload path — a failed or
+    // unsupported extraction never blocks the upload itself.
+    extractDocument(doc.id).catch((err) => req.log.error({ err, documentId: doc.id }, "document extraction failed"));
+
+    return reply.code(201).send(doc);
+  });
+
   // ─── client ─────────────────────────────────────────────────────────────
 
   /** Requested items only. The full structure would read as a wall of work. */
