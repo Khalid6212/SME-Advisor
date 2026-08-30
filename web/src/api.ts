@@ -219,3 +219,36 @@ export interface PlanPhase {
   title: { en: string; ar: string };
   section_keys: string[];
 }
+
+export interface EvalRunSummary {
+  id: string;
+  run_at: string;
+  model: string;
+  note: string | null;
+  triggered_by_email: string | null;
+  fixture_count: number;
+  deterministic_passed: number;
+}
+
+export interface JudgeScores {
+  grounding: number;
+  depth: number;
+  register: number;
+  internal_consistency: number;
+}
+
+export interface AgentPerformanceRow {
+  agent: string;
+  avg_edit_distance: number | null;
+  edit_count: number;
+  avg_rating: number | null;
+  rating_count: number;
+  approved_phases: number;
+  approved_without_edit: number;
+  latest_eval: JudgeScores | null;
+}
+
+export interface AgentPerformance {
+  latest_eval_run: { id: string; run_at: string } | null;
+  agents: AgentPerformanceRow[];
+}

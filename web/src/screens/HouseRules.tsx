@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, type AgentPerformance, type EvalRunSummary } from "../api";
 
 interface Rule {
   id: string;
@@ -27,6 +27,22 @@ interface SourceEdit {
 
 const CONFIDENCE_PILL: Record<string, string> = { strong: "good", plausible: "info", weak: "grey" };
 
+const AGENT_LABELS: Record<string, string> = {
+  "phase.company_market": "Company & market",
+  "phase.strategy": "Strategy",
+  "phase.operations": "Operations",
+  "phase.financial": "Financial plan",
+  "phase.investment_case": "Investment case",
+  "phase.summary": "Executive summary",
+  planner: "Planner (legacy)",
+  interview: "Interview",
+  review: "Review",
+};
+
+function agentLabel(agent: string): string {
+  return AGENT_LABELS[agent] ?? agent;
+}
+
 function ScopeTags({ rule }: { rule: Rule }) {
   const groups = [
     ["agent", rule.scope_agents],
@@ -44,11 +60,138 @@ function ScopeTags({ rule }: { rule: Rule }) {
 }
 
 /**
+ * The eval run (4a) plus the always-on production trend (4b), side by side —
+ * one place to answer "how are the agents doing and is it improving." The
+ * eval suite itself is never triggered from a page load or a timer: running
+ * it calls a real drafting model plus a judge model per section, a real,
+ * disclosed cost each time, so the button below asks for confirmation first.
+ */
+function AgentPerformancePanel() {
+  const [perf, setPerf] = useState<AgentPerformance | null>(null);
+  const [runs, setRuns] = useState<EvalRunSummary[] | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    void api.get<AgentPerformance>("/agents/performance").then(setPerf);
+    void api.get<EvalRunSummary[]>("/eval/runs").then(setRuns);
+  };
+  useEffect(load, []);
+
+  const runEval = async () => {
+    if (!confirm("This calls the real drafting model plus a judge model for every fixture — a real, billed API cost. Run the eval suite now?")) return;
+    setRunning(true);
+    setError(null);
+    try {
+      await api.post("/eval/run");
+      load();
+    } catch {
+      setError("Eval run failed — check server logs.");
+    }
+    setRunning(false);
+  };
+
+  return (
+    <div>
+      <div className="row" style={{ alignItems: "flex-start", marginBottom: 16 }}>
+        <p className="muted" style={{ margin: 0, flex: 1 }}>
+          Production trend below is passive, from real approvals. Eval history is deliberate —
+          a fixture-based test suite run on demand, e.g. before or after a prompt change.
+        </p>
+        <button className="primary" onClick={runEval} disabled={running}>
+          {running ? "Running…" : "Run eval suite"}
+        </button>
+      </div>
+      {error && <p style={{ color: "var(--bad)" }}>{error}</p>}
+
+      <h4 style={{ margin: "0 0 8px" }}>Production trend, per agent</h4>
+      {!perf ? (
+        <p className="muted">Loading…</p>
+      ) : perf.agents.length === 0 ? (
+        <div className="card muted">No approved phases or edits recorded yet.</div>
+      ) : (
+        <div style={{ overflowX: "auto", marginBottom: 24 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--line)" }}>
+                <th style={{ padding: "6px 8px" }}>Agent</th>
+                <th style={{ padding: "6px 8px" }}>Avg edit distance</th>
+                <th style={{ padding: "6px 8px" }}>Avg rating</th>
+                <th style={{ padding: "6px 8px" }}>Approved w/o edit</th>
+                <th style={{ padding: "6px 8px" }}>Latest eval scores</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perf.agents.map((a) => (
+                <tr key={a.agent} style={{ borderBottom: "1px solid var(--line)" }}>
+                  <td style={{ padding: "6px 8px" }}>{agentLabel(a.agent)}</td>
+                  <td style={{ padding: "6px 8px" }}>
+                    {a.avg_edit_distance !== null ? `${a.avg_edit_distance} (n=${a.edit_count})` : "—"}
+                  </td>
+                  <td style={{ padding: "6px 8px" }}>
+                    {a.avg_rating !== null ? `${a.avg_rating}/5 (n=${a.rating_count})` : "—"}
+                  </td>
+                  <td style={{ padding: "6px 8px" }}>
+                    {a.approved_phases > 0
+                      ? `${a.approved_without_edit}/${a.approved_phases} (${Math.round((a.approved_without_edit / a.approved_phases) * 100)}%)`
+                      : "—"}
+                  </td>
+                  <td style={{ padding: "6px 8px" }}>
+                    {a.latest_eval
+                      ? `grounding ${a.latest_eval.grounding} · depth ${a.latest_eval.depth} · register ${a.latest_eval.register} · consistency ${a.latest_eval.internal_consistency}`
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <h4 style={{ margin: "0 0 8px" }}>Eval run history</h4>
+      {!runs ? (
+        <p className="muted">Loading…</p>
+      ) : runs.length === 0 ? (
+        <div className="card muted">No eval runs yet. Use "Run eval suite" above to run the fixtures for the first time.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--line)" }}>
+                <th style={{ padding: "6px 8px" }}>Run</th>
+                <th style={{ padding: "6px 8px" }}>Model</th>
+                <th style={{ padding: "6px 8px" }}>Fixtures</th>
+                <th style={{ padding: "6px 8px" }}>Deterministic pass</th>
+                <th style={{ padding: "6px 8px" }}>Triggered by</th>
+                <th style={{ padding: "6px 8px" }}>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((r) => (
+                <tr key={r.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                  <td style={{ padding: "6px 8px" }}>{new Date(r.run_at).toLocaleString()}</td>
+                  <td style={{ padding: "6px 8px" }}>{r.model}</td>
+                  <td style={{ padding: "6px 8px" }}>{r.fixture_count}</td>
+                  <td style={{ padding: "6px 8px" }}>{r.deterministic_passed}/{r.fixture_count}</td>
+                  <td style={{ padding: "6px 8px" }}>{r.triggered_by_email ?? "CLI"}</td>
+                  <td style={{ padding: "6px 8px" }}>{r.note ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * The human half of the learning loop. The distiller only ever proposes —
  * nothing here takes effect in a drafting prompt until approved, which is
  * what this screen is for.
  */
 export function HouseRules() {
+  const [view, setView] = useState<"rules" | "performance">("rules");
   const [status, setStatus] = useState<"candidate" | "active">("candidate");
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -76,6 +219,25 @@ export function HouseRules() {
 
   return (
     <div>
+      <div className="row" style={{ gap: 6, marginBottom: 16 }}>
+        <button
+          onClick={() => setView("rules")}
+          style={view === "rules" ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
+        >
+          Rules
+        </button>
+        <button
+          onClick={() => setView("performance")}
+          style={view === "performance" ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
+        >
+          Performance
+        </button>
+      </div>
+
+      {view === "performance" ? (
+        <AgentPerformancePanel />
+      ) : (
+        <>
       <div className="row" style={{ gap: 6, marginBottom: 16 }}>
         <button
           onClick={() => setStatus("candidate")}
@@ -164,6 +326,8 @@ export function HouseRules() {
             )}
           </div>
         ))
+      )}
+        </>
       )}
     </div>
   );

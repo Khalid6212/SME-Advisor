@@ -1,0 +1,126 @@
+{
+  "key": "golden-path-company-market",
+  "phase": "company_market",
+  "client_name": "Najd Coffee Roasters",
+  "profile_data": {
+    "business_identity": {
+      "business_description": "We roast specialty-grade coffee beans and supply cafes and hotels across Riyadh, plus a small direct-to-consumer subscription.",
+      "legal_form": "llc",
+      "year_registered": 2019,
+      "years_operating": 6,
+      "employee_count": 14,
+      "employee_band": "11_25",
+      "ownership": [{ "share_pct": 100, "active_in_business": true, "relationship_to_lead_owner": null }],
+      "owner_has_other_businesses": false,
+      "milestones": [
+        { "year": 2019, "description": "Opened first roastery in Riyadh" },
+        { "year": 2022, "description": "Signed first hotel chain contract" }
+      ]
+    },
+    "revenue_and_customers": {
+      "annual_revenue": 4200000,
+      "revenue_precision": "exact",
+      "revenue_owner_quote": "Last year we did just over 4.2 million.",
+      "revenue_trend_3y": "growing",
+      "revenue_streams": [
+        { "name": "Wholesale to cafes", "share_pct": 55, "margin_pct": 38 },
+        { "name": "Hotel contracts", "share_pct": 30, "margin_pct": 32 },
+        { "name": "Direct-to-consumer subscription", "share_pct": 15, "margin_pct": 55 }
+      ],
+      "customer_type": "b2b",
+      "top_customer_share_pct": 22,
+      "contract_basis": "mixed",
+      "seasonality": "moderate",
+      "seasonality_notes": "Slower in summer when cafe foot traffic drops.",
+      "revenue_history": [
+        { "years_ago": 1, "revenue": 3600000, "precision": "exact" },
+        { "years_ago": 2, "revenue": 2900000, "precision": "approximate" }
+      ]
+    },
+    "financial_health": {
+      "gross_margin_pct": 40,
+      "net_margin_pct": 12,
+      "margin_precision": "approximate",
+      "monthly_operating_cost": 240000,
+      "cash_on_hand": 350000,
+      "cash_runway_months": 4,
+      "receivable_days": 35,
+      "payable_days": 25,
+      "inventory_days": 45,
+      "existing_debt": [],
+      "total_monthly_debt_service": 0,
+      "debt_service_precision": "exact",
+      "statement_quality": "accountant_prepared",
+      "latest_statement_period": "2025",
+      "bank_relationship": { "primary_bank": "Riyad Bank", "years_with_bank": 5, "revenue_through_account_pct": 90, "avg_monthly_account_turnover": 350000 },
+      "compliance": { "zakat_status": "current", "vat_status": "registered", "gosi_status": "current", "nitaqat_band": "green" }
+    },
+    "operations": {
+      "owner_dependency": "low",
+      "owner_dependency_evidence": "Operations manager runs day-to-day roasting and logistics; owner focuses on sales.",
+      "management_team": [{ "role": "Operations manager", "tenure_years": 4 }],
+      "systems": ["accounting_software", "pos"],
+      "premises": "leased",
+      "lease_expiry": "2027-06-30",
+      "licences_held": ["Municipal food handling licence"]
+    },
+    "market_position": {
+      "geographies": ["Riyadh"],
+      "named_competitors": ["Camel Step Coffee", "Qahwa House"],
+      "differentiation": "Same-day roasting and delivery within Riyadh, versus competitors who roast weekly batches.",
+      "market_trend": "growing",
+      "key_risks": ["Green coffee bean price volatility", "New specialty roasters entering Riyadh"],
+      "acquisition_channels": [
+        { "channel": "referral", "share_pct": 45 },
+        { "channel": "direct outreach to cafes", "share_pct": 35 },
+        { "channel": "social media", "share_pct": 20 }
+      ]
+    },
+    "funding_need": {
+      "purposes": ["equipment"],
+      "purpose_detail": "A second roasting machine to keep up with hotel contract volume.",
+      "amount_requested": 900000,
+      "amount_flexible": false,
+      "timing": "within_3_months",
+      "instruments_considered": ["term_loan"],
+      "collateral": [{ "type": "equipment", "estimated_value": 900000, "encumbered": false }],
+      "personal_guarantee_willing": true,
+      "previous_attempts": []
+    }
+  },
+  "claims": [
+    { "claim_key": "c01", "field_path": "revenue_and_customers.annual_revenue", "stated_value": "4200000", "owner_quote": "Last year we did just over 4.2 million.", "verification_status": "unverified" },
+    { "claim_key": "c02", "field_path": "market_position.differentiation", "stated_value": null, "owner_quote": "We can roast and deliver same-day, our competitors batch-roast weekly.", "verification_status": "unverified" }
+  ],
+  "plan_inputs": {
+    "revenue_growth_pct": 15,
+    "growth_basis": "New hotel contracts already signed for next year plus the added roasting capacity.",
+    "projection_years": 5,
+    "management_assessment": "Operations manager is capable and has been offered a small equity stake to retain them.",
+    "positioning_notes": "The same-day roasting angle is genuinely differentiated in this market — most competitors batch-roast weekly and lose freshness.",
+    "risk_mitigants": "Owner has agreed forward contracts with two green-bean suppliers to reduce price volatility exposure.",
+    "use_of_funds_notes": "SAR 900,000 for one industrial roasting machine, fully quoted by the supplier.",
+    "loan_term_years": 5,
+    "loan_interest_rate_pct": 7,
+    "asset_useful_life_years": 10,
+    "market_size_tam": 1800000000,
+    "market_size_sam": 220000000,
+    "market_size_som": 12000000,
+    "market_size_sources": "Euromonitor Saudi Coffee Market Report 2025; GASTAT food service statistics 2024",
+    "market_growth_pct": 11,
+    "market_drivers_notes": "Rising specialty-coffee consumption among younger Saudi consumers and growth in the boutique hotel segment in Riyadh.",
+    "competitor_notes": [
+      { "name": "Camel Step Coffee", "strengths": "Strong brand recognition, three retail cafes", "weaknesses": "Batch-roasts weekly, inconsistent freshness reported by customers" },
+      { "name": "Qahwa House", "strengths": "Lower pricing", "weaknesses": "No wholesale/hotel channel, retail-only" }
+    ],
+    "exit_strategy_notes": null,
+    "unit_economics_notes": null
+  },
+  "document_facts": [],
+  "expect": {
+    "sections_should_draft": [
+      "company_overview", "market_need", "value_proposition",
+      "products_and_services", "market_analysis", "competitive_landscape"
+    ]
+  }
+}

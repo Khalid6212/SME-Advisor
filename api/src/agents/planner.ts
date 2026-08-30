@@ -52,6 +52,168 @@ async function houseRules(agent: RuleAgent, sector: string): Promise<string> {
   return renderRules(selectRules(rules, { agent, sector }));
 }
 
+/** Only the financial phase needs the computed statements — sending them to
+ *  every phase would bloat cost for context nothing else draws on. Pure and
+ *  DB-free except for its caller persisting `financials` — shared between
+ *  the real draftPhase below and the eval runner (api/src/eval/run.ts), so
+ *  an eval fixture exercises the exact same arithmetic production does. */
+export function computeFinancialsBlock(
+  profileData: any,
+  planInputs: PlanInputs,
+): { financials: ReturnType<typeof computeProjections>; block: string } {
+  const projectionBase = {
+    annualRevenue: profileData?.revenue_and_customers?.annual_revenue ?? null,
+    grossMarginPct: profileData?.financial_health?.gross_margin_pct ?? null,
+    monthlyOperatingCost: profileData?.financial_health?.monthly_operating_cost ?? null,
+    loanAmount: profileData?.funding_need?.amount_requested ?? null,
+    cashOnHand: profileData?.financial_health?.cash_on_hand ?? null,
+    receivableDays: profileData?.financial_health?.receivable_days ?? null,
+    payableDays: profileData?.financial_health?.payable_days ?? null,
+    inventoryDays: profileData?.financial_health?.inventory_days ?? null,
+  };
+  const baseProjections = computeProjections(projectionBase, planInputs);
+  const sensitivity = computeSensitivity(projectionBase, planInputs);
+  const cashFlowStatement = computeCashFlowStatement(projectionBase, planInputs, baseProjections);
+  const balanceSheet = computeBalanceSheet(projectionBase, planInputs, baseProjections, cashFlowStatement);
+  const financials = [...baseProjections, ...sensitivity, ...cashFlowStatement, ...balanceSheet];
+
+  const block = [
+    "",
+    baseProjections.length > 0
+      ? `COMPUTED INCOME STATEMENT (base case, includes an illustrative Zakat line) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
+      : "COMPUTED INCOME STATEMENT: none — base revenue or a growth assumption is missing. Flag the projections section as a gap.",
+    "",
+    sensitivity.length > 0
+      ? `COMPUTED SENSITIVITY (bull/bear, final projection year only) — present as a range, do not recompute:\n${JSON.stringify(sensitivity, null, 2)}`
+      : "COMPUTED SENSITIVITY: none computed.",
+    "",
+    cashFlowStatement.length > 0
+      ? `COMPUTED CASH FLOW STATEMENT (multi-year, indirect method) — present as given:\n${JSON.stringify(cashFlowStatement, null, 2)}`
+      : "COMPUTED CASH FLOW STATEMENT: none — current cash on hand or working-capital assumptions (receivable/payable days) were not recorded.",
+    "",
+    balanceSheet.length > 0
+      ? `COMPUTED BALANCE SHEET (multi-year, assets = liabilities + equity by construction) — present as given:\n${JSON.stringify(balanceSheet, null, 2)}`
+      : "COMPUTED BALANCE SHEET: none — needs the same inputs as the cash flow statement.",
+  ].join("\n");
+
+  return { financials, block };
+}
+
+export interface PhaseContext {
+  clientName: string;
+  profileData: any;
+  claims: {
+    claim_key: string; field_path: string; stated_value: string | null;
+    owner_quote: string; verification_status: string;
+  }[];
+  planInputs: PlanInputs;
+  documentFacts: { filename: string; summary: string | null; facts: unknown }[];
+  earlierSections: { key: string; title_en: string; content: string }[];
+  rules: string;
+  /** "" for every phase except "financial" — see computeFinancialsBlock. */
+  financialsBlock: string;
+}
+
+/** Pure: no DB, no network. Builds exactly what draftPhase sends the model —
+ *  shared with the eval runner so a fixture is never testing a simplified
+ *  stand-in for what actually runs in production. */
+export function buildPhaseMessages(phase: PhaseSpec, ctx: PhaseContext): { system: string; messages: Message[] } {
+  const system = [PLANNER_SYSTEM, buildPhaseBrief(phase, businessPlanTemplate, ctx.earlierSections), ctx.rules]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const messages: Message[] = [
+    {
+      role: "user",
+      content: [
+        `Draft the "${phase.title.en}" phase of the business plan for ${ctx.clientName}.`,
+        "",
+        "PROFILE (owner-reported at interview, unverified unless a claim below says otherwise):",
+        JSON.stringify(ctx.profileData, null, 2),
+        "",
+        "CLAIMS — the owner's own words, with verification status where a document was checked against them:",
+        JSON.stringify(ctx.claims, null, 2),
+        "",
+        "ADVISOR PLANNING INPUT — the source for strategy, positioning, and growth sections the profile does not cover:",
+        JSON.stringify(ctx.planInputs, null, 2),
+        "",
+        ctx.documentFacts.length > 0
+          ? `DOCUMENT FACTS — extracted from uploaded documents:\n${JSON.stringify(ctx.documentFacts, null, 2)}`
+          : "DOCUMENT FACTS: none extracted yet.",
+        ctx.financialsBlock,
+      ].join("\n"),
+    },
+  ];
+
+  return { system, messages };
+}
+
+export interface PhaseAgentOutcome {
+  drafted: { section_key: string; content: string; provenance: any[]; confidence: string }[];
+  gaps: { section_key: string; question: string; why_it_matters: string; blocking: boolean }[];
+  assumptions: { label: string; value: string; basis: string; source: string }[];
+  noteForManager: string | null;
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
+}
+
+/**
+ * Runs the actual agent loop for one phase and returns what it produced,
+ * with no persistence — the real phase-drafting logic the plan calls for
+ * reusing between production and the eval runner. Rejects a tool call for a
+ * section outside this phase's list rather than silently accepting it.
+ */
+export async function runPhaseAgent(
+  phase: PhaseSpec,
+  system: string,
+  messages: Message[],
+): Promise<PhaseAgentOutcome> {
+  const drafted: any[] = [];
+  const gaps: any[] = [];
+  const assumptions: any[] = [];
+  let phaseSummary: any = null;
+
+  const loopResult = await runAgentLoop({
+    system,
+    tools: buildPhaseTools(),
+    messages,
+    maxTurns: phase.sectionKeys.length + 6, // one call per section, plus assumptions, gaps, and submit
+    model: MODEL,
+    onTool: async (name, input) => {
+      if (name === "draft_section") {
+        if (!phase.sectionKeys.includes(input.section_key)) {
+          return { content: `${input.section_key} is not part of this phase.`, is_error: true };
+        }
+        drafted.push(input);
+        return { content: `Recorded ${input.section_key}.` };
+      }
+      if (name === "record_assumption") {
+        assumptions.push(input);
+        return { content: `Recorded assumption "${input.label}".` };
+      }
+      if (name === "flag_gap") {
+        if (!phase.sectionKeys.includes(input.section_key)) {
+          return { content: `${input.section_key} is not part of this phase.`, is_error: true };
+        }
+        gaps.push(input);
+        return { content: `Recorded gap in ${input.section_key}.` };
+      }
+      if (name === "submit_phase") {
+        phaseSummary = input;
+        return null; // terminal
+      }
+      return { content: `Unknown tool ${name}.`, is_error: true };
+    },
+  });
+
+  return {
+    drafted,
+    gaps,
+    assumptions,
+    noteForManager: phaseSummary?.note_for_manager ?? null,
+    usage: loopResult.usage,
+  };
+}
+
 export interface CreatePlanResult {
   plan_id: string;
   version: number;
@@ -236,21 +398,8 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
   // every phase would bloat cost for context nothing else draws on.
   let financialsBlock = "";
   if (phase.key === "financial") {
-    const projectionBase = {
-      annualRevenue: profile.data?.revenue_and_customers?.annual_revenue ?? null,
-      grossMarginPct: profile.data?.financial_health?.gross_margin_pct ?? null,
-      monthlyOperatingCost: profile.data?.financial_health?.monthly_operating_cost ?? null,
-      loanAmount: profile.data?.funding_need?.amount_requested ?? null,
-      cashOnHand: profile.data?.financial_health?.cash_on_hand ?? null,
-      receivableDays: profile.data?.financial_health?.receivable_days ?? null,
-      payableDays: profile.data?.financial_health?.payable_days ?? null,
-      inventoryDays: profile.data?.financial_health?.inventory_days ?? null,
-    };
-    const baseProjections = computeProjections(projectionBase, planInputs);
-    const sensitivity = computeSensitivity(projectionBase, planInputs);
-    const cashFlowStatement = computeCashFlowStatement(projectionBase, planInputs, baseProjections);
-    const balanceSheet = computeBalanceSheet(projectionBase, planInputs, baseProjections, cashFlowStatement);
-    const financials = [...baseProjections, ...sensitivity, ...cashFlowStatement, ...balanceSheet];
+    const { financials, block } = computeFinancialsBlock(profile.data, planInputs);
+    financialsBlock = block;
 
     // Persisted here, not at plan creation — the numbers only exist once
     // this phase actually runs, and a redraft recomputes fresh rather than
@@ -265,25 +414,6 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
         );
       }
     });
-
-    financialsBlock = [
-      "",
-      baseProjections.length > 0
-        ? `COMPUTED INCOME STATEMENT (base case, includes an illustrative Zakat line) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
-        : "COMPUTED INCOME STATEMENT: none — base revenue or a growth assumption is missing. Flag the projections section as a gap.",
-      "",
-      sensitivity.length > 0
-        ? `COMPUTED SENSITIVITY (bull/bear, final projection year only) — present as a range, do not recompute:\n${JSON.stringify(sensitivity, null, 2)}`
-        : "COMPUTED SENSITIVITY: none computed.",
-      "",
-      cashFlowStatement.length > 0
-        ? `COMPUTED CASH FLOW STATEMENT (multi-year, indirect method) — present as given:\n${JSON.stringify(cashFlowStatement, null, 2)}`
-        : "COMPUTED CASH FLOW STATEMENT: none — current cash on hand or working-capital assumptions (receivable/payable days) were not recorded.",
-      "",
-      balanceSheet.length > 0
-        ? `COMPUTED BALANCE SHEET (multi-year, assets = liabilities + equity by construction) — present as given:\n${JSON.stringify(balanceSheet, null, 2)}`
-        : "COMPUTED BALANCE SHEET: none — needs the same inputs as the cash flow statement.",
-    ].join("\n");
   }
 
   const rules = await houseRules(phase.agent as RuleAgent, client!.sector_id);
@@ -296,80 +426,28 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       )
     : [];
 
-  const system = [PLANNER_SYSTEM, buildPhaseBrief(phase, businessPlanTemplate, earlierSections), rules]
-    .filter(Boolean)
-    .join("\n\n");
-
-  const messages: Message[] = [
-    {
-      role: "user",
-      content: [
-        `Draft the "${phase.title.en}" phase of the business plan for ${client!.name}.`,
-        "",
-        "PROFILE (owner-reported at interview, unverified unless a claim below says otherwise):",
-        JSON.stringify(profile.data, null, 2),
-        "",
-        "CLAIMS — the owner's own words, with verification status where a document was checked against them:",
-        JSON.stringify(claims, null, 2),
-        "",
-        "ADVISOR PLANNING INPUT — the source for strategy, positioning, and growth sections the profile does not cover:",
-        JSON.stringify(planInputs, null, 2),
-        "",
-        documentFacts.length > 0
-          ? `DOCUMENT FACTS — extracted from uploaded documents:\n${JSON.stringify(documentFacts, null, 2)}`
-          : "DOCUMENT FACTS: none extracted yet.",
-        financialsBlock,
-      ].join("\n"),
-    },
-  ];
-
-  const drafted: any[] = [];
-  const gaps: any[] = [];
-  const assumptions: any[] = [];
-  let phaseSummary: any = null;
-
-  const loopResult = await runAgentLoop({
-    system,
-    tools: buildPhaseTools(),
-    messages,
-    maxTurns: phase.sectionKeys.length + 6, // one call per section, plus assumptions, gaps, and submit
-    model: MODEL,
-    onTool: async (name, input) => {
-      if (name === "draft_section") {
-        if (!phase.sectionKeys.includes(input.section_key)) {
-          return { content: `${input.section_key} is not part of this phase.`, is_error: true };
-        }
-        drafted.push(input);
-        return { content: `Recorded ${input.section_key}.` };
-      }
-      if (name === "record_assumption") {
-        assumptions.push(input);
-        return { content: `Recorded assumption "${input.label}".` };
-      }
-      if (name === "flag_gap") {
-        if (!phase.sectionKeys.includes(input.section_key)) {
-          return { content: `${input.section_key} is not part of this phase.`, is_error: true };
-        }
-        gaps.push(input);
-        return { content: `Recorded gap in ${input.section_key}.` };
-      }
-      if (name === "submit_phase") {
-        phaseSummary = input;
-        return null; // terminal
-      }
-      return { content: `Unknown tool ${name}.`, is_error: true };
-    },
+  const { system, messages } = buildPhaseMessages(phase, {
+    clientName: client!.name,
+    profileData: profile.data,
+    claims,
+    planInputs,
+    documentFacts,
+    earlierSections,
+    rules,
+    financialsBlock,
   });
+
+  const outcome = await runPhaseAgent(phase, system, messages);
 
   await audit("agent.usage", {
     actorUserId: createdBy,
     clientId: plan.client_id,
-    payload: { agent: phase.agent, model: MODEL, plan_id: planId, phase: phase.key, ...loopResult.usage },
+    payload: { agent: phase.agent, model: MODEL, plan_id: planId, phase: phase.key, ...outcome.usage },
   });
 
   await tx(async (c) => {
     for (const spec of businessPlanTemplate.sections.filter((s) => phase.sectionKeys.includes(s.key))) {
-      const draft = drafted.find((d) => d.section_key === spec.key);
+      const draft = outcome.drafted.find((d) => d.section_key === spec.key);
       if (!draft) continue; // left as the empty row created at plan creation
       await c.query(
         `UPDATE plan_sections
@@ -379,7 +457,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       );
     }
 
-    for (const g of gaps) {
+    for (const g of outcome.gaps) {
       await c.query(
         `INSERT INTO plan_gaps (plan_id, section_key, question, why_it_matters, blocking)
          VALUES ($1,$2,$3,$4,$5)`,
@@ -387,7 +465,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       );
     }
 
-    for (const a of assumptions) {
+    for (const a of outcome.assumptions) {
       await c.query(
         `INSERT INTO plan_assumptions (plan_id, label, value, basis, source)
          VALUES ($1,$2,$3,$4,$5) ON CONFLICT (plan_id, label) DO NOTHING`,
@@ -405,7 +483,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       clientId: plan.client_id,
       payload: {
         plan_id: planId, phase: phase.key,
-        sections_drafted: drafted.length, gaps: gaps.length,
+        sections_drafted: outcome.drafted.length, gaps: outcome.gaps.length,
       },
       client: c,
     });
@@ -413,10 +491,10 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
 
   return {
     phase_key: phase.key,
-    drafted: drafted.length,
-    gaps: gaps.length,
-    assumptions: assumptions.length,
-    note_for_manager: phaseSummary?.note_for_manager ?? null,
+    drafted: outcome.drafted.length,
+    gaps: outcome.gaps.length,
+    assumptions: outcome.assumptions.length,
+    note_for_manager: outcome.noteForManager,
   };
 }
 

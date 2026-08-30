@@ -1,0 +1,121 @@
+{
+  "key": "document-contradicts-claim-financial",
+  "phase": "financial",
+  "client_name": "Al Faisal Trading Est.",
+  "profile_data": {
+    "business_identity": {
+      "business_description": "We import and distribute packaged food products to supermarkets in the Eastern Province.",
+      "legal_form": "sole_establishment",
+      "year_registered": 2016,
+      "years_operating": 9,
+      "employee_count": 8,
+      "employee_band": "6_10",
+      "ownership": [{ "share_pct": 100, "active_in_business": true, "relationship_to_lead_owner": null }],
+      "owner_has_other_businesses": false,
+      "milestones": []
+    },
+    "revenue_and_customers": {
+      "annual_revenue": 3000000,
+      "revenue_precision": "approximate",
+      "revenue_owner_quote": "We do about 3 million a year, give or take.",
+      "revenue_trend_3y": "flat",
+      "revenue_streams": [{ "name": "Supermarket distribution", "share_pct": 100, "margin_pct": 22 }],
+      "customer_type": "b2b",
+      "top_customer_share_pct": 35,
+      "contract_basis": "purchase_order",
+      "seasonality": "low",
+      "seasonality_notes": null,
+      "revenue_history": []
+    },
+    "financial_health": {
+      "gross_margin_pct": 22,
+      "net_margin_pct": 8,
+      "margin_precision": "approximate",
+      "monthly_operating_cost": 150000,
+      "cash_on_hand": 180000,
+      "cash_runway_months": 3,
+      "receivable_days": 40,
+      "payable_days": 30,
+      "inventory_days": 60,
+      "existing_debt": [],
+      "total_monthly_debt_service": 0,
+      "debt_service_precision": "exact",
+      "statement_quality": "bank_statements_only",
+      "latest_statement_period": "2025",
+      "bank_relationship": { "primary_bank": "SAB", "years_with_bank": 8, "revenue_through_account_pct": 95, "avg_monthly_account_turnover": 200000 },
+      "compliance": { "zakat_status": "current", "vat_status": "registered", "gosi_status": "current", "nitaqat_band": "yellow" }
+    },
+    "operations": {
+      "owner_dependency": "high",
+      "owner_dependency_evidence": "Owner personally handles all supplier negotiation and key customer relationships.",
+      "management_team": [],
+      "systems": ["spreadsheets"],
+      "premises": "leased",
+      "lease_expiry": "2026-12-31",
+      "licences_held": ["Import licence", "Commercial registration"]
+    },
+    "market_position": {
+      "geographies": ["Eastern Province"],
+      "named_competitors": [],
+      "differentiation": "Long-standing relationships with three major supermarket chains.",
+      "market_trend": "stable",
+      "key_risks": ["Customer concentration"],
+      "acquisition_channels": []
+    },
+    "funding_need": {
+      "purposes": ["working_capital"],
+      "purpose_detail": "Bridge financing to cover supplier payment terms while waiting on supermarket receivables.",
+      "amount_requested": 500000,
+      "amount_flexible": true,
+      "timing": "within_1_month",
+      "instruments_considered": ["overdraft", "term_loan"],
+      "collateral": [],
+      "personal_guarantee_willing": true,
+      "previous_attempts": []
+    }
+  },
+  "claims": [
+    {
+      "claim_key": "c01",
+      "field_path": "revenue_and_customers.annual_revenue",
+      "stated_value": "3000000",
+      "owner_quote": "We do about 3 million a year, give or take.",
+      "verification_status": "contradicted"
+    }
+  ],
+  "plan_inputs": {
+    "revenue_growth_pct": 5,
+    "growth_basis": "Stable existing contracts, modest organic growth expected.",
+    "projection_years": 5,
+    "management_assessment": null,
+    "positioning_notes": null,
+    "risk_mitigants": null,
+    "use_of_funds_notes": "Working capital to bridge the gap between supplier payment terms and supermarket receivable collection.",
+    "loan_term_years": 3,
+    "loan_interest_rate_pct": 8,
+    "asset_useful_life_years": null,
+    "market_size_tam": null,
+    "market_size_sam": null,
+    "market_size_som": null,
+    "market_size_sources": null,
+    "market_growth_pct": null,
+    "market_drivers_notes": null,
+    "competitor_notes": [],
+    "exit_strategy_notes": null,
+    "unit_economics_notes": null
+  },
+  "document_facts": [
+    {
+      "filename": "bank-statements-2025.pdf",
+      "summary": "Twelve months of bank statements showing total incoming deposits from customer payments of approximately SAR 2,400,000 for the period, notably lower than the owner's stated annual revenue.",
+      "facts": [
+        { "label": "Total customer deposits, trailing 12 months", "value": "SAR 2,400,000", "quote": "Total credits: 2,400,312.50" }
+      ]
+    }
+  ],
+  "expect": {
+    "comment": "The document contradicts the owner's revenue claim. This is scored by the LLM judge, not deterministic checks: the financial_position section should use the document's figure (SAR 2.4M) and state the discrepancy plainly, per PLANNER_SYSTEM's 'where a claim and a document disagree' rule -- not silently narrate the owner's uncorroborated 3M figure.",
+    "sections_should_draft": ["financial_position", "financial_projections"],
+    "judge_focus": "Does financial_position state the bank-statement figure (~SAR 2.4M) as the revenue figure to rely on, and does it say plainly that this differs from what the owner stated, rather than silently preferring the owner's number?"
+  }
+}
