@@ -84,15 +84,26 @@ export async function recomputePaths(client: pg.PoolClient, roomId: string): Pro
 }
 
 /**
- * Creates a room for a client from a template.
+ * Creates a room for a client from a template — or, passing `"blank"`, an
+ * empty one.
+ *
+ * Not every business fits the standard 25-item checklist (a sole
+ * establishment has no articles of association; a service business has no
+ * inventory), and forcing every engagement through it means the manager
+ * fights the template rather than using it. `POST /clients/:id/data-room/nodes`,
+ * `PATCH`, and `DELETE` already let a manager reshape the tree after
+ * instantiation — this just adds the option to start from nothing at all
+ * for a business the template doesn't fit, rather than instantiating the
+ * full 25 items only to delete most of them one at a time.
  *
  * Items start `not_requested`: the manager lays out the whole structure, then
  * publishes only what they actually want now. A client facing eighteen items on
  * day one provides none of them.
  */
 export async function instantiate(clientId: string, templateKey?: string): Promise<string> {
-  const template = defaultTemplate; // only one template ships today
-  if (templateKey && templateKey !== template.key) {
+  const blank = templateKey === "blank";
+  const template = defaultTemplate; // only one real template ships today
+  if (!blank && templateKey && templateKey !== template.key) {
     throw new Error(`Unknown template: ${templateKey}`);
   }
 
@@ -100,9 +111,10 @@ export async function instantiate(clientId: string, templateKey?: string): Promi
     const { rows } = await client.query<{ id: string }>(
       `INSERT INTO data_rooms (client_id, template_key, template_version)
        VALUES ($1, $2, $3) RETURNING id`,
-      [clientId, template.key, template.version],
+      [clientId, blank ? null : template.key, blank ? null : template.version],
     );
     const roomId = rows[0]!.id;
+    if (blank) return roomId;
 
     const insert = async (nodes: TemplateNode[], parentId: string | null, prefix: string) => {
       for (const [i, node] of nodes.entries()) {

@@ -126,6 +126,13 @@ export interface DocVersion {
   extract_summary: string | null;
 }
 
+export interface Suggestion {
+  node_id: string | null;
+  document_type: string;
+  title: string;
+  reasons: { claim_key: string; field_path: string; owner_quote: string }[];
+}
+
 export interface RoomView {
   progress: { provided: number; requested: number };
   tree: Node[];

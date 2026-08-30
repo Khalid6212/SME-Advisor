@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, type Doc, type DocVersion, type Node, type RoomView } from "../api";
+import { api, type Doc, type DocVersion, type Node, type RoomView, type Suggestion } from "../api";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 const STATUS_PILL: Record<string, string> = {
   not_requested: "grey",
@@ -12,6 +13,88 @@ const STATUS_PILL: Record<string, string> = {
 
 function bytes(n: number) {
   return n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+interface NodeFormData {
+  kind: "folder" | "item";
+  title_en: string;
+  title_ar: string;
+  description_en: string;
+  required: boolean;
+}
+
+/** Shared by "add a node" and "edit a node" — same fields either way, only
+ *  `kind` is add-only (it can't change after creation). */
+function NodeForm({
+  initial, allowKind, submitLabel, onSubmit, onCancel,
+}: {
+  initial?: Partial<NodeFormData>;
+  allowKind: boolean;
+  submitLabel: string;
+  onSubmit: (data: NodeFormData) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [kind, setKind] = useState<"folder" | "item">(initial?.kind ?? "item");
+  const [titleEn, setTitleEn] = useState(initial?.title_en ?? "");
+  const [titleAr, setTitleAr] = useState(initial?.title_ar ?? "");
+  const [descEn, setDescEn] = useState(initial?.description_en ?? "");
+  const [required, setRequired] = useState(initial?.required ?? true);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    await onSubmit({ kind, title_en: titleEn.trim(), title_ar: titleAr.trim(), description_en: descEn.trim(), required });
+    setBusy(false);
+  };
+
+  return (
+    <form onSubmit={submit} className="card" style={{ padding: 12, marginTop: 8 }}>
+      {allowKind && (
+        <div className="row" style={{ gap: 12, marginBottom: 8, fontSize: 13 }}>
+          <label className="row" style={{ gap: 6, cursor: "pointer" }}>
+            <input type="radio" checked={kind === "item"} onChange={() => setKind("item")} style={{ width: "auto" }} />
+            Document
+          </label>
+          <label className="row" style={{ gap: 6, cursor: "pointer" }}>
+            <input type="radio" checked={kind === "folder"} onChange={() => setKind("folder")} style={{ width: "auto" }} />
+            Folder
+          </label>
+        </div>
+      )}
+      <div className="row" style={{ gap: 8 }}>
+        <input
+          required value={titleEn} placeholder="Title (English)" autoFocus
+          onChange={(e) => setTitleEn(e.target.value)} style={{ flex: 1 }}
+        />
+        <input
+          required value={titleAr} placeholder="العنوان (عربي)"
+          onChange={(e) => setTitleAr(e.target.value)} style={{ flex: 1 }}
+        />
+      </div>
+      {kind === "item" && (
+        <input
+          value={descEn} placeholder="Description (optional)"
+          onChange={(e) => setDescEn(e.target.value)} style={{ marginTop: 8 }}
+        />
+      )}
+      {kind === "item" && (
+        <label className="row" style={{ gap: 8, fontSize: 13, marginTop: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox" checked={required}
+            onChange={(e) => setRequired(e.target.checked)} style={{ width: "auto" }}
+          />
+          Required
+        </label>
+      )}
+      <div className="row" style={{ gap: 8, marginTop: 10 }}>
+        <button className="primary" disabled={busy || !titleEn.trim() || !titleAr.trim()}>
+          {busy ? "Saving…" : submitLabel}
+        </button>
+        <button type="button" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
 }
 
 /**
@@ -27,6 +110,10 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
   const [remindSelected, setRemindSelected] = useState<Set<string>>(new Set());
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
   const [versions, setVersions] = useState<Record<string, DocVersion[]>>({});
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [addingTo, setAddingTo] = useState<string | "root" | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<{ id: string; label: string } | null>(null);
 
   const path = manager ? `/clients/${clientId}/data-room` : `/me/clients/${clientId}/data-room`;
 
@@ -37,13 +124,20 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
     } catch (e: any) {
       setError(e.code === "no_data_room" ? "none" : e.message);
     }
+    if (manager) {
+      try {
+        setSuggestions(await api.get<Suggestion[]>(`/clients/${clientId}/data-room/suggested`));
+      } catch {
+        setSuggestions([]);
+      }
+    }
   };
 
   useEffect(() => { void load(); }, [clientId, manager]);
 
-  const create = async () => {
-    setBusy("create");
-    await api.post(`/clients/${clientId}/data-room`, {});
+  const create = async (blank: boolean) => {
+    setBusy(blank ? "create-blank" : "create");
+    await api.post(`/clients/${clientId}/data-room`, blank ? { template_key: "blank" } : {});
     await load();
     setBusy(null);
   };
@@ -100,19 +194,70 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
     setBusy(null);
   };
 
+  const addNode = async (parentId: string | null, data: NodeFormData) => {
+    await api.post(`/clients/${clientId}/data-room/nodes`, {
+      parent_id: parentId,
+      kind: data.kind,
+      title_en: data.title_en,
+      title_ar: data.title_ar,
+      description_en: data.kind === "item" ? data.description_en || undefined : undefined,
+      required: data.kind === "item" ? data.required : undefined,
+    });
+    setAddingTo(null);
+    await load();
+  };
+
+  const addSuggestion = async (s: Suggestion) => {
+    setBusy(`suggest-${s.document_type}`);
+    await api.post(`/clients/${clientId}/data-room/nodes`, {
+      parent_id: null,
+      kind: "item",
+      title_en: s.title,
+      title_ar: s.title,
+      document_type: s.document_type,
+      required: true,
+    });
+    await load();
+    setBusy(null);
+  };
+
+  const updateNode = async (nodeId: string, data: NodeFormData) => {
+    await api.patch(`/data-room/nodes/${nodeId}`, {
+      title_en: data.title_en,
+      title_ar: data.title_ar,
+      description_en: data.description_en || null,
+      required: data.required,
+    });
+    setEditing(null);
+    await load();
+  };
+
+  const deleteNode = async (nodeId: string) => {
+    setBusy(nodeId);
+    await api.del(`/data-room/nodes/${nodeId}`);
+    setDeleting(null);
+    setBusy(null);
+    await load();
+  };
+
   if (error === "none") {
     return (
       <div className="card">
         <div style={{ fontWeight: 600 }}>No data room yet</div>
         <p className="muted">
           {manager
-            ? "Create one from the standard template, then customise it and request what you need."
+            ? "Start from the standard template and trim what doesn't apply, or build one from scratch for a business the template doesn't fit."
             : "Your adviser hasn't requested any documents yet."}
         </p>
         {manager && (
-          <button className="primary" onClick={create} disabled={busy === "create"}>
-            {busy === "create" ? "Creating…" : "Create from template"}
-          </button>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="primary" onClick={() => create(false)} disabled={busy !== null}>
+              {busy === "create" ? "Creating…" : "Create from template"}
+            </button>
+            <button onClick={() => create(true)} disabled={busy !== null}>
+              {busy === "create-blank" ? "Creating…" : "Start blank"}
+            </button>
+          </div>
         )}
       </div>
     );
@@ -128,14 +273,47 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
     ? Math.round((room.progress.provided / room.progress.requested) * 100)
     : 0;
 
+  const notYetAdded = suggestions.filter((s) => s.node_id === null);
+
   const renderNode = (n: Node) => {
     if (n.kind === "folder") {
       return (
         <div key={n.id} className="node">
-          <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>
-            <span className="path">{n.path}</span>{n.title_en}
+          <div className="row" style={{ margin: "14px 0 4px" }}>
+            <div style={{ flex: 1, fontWeight: 600 }}>
+              <span className="path">{n.path}</span>{n.title_en}
+            </div>
+            {manager && editing !== n.id && (
+              <>
+                <button onClick={() => { setEditing(n.id); setAddingTo(null); }}>Edit</button>
+                <button onClick={() => setDeleting({ id: n.id, label: n.title_en })}>Delete</button>
+              </>
+            )}
           </div>
+          {manager && editing === n.id && (
+            <NodeForm
+              allowKind={false}
+              initial={{ title_en: n.title_en, title_ar: n.title_ar, description_en: n.description_en ?? "" }}
+              submitLabel="Save"
+              onSubmit={(data) => updateNode(n.id, data)}
+              onCancel={() => setEditing(null)}
+            />
+          )}
           {n.children.map(renderNode)}
+          {manager && (
+            addingTo === n.id ? (
+              <NodeForm
+                allowKind
+                submitLabel="Add"
+                onSubmit={(data) => addNode(n.id, data)}
+                onCancel={() => setAddingTo(null)}
+              />
+            ) : (
+              <button onClick={() => { setAddingTo(n.id); setEditing(null); }} style={{ marginTop: 4 }}>
+                + Add here
+              </button>
+            )
+          )}
         </div>
       );
     }
@@ -144,6 +322,20 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
     const reasons = reasonsFor(n);
     const canUpload = manager || ["requested", "rejected"].includes(n.status);
     const canReview = manager && ["uploaded", "under_review"].includes(n.status);
+
+    if (manager && editing === n.id) {
+      return (
+        <div key={n.id} className="node item">
+          <NodeForm
+            allowKind={false}
+            initial={{ title_en: n.title_en, title_ar: n.title_ar, description_en: n.description_en ?? "", required: n.required }}
+            submitLabel="Save"
+            onSubmit={(data) => updateNode(n.id, data)}
+            onCancel={() => setEditing(null)}
+          />
+        </div>
+      );
+    }
 
     return (
       <div key={n.id} className="node item card" style={{ padding: 14 }}>
@@ -178,6 +370,12 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
           <span className={`pill ${STATUS_PILL[n.status] ?? "grey"}`}>
             {n.status.replace(/_/g, " ")}
           </span>
+          {manager && (
+            <>
+              <button onClick={() => { setEditing(n.id); setAddingTo(null); }}>Edit</button>
+              <button onClick={() => setDeleting({ id: n.id, label: n.title_en })}>Delete</button>
+            </>
+          )}
         </div>
 
         {n.description_en && (
@@ -307,8 +505,58 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
         <div className="bar" style={{ marginTop: 10 }}><div style={{ width: `${pct}%` }} /></div>
       </div>
 
+      {manager && notYetAdded.length > 0 && (
+        <div className="card">
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Suggested, based on the interview</div>
+          <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+            Documents that would verify what the owner already told us — not yet in this room.
+          </p>
+          {notYetAdded.map((s) => (
+            <div key={s.document_type} className="row" style={{ marginTop: 8, gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13 }}>{s.title}</div>
+                {s.reasons.map((r, i) => (
+                  <p key={i} className="dim" style={{ fontSize: 12, margin: "2px 0 0", fontStyle: "italic" }}>
+                    “{r.owner_quote}”
+                  </p>
+                ))}
+              </div>
+              <button onClick={() => addSuggestion(s)} disabled={busy === `suggest-${s.document_type}`}>
+                {busy === `suggest-${s.document_type}` ? "Adding…" : "Add to room"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {error && error !== "none" && <div className="card" style={{ color: "var(--bad)" }}>{error}</div>}
       {room.tree.map(renderNode)}
+
+      {manager && (
+        addingTo === "root" ? (
+          <NodeForm
+            allowKind
+            submitLabel="Add"
+            onSubmit={(data) => addNode(null, data)}
+            onCancel={() => setAddingTo(null)}
+          />
+        ) : (
+          <button onClick={() => { setAddingTo("root"); setEditing(null); }} style={{ marginTop: 12 }}>
+            + Add top-level folder or document
+          </button>
+        )
+      )}
+
+      <ConfirmDialog
+        open={deleting !== null}
+        danger
+        title={`Delete "${deleting?.label}"?`}
+        message="This removes it (and anything nested under it, plus any uploaded document) permanently — there is no undo."
+        confirmLabel="Delete"
+        busy={busy === deleting?.id}
+        onConfirm={() => deleting && deleteNode(deleting.id)}
+        onCancel={() => setDeleting(null)}
+      />
     </div>
   );
 }
