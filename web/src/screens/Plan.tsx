@@ -38,19 +38,38 @@ const AUDIENCE_LABEL: Record<string, string> = {
 const LINE_ITEM_LABEL: Record<string, string> = {
   revenue: "Revenue", cogs: "Cost of goods sold", gross_profit: "Gross profit",
   operating_cost: "Operating costs", ebitda: "EBITDA", depreciation: "Depreciation",
-  ebit: "EBIT", interest_expense: "Interest expense", net_income: "Net income",
+  ebit: "EBIT", interest_expense: "Interest expense", ebt: "Earnings before Zakat",
+  zakat: "Zakat (estimated)", net_income: "Net income",
   principal_repayment: "Principal repayment", debt_service: "Total debt service",
   dscr: "Debt service coverage ratio",
-  cash_opening: "Opening cash", cash_from_funding: "+ Funding drawn",
-  cash_from_operations: "+ Operating cash flow", cash_used_for_capex: "− Capital expenditure",
-  cash_closing: "= Closing cash",
+  cash_opening: "Opening cash", cf_net_income: "Net income", cf_depreciation: "+ Depreciation",
+  cf_working_capital_change: "± Working capital change", cf_operating: "= Cash from operating activities",
+  cf_capex: "Capital expenditure", cf_investing: "= Cash from investing activities",
+  cf_debt_drawn: "Facility drawn", cf_principal_repaid: "Principal repaid",
+  cf_financing: "= Cash from financing activities", cash_closing: "Closing cash",
+  bs_cash: "Cash and cash equivalents", bs_receivables: "Accounts receivable", bs_inventory: "Inventory",
+  bs_total_current_assets: "Total current assets", bs_net_fixed_assets: "Net fixed assets",
+  bs_total_assets: "Total assets", bs_payables: "Accounts payable",
+  bs_debt_current: "Current portion of long-term debt", bs_total_current_liabilities: "Total current liabilities",
+  bs_debt_longterm: "Long-term debt", bs_total_liabilities: "Total liabilities",
+  bs_equity: "Total equity", bs_total_liabilities_and_equity: "Total liabilities and equity",
 };
 const LINE_ITEM_ORDER = [
   "revenue", "cogs", "gross_profit", "operating_cost", "ebitda",
-  "depreciation", "ebit", "interest_expense", "net_income",
+  "depreciation", "ebit", "interest_expense", "ebt", "zakat", "net_income",
   "principal_repayment", "debt_service", "dscr",
 ];
-const CASH_BRIDGE_ORDER = ["cash_opening", "cash_from_funding", "cash_from_operations", "cash_used_for_capex", "cash_closing"];
+const CASH_FLOW_ORDER = [
+  "cash_opening", "cf_net_income", "cf_depreciation", "cf_working_capital_change", "cf_operating",
+  "cf_capex", "cf_investing", "cf_debt_drawn", "cf_principal_repaid", "cf_financing", "cash_closing",
+];
+const BALANCE_SHEET_ORDER = [
+  "bs_cash", "bs_receivables", "bs_inventory", "bs_total_current_assets",
+  "bs_net_fixed_assets", "bs_total_assets",
+  "bs_payables", "bs_debt_current", "bs_total_current_liabilities",
+  "bs_debt_longterm", "bs_total_liabilities",
+  "bs_equity", "bs_total_liabilities_and_equity",
+];
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
@@ -89,13 +108,17 @@ function YearsByItemTable({ rows, order }: { rows: FinancialLine[]; order: strin
   );
 }
 
-/** Three distinct exhibits, not one continuous sheet — matches how the
- *  exported documents present the same data (see api/src/docx.ts). */
+/** Four distinct exhibits, not one continuous sheet — matches how the
+ *  exported documents present the same data (see api/src/docx.ts). Each
+ *  filter positively includes its own line items rather than excluding the
+ *  others' — with four disjoint vocabularies sharing one table, an
+ *  exclusion filter would silently leak rows between exhibits. */
 function FinancialsExhibits({ rows }: { rows: FinancialLine[] }) {
-  const base = rows.filter((r) => r.scenario === "base" && !CASH_BRIDGE_ORDER.includes(r.line_item));
+  const base = rows.filter((r) => r.scenario === "base" && LINE_ITEM_ORDER.includes(r.line_item));
   const sensitivity = rows.filter((r) => r.scenario === "bull" || r.scenario === "bear");
-  const bridge = rows.filter((r) => r.scenario === "base" && CASH_BRIDGE_ORDER.includes(r.line_item));
-  if (base.length === 0 && sensitivity.length === 0 && bridge.length === 0) return null;
+  const cashFlow = rows.filter((r) => r.scenario === "base" && CASH_FLOW_ORDER.includes(r.line_item));
+  const balanceSheet = rows.filter((r) => r.scenario === "base" && BALANCE_SHEET_ORDER.includes(r.line_item));
+  if (base.length === 0 && sensitivity.length === 0 && cashFlow.length === 0 && balanceSheet.length === 0) return null;
 
   const find = (source: FinancialLine[], scenario: string, item: string, year: number) =>
     source.find((r) => r.scenario === scenario && r.year_offset === year && r.line_item === item)?.value;
@@ -104,7 +127,7 @@ function FinancialsExhibits({ rows }: { rows: FinancialLine[] }) {
     <>
       {base.length > 0 && (
         <>
-          <h2>Financial projections</h2>
+          <h2>Income statement</h2>
           <div className="card" style={{ overflowX: "auto" }}>
             <YearsByItemTable rows={base} order={LINE_ITEM_ORDER} />
           </div>
@@ -142,11 +165,20 @@ function FinancialsExhibits({ rows }: { rows: FinancialLine[] }) {
         );
       })()}
 
-      {bridge.length > 0 && (
+      {cashFlow.length > 0 && (
         <>
-          <h2>Cash-flow bridge (year 1)</h2>
+          <h2>Cash flow statement</h2>
           <div className="card" style={{ overflowX: "auto" }}>
-            <YearsByItemTable rows={bridge} order={CASH_BRIDGE_ORDER} />
+            <YearsByItemTable rows={cashFlow} order={CASH_FLOW_ORDER} />
+          </div>
+        </>
+      )}
+
+      {balanceSheet.length > 0 && (
+        <>
+          <h2>Balance sheet (Statement of Financial Position)</h2>
+          <div className="card" style={{ overflowX: "auto" }}>
+            <YearsByItemTable rows={balanceSheet} order={BALANCE_SHEET_ORDER} />
           </div>
         </>
       )}

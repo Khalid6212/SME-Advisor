@@ -10,7 +10,7 @@
 
 import { PLANNER_SYSTEM, buildPlannerBrief, buildPlannerTools } from "../../../src/planner/agent.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
-import { computeCashFlowBridge, computeProjections, computeSensitivity } from "../../../src/planner/projections.ts";
+import { computeBalanceSheet, computeCashFlowStatement, computeProjections, computeSensitivity } from "../../../src/planner/projections.ts";
 import type { PlanInputs } from "../../../src/planner/types.ts";
 import { renderRules, selectRules } from "../../../src/learning/rules.ts";
 import type { HouseRule } from "../../../src/learning/types.ts";
@@ -119,16 +119,17 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
     // The facility being requested already lives in the profile — no
     // separate capture needed for what the debt schedule is based on.
     loanAmount: profile.data?.funding_need?.amount_requested ?? null,
+    cashOnHand: profile.data?.financial_health?.cash_on_hand ?? null,
+    receivableDays: profile.data?.financial_health?.receivable_days ?? null,
+    payableDays: profile.data?.financial_health?.payable_days ?? null,
+    inventoryDays: profile.data?.financial_health?.inventory_days ?? null,
   };
 
   const baseProjections = computeProjections(projectionBase, planInputs);
   const sensitivity = computeSensitivity(projectionBase, planInputs);
-  const cashFlowBridge = computeCashFlowBridge(
-    profile.data?.financial_health?.cash_on_hand ?? null,
-    profile.data?.funding_need?.amount_requested ?? null,
-    baseProjections,
-  );
-  const financials = [...baseProjections, ...sensitivity, ...cashFlowBridge];
+  const cashFlowStatement = computeCashFlowStatement(projectionBase, planInputs, baseProjections);
+  const balanceSheet = computeBalanceSheet(projectionBase, planInputs, baseProjections, cashFlowStatement);
+  const financials = [...baseProjections, ...sensitivity, ...cashFlowStatement, ...balanceSheet];
 
   const rules = await houseRules(client!.sector_id);
   const system = [PLANNER_SYSTEM, buildPlannerBrief(template), rules].filter(Boolean).join("\n\n");
@@ -153,16 +154,20 @@ export async function generatePlan(clientId: string, createdBy: string): Promise
           : "DOCUMENT FACTS: none extracted yet.",
         "",
         baseProjections.length > 0
-          ? `COMPUTED FINANCIAL PROJECTIONS (base case) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
-          : "COMPUTED FINANCIAL PROJECTIONS: none — base revenue or a growth assumption is missing. Flag the projections section as a gap.",
+          ? `COMPUTED INCOME STATEMENT (base case, includes an illustrative Zakat line) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
+          : "COMPUTED INCOME STATEMENT: none — base revenue or a growth assumption is missing. Flag the projections section as a gap.",
         "",
         sensitivity.length > 0
           ? `COMPUTED SENSITIVITY (bull/bear, final projection year only) — present as a range, do not recompute:\n${JSON.stringify(sensitivity, null, 2)}`
           : "COMPUTED SENSITIVITY: none computed.",
         "",
-        cashFlowBridge.length > 0
-          ? `COMPUTED CASH-FLOW BRIDGE (year 1) — present as given:\n${JSON.stringify(cashFlowBridge, null, 2)}`
-          : "COMPUTED CASH-FLOW BRIDGE: none — current cash on hand was not recorded.",
+        cashFlowStatement.length > 0
+          ? `COMPUTED CASH FLOW STATEMENT (multi-year, indirect method) — present as given:\n${JSON.stringify(cashFlowStatement, null, 2)}`
+          : "COMPUTED CASH FLOW STATEMENT: none — current cash on hand or working-capital assumptions (receivable/payable days) were not recorded.",
+        "",
+        balanceSheet.length > 0
+          ? `COMPUTED BALANCE SHEET (multi-year, assets = liabilities + equity by construction) — present as given:\n${JSON.stringify(balanceSheet, null, 2)}`
+          : "COMPUTED BALANCE SHEET: none — needs the same inputs as the cash flow statement.",
       ].join("\n"),
     },
   ];

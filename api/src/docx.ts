@@ -151,10 +151,20 @@ function coverAndToc(firm: FirmIdentity, title: string, subtitle: string, metaLi
 
 const LINE_ITEM_ORDER = [
   "revenue", "cogs", "gross_profit", "operating_cost", "ebitda",
-  "depreciation", "ebit", "interest_expense", "net_income",
+  "depreciation", "ebit", "interest_expense", "ebt", "zakat", "net_income",
   "principal_repayment", "debt_service", "dscr",
 ] as const;
-const CASH_BRIDGE_ORDER = ["cash_opening", "cash_from_funding", "cash_from_operations", "cash_used_for_capex", "cash_closing"] as const;
+const CASH_FLOW_ORDER = [
+  "cash_opening", "cf_net_income", "cf_depreciation", "cf_working_capital_change", "cf_operating",
+  "cf_capex", "cf_investing", "cf_debt_drawn", "cf_principal_repaid", "cf_financing", "cash_closing",
+] as const;
+const BALANCE_SHEET_ORDER = [
+  "bs_cash", "bs_receivables", "bs_inventory", "bs_total_current_assets",
+  "bs_net_fixed_assets", "bs_total_assets",
+  "bs_payables", "bs_debt_current", "bs_total_current_liabilities",
+  "bs_debt_longterm", "bs_total_liabilities",
+  "bs_equity", "bs_total_liabilities_and_equity",
+] as const;
 const LINE_ITEM_LABEL: Record<string, string> = {
   revenue: "Revenue",
   cogs: "Cost of goods sold",
@@ -164,15 +174,36 @@ const LINE_ITEM_LABEL: Record<string, string> = {
   depreciation: "Depreciation",
   ebit: "EBIT",
   interest_expense: "Interest expense",
+  ebt: "Earnings before Zakat",
+  zakat: "Zakat (estimated)",
   net_income: "Net income",
   principal_repayment: "Principal repayment",
   debt_service: "Total debt service",
   dscr: "Debt service coverage ratio",
   cash_opening: "Opening cash",
-  cash_from_funding: "+ Funding drawn",
-  cash_from_operations: "+ Operating cash flow",
-  cash_used_for_capex: "− Capital expenditure",
-  cash_closing: "= Closing cash",
+  cf_net_income: "Net income",
+  cf_depreciation: "+ Depreciation",
+  cf_working_capital_change: "± Working capital change",
+  cf_operating: "= Cash from operating activities",
+  cf_capex: "Capital expenditure",
+  cf_investing: "= Cash from investing activities",
+  cf_debt_drawn: "Facility drawn",
+  cf_principal_repaid: "Principal repaid",
+  cf_financing: "= Cash from financing activities",
+  cash_closing: "Closing cash",
+  bs_cash: "Cash and cash equivalents",
+  bs_receivables: "Accounts receivable",
+  bs_inventory: "Inventory",
+  bs_total_current_assets: "Total current assets",
+  bs_net_fixed_assets: "Net fixed assets",
+  bs_total_assets: "Total assets",
+  bs_payables: "Accounts payable",
+  bs_debt_current: "Current portion of long-term debt",
+  bs_total_current_liabilities: "Total current liabilities",
+  bs_debt_longterm: "Long-term debt",
+  bs_total_liabilities: "Total liabilities",
+  bs_equity: "Total equity",
+  bs_total_liabilities_and_equity: "Total liabilities and equity",
 };
 
 type FinRow = { year_offset: number; line_item: string; value: string; scenario: string };
@@ -235,15 +266,6 @@ function sensitivityTable(baseRows: FinRow[], sensitivityRows: FinRow[]): { tabl
   return { table, year };
 }
 
-function cashBridgeTable(rows: FinRow[]): Table | null {
-  if (rows.length === 0) return null;
-  const byItem = new Map(rows.map((r) => [r.line_item, r.value]));
-  const body = CASH_BRIDGE_ORDER.filter((item) => byItem.has(item)).map(
-    (item) => new TableRow({ children: [tableCell(LINE_ITEM_LABEL[item]!), tableCell(fmtFinancial(item, byItem.get(item)))] }),
-  );
-  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: body });
-}
-
 function assumptionsTable(rows: { label: string; value: string; basis: string }[]): Table | null {
   if (rows.length === 0) return null;
 
@@ -289,14 +311,18 @@ export async function buildPlanDocx(opts: {
     children.push(heading(s.title_en, HeadingLevel.HEADING_1), ...paragraphs(s.content));
   }
 
-  const baseRows = opts.financials.filter((r) => r.scenario === "base" && !CASH_BRIDGE_ORDER.includes(r.line_item as any));
+  // Positive inclusion per exhibit, not "everything else" — four disjoint
+  // line-item vocabularies now share this table, and an exclusion filter
+  // would silently leak one exhibit's rows into another.
+  const baseRows = opts.financials.filter((r) => r.scenario === "base" && (LINE_ITEM_ORDER as readonly string[]).includes(r.line_item));
   const sensitivityRows = opts.financials.filter((r) => r.scenario === "bull" || r.scenario === "bear");
-  const bridgeRows = opts.financials.filter((r) => r.scenario === "base" && CASH_BRIDGE_ORDER.includes(r.line_item as any));
+  const cashFlowRows = opts.financials.filter((r) => r.scenario === "base" && (CASH_FLOW_ORDER as readonly string[]).includes(r.line_item));
+  const balanceSheetRows = opts.financials.filter((r) => r.scenario === "base" && (BALANCE_SHEET_ORDER as readonly string[]).includes(r.line_item));
 
   const finTable = yearsByItemTable(baseRows, LINE_ITEM_ORDER);
   if (finTable) {
     children.push(
-      heading("Financial projections", HeadingLevel.HEADING_1),
+      heading("Income statement", HeadingLevel.HEADING_1),
       finTable,
       new Paragraph({ text: "", spacing: { after: 200 } }),
     );
@@ -311,11 +337,20 @@ export async function buildPlanDocx(opts: {
     );
   }
 
-  const bridge = cashBridgeTable(bridgeRows);
-  if (bridge) {
+  const cashFlowTable = yearsByItemTable(cashFlowRows, CASH_FLOW_ORDER);
+  if (cashFlowTable) {
     children.push(
-      heading("Cash-flow bridge (year 1)", HeadingLevel.HEADING_1),
-      bridge,
+      heading("Cash flow statement", HeadingLevel.HEADING_1),
+      cashFlowTable,
+      new Paragraph({ text: "", spacing: { after: 200 } }),
+    );
+  }
+
+  const balanceSheetTable = yearsByItemTable(balanceSheetRows, BALANCE_SHEET_ORDER);
+  if (balanceSheetTable) {
+    children.push(
+      heading("Balance sheet (Statement of Financial Position)", HeadingLevel.HEADING_1),
+      balanceSheetTable,
       new Paragraph({ text: "", spacing: { after: 200 } }),
     );
   }

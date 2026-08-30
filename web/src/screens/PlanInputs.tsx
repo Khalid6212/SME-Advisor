@@ -8,7 +8,7 @@ function fmtSar(n: number | null): string {
 const EMPTY: PlanInputsData = {
   revenue_growth_pct: null,
   growth_basis: null,
-  projection_years: 3,
+  projection_years: 5,
   management_assessment: null,
   positioning_notes: null,
   risk_mitigants: null,
@@ -152,7 +152,7 @@ export function PlanInputs({ clientId }: { clientId: string }) {
             <input
               type="number" min={1} max={10} style={{ width: "100%", marginTop: 4 }}
               value={data.projection_years}
-              onChange={(e) => set("projection_years", Math.max(1, Math.min(10, Number(e.target.value) || 3)))}
+              onChange={(e) => set("projection_years", Math.max(1, Math.min(10, Number(e.target.value) || 5)))}
             />
           </div>
         </div>

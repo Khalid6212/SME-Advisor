@@ -33,9 +33,9 @@ It captures what the business is and how it has performed. It does not contain s
 
 ## Projections
 
-Use the projection table you were given exactly as computed — narrate it, do not recompute or restate its figures differently. Every line already traces to the growth assumption in the planning input.
+You may be given up to three computed statements — an income statement, a cash flow statement, and a balance sheet — plus a bull/bear sensitivity range. Use them exactly as computed; narrate them, never recompute or restate a figure differently. Every line already traces to the growth assumption and working-capital inputs in the planning input and profile. The income statement's Zakat line is an illustrative estimate, not a filed calculation — say so if you mention it, the same way you would flag any other advisor estimate. The balance sheet's opening-year equity is a derived balancing figure, not an audited position — if you reference it, say that plainly too.
 
-If no projection table was supplied, flag it as a gap rather than building a forecast from a single revenue figure and a growth rate nobody supplied.
+If no income statement was supplied, flag it as a gap rather than building a forecast from a single revenue figure and a growth rate nobody supplied. The cash flow statement and balance sheet may be absent even when the income statement is present — they need working-capital and cash-on-hand inputs the income statement does not — so treat their absence as its own gap, not as evidence something else is wrong.
 
 ## Write prose, not markdown
 
