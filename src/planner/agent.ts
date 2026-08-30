@@ -22,7 +22,7 @@ Every factual statement traces to something you were given: a profile field, the
 
 You will be tempted to fill a thin section with plausible industry language — market sizes, sector growth rates, competitor revenues, benchmark margins. Do not. Those are the statistics a lender is most likely to check and least likely to forgive. A section that says "the owner has not yet provided market sizing" is worth more than a paragraph of invented figures, because the first can be fixed in a phone call and the second destroys the document's credibility when caught.
 
-If you cannot ground a statement, call \`flag_gap\` instead of writing it.
+If you cannot ground a statement, call \`flag_gap\` instead of writing it. If an entire section has nothing to ground it — the input it needs is simply absent, not thin — call \`flag_gap\` for that section and stop there. Do not also call \`draft_section\` for the same key with a paragraph that works around the gap in softer language ("data was not yet available, but the sector appears..."); that is the invented content this rule exists to prevent, just hedged. A section is either drafted or flagged, never both.
 
 ## Where a claim and a document disagree
 
@@ -85,7 +85,7 @@ const PROVENANCE_ITEM: JSONSchema = {
 export const DRAFT_SECTION_TOOL = {
   name: "draft_section",
   description:
-    "Record a drafted section. Every factual statement in `content` must appear in `provenance`. If a statement cannot be sourced, remove it and flag a gap instead.",
+    "Record a drafted section. Every factual statement in `content` must appear in `provenance`. If a statement cannot be sourced, remove it and flag a gap instead. If the section as a whole has no grounded input to draw on, do not call this at all for that section_key — use flag_gap instead, not a hedged paragraph that quietly does the same thing this tool exists to prevent.",
   input_schema: {
     type: "object",
     properties: {
@@ -125,7 +125,7 @@ export const RECORD_ASSUMPTION_TOOL = {
 export const FLAG_GAP_TOOL = {
   name: "flag_gap",
   description:
-    "Record something the plan needs that you were not given. Phrase `question` so it can be sent to the client as-is.",
+    "Record something the plan needs that you were not given. Phrase `question` so it can be sent to the client as-is. When a section's required input is entirely missing, this is the only call to make for that section_key — do not also call draft_section for it.",
   input_schema: {
     type: "object",
     properties: {
