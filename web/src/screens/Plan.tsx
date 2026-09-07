@@ -220,6 +220,7 @@ export function Plan({ clientId }: { clientId: string }) {
   const [chosenOption, setChosenOption] = useState<string | null>(null);
   const [decisionRationale, setDecisionRationale] = useState("");
   const [expandedPhase, setExpandedPhase] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"gaps" | "phases" | "financials" | "assumptions">("phases");
 
   const loadList = async () => setPlans(await api.get(`/clients/${clientId}/plans`));
   const loadOutstanding = async () =>
@@ -371,6 +372,7 @@ export function Plan({ clientId }: { clientId: string }) {
   );
   const phases = view?.phases ?? [];
   const allPhasesApproved = phases.length > 0 && phases.every((p) => p.status === "approved");
+  const approvedPhaseCount = phases.filter((p) => p.status === "approved").length;
   const isPhaseUnlocked = (phase: PlanPhase) =>
     phase.position === 1 || phases.find((p) => p.position === phase.position - 1)?.status === "approved";
 
@@ -475,44 +477,67 @@ export function Plan({ clientId }: { clientId: string }) {
             </div>
           )}
 
-          {view.gaps.length > 0 && (
-            <>
-              <div className="row">
-                <h2 style={{ flex: 1 }}>Gaps ({view.gaps.length})</h2>
+          <div className="row" role="tablist" style={{ gap: 6, margin: "26px 0 16px", flexWrap: "wrap" }}>
+            {(
+              [
+                ["gaps", `Gaps${view.gaps.length > 0 ? ` (${view.gaps.length})` : ""}`],
+                ["phases", `Phases (${approvedPhaseCount}/${phases.length})`],
+                ["financials", "Financials"],
+                ["assumptions", `Assumptions${view.assumptions.length > 0 ? ` (${view.assumptions.length})` : ""}`],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key} role="tab" aria-selected={activeTab === key} onClick={() => setActiveTab(key)}
+                style={activeTab === key ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === "gaps" && (
+            view.gaps.length === 0 ? (
+              <div className="card muted">No open gaps — every section either has what it needs or hasn't been drafted yet.</div>
+            ) : (
+              <>
                 {selectedGaps.size > 0 && (
-                  <button className="primary" onClick={sendGapRequests} disabled={busy === "gaps"}>
-                    {busy === "gaps"
-                      ? "Sending…"
-                      : `Send ${selectedGaps.size} question${selectedGaps.size === 1 ? "" : "s"} in one email`}
-                  </button>
-                )}
-              </div>
-              {view.gaps.map((g) => (
-                <div key={g.id} className="card">
-                  <div className="row">
-                    {!g.request_id && (
-                      <input
-                        type="checkbox" style={{ width: 16 }}
-                        checked={selectedGaps.has(g.id)}
-                        onChange={() => toggleGap(g.id)}
-                      />
-                    )}
-                    <span className={`pill ${g.blocking ? "bad" : "grey"}`}>
-                      {g.blocking ? "blocking" : "optional"}
-                    </span>
-                    <span className="muted" style={{ fontSize: 12 }}>{g.section_key}</span>
+                  <div className="row" style={{ marginBottom: 12 }}>
                     <div style={{ flex: 1 }} />
-                    {g.request_id && <span className="pill info">requested</span>}
+                    <button className="primary" onClick={sendGapRequests} disabled={busy === "gaps"}>
+                      {busy === "gaps"
+                        ? "Sending…"
+                        : `Send ${selectedGaps.size} question${selectedGaps.size === 1 ? "" : "s"} in one email`}
+                    </button>
                   </div>
-                  <p style={{ margin: "8px 0 4px" }}>{g.question}</p>
-                  <p className="muted" style={{ fontSize: 12, margin: 0 }}>{g.why_it_matters}</p>
-                </div>
-              ))}
-            </>
+                )}
+                {view.gaps.map((g) => (
+                  <div key={g.id} className="card">
+                    <div className="row">
+                      {!g.request_id && (
+                        <input
+                          type="checkbox" style={{ width: 16 }}
+                          checked={selectedGaps.has(g.id)}
+                          onChange={() => toggleGap(g.id)}
+                        />
+                      )}
+                      <span className={`pill ${g.blocking ? "bad" : "grey"}`}>
+                        {g.blocking ? "blocking" : "optional"}
+                      </span>
+                      <span className="muted" style={{ fontSize: 12 }}>{g.section_key}</span>
+                      <div style={{ flex: 1 }} />
+                      {g.request_id && <span className="pill info">requested</span>}
+                    </div>
+                    <p style={{ margin: "8px 0 4px" }}>{g.question}</p>
+                    <p className="muted" style={{ fontSize: 12, margin: 0 }}>{g.why_it_matters}</p>
+                  </div>
+                ))}
+              </>
+            )
           )}
 
-          <h2>Phases</h2>
-          <p className="section-sub" style={{ marginTop: -6 }}>
+          {activeTab === "phases" && (
+          <>
+          <p className="section-sub" style={{ marginTop: 0 }}>
             Click a phase to open it. Collapsed phases show status only, so the whole plan's progress
             fits on one screen.
           </p>
@@ -711,12 +736,21 @@ export function Plan({ clientId }: { clientId: string }) {
             );
           })}
           </div>
+          </>
+          )}
 
-          <FinancialsExhibits rows={view.financials} />
+          {activeTab === "financials" && (
+            view.financials.length === 0 ? (
+              <div className="card muted">No financial statements computed yet — these appear once the financial phase is drafted.</div>
+            ) : (
+              <FinancialsExhibits rows={view.financials} />
+            )
+          )}
 
-          {view.assumptions.length > 0 && (
-            <>
-              <h2>Assumptions</h2>
+          {activeTab === "assumptions" && (
+            view.assumptions.length === 0 ? (
+              <div className="card muted">No forward-looking assumptions recorded yet.</div>
+            ) : (
               <div className="card">
                 {view.assumptions.map((a, i) => (
                   <div key={i} className="row" style={{ borderTop: i ? "1px solid var(--line)" : undefined, padding: "8px 0" }}>
@@ -726,7 +760,7 @@ export function Plan({ clientId }: { clientId: string }) {
                   </div>
                 ))}
               </div>
-            </>
+            )
           )}
         </>
       )}
