@@ -8,7 +8,7 @@ interface Template {
 }
 interface Section {
   id: string; key: string; title_en: string; content: string;
-  provenance: { statement: string; source: string; ref: string }[];
+  provenance: { statement: string; source: string; ref: string; confidence_tier: string }[];
   confidence: string | null; status: string; audiences: string[];
 }
 interface Gap {
@@ -35,6 +35,12 @@ const PHASE_STATUS_LABEL: Record<string, string> = {
 
 const CONFIDENCE: Record<string, string> = {
   well_supported: "good", thin: "warn", blocked: "bad",
+};
+
+/** Per-statement, five-tier — a finer read on the same idea as CONFIDENCE
+ *  above, which is a whole-section self-rating. See src/planner/confidence.ts. */
+const TIER_PILL: Record<string, string> = {
+  measured: "good", audited: "good", stated: "info", estimated: "warn", unverified: "bad",
 };
 
 const AUDIENCE_LABEL: Record<string, string> = {
@@ -416,6 +422,7 @@ export function Plan({ clientId }: { clientId: string }) {
               <div className="row" style={{ marginTop: 10, gap: 16 }}>
                 <a href={`${API_BASE}/plans/${view.plan.id}/export?audience=${audience}`}>Export as Markdown</a>
                 <a href={`${API_BASE}/plans/${view.plan.id}/export.docx?audience=${audience}`}>Export as Word</a>
+                <a href={`${API_BASE}/plans/${view.plan.id}/export.xlsx`}>Export financials as Excel</a>
               </div>
             )}
           </div>
@@ -593,6 +600,7 @@ export function Plan({ clientId }: { clientId: string }) {
                         </summary>
                         {s.provenance.map((p, i) => (
                           <div key={i} className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                            <span className={`pill ${TIER_PILL[p.confidence_tier] ?? "grey"}`}>{p.confidence_tier}</span>{" "}
                             <span className="pill grey">{p.source}</span> {p.statement}
                             <span className="dim"> — {p.ref}</span>
                           </div>

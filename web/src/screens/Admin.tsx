@@ -1,8 +1,88 @@
 import { useEffect, useState } from "react";
-import { api, type AccountRow } from "../api";
+import { api, type AccountRow, type AgentUsageResponse } from "../api";
 import { ResetPasswordButton } from "../components/ResetPasswordButton";
 
 const ROLE_PILL: Record<string, string> = { admin: "info", manager: "good", client: "grey" };
+
+const AGENT_LABELS: Record<string, string> = {
+  "phase.company_market": "Company & market",
+  "phase.strategy": "Strategy",
+  "phase.operations": "Operations",
+  "phase.financial": "Financial plan",
+  "phase.investment_case": "Investment case",
+  "phase.summary": "Executive summary",
+  planner: "Planner (legacy)",
+  interview: "Interview",
+  extract: "Document extraction",
+  reconcile: "Reconciliation",
+  distiller: "House-rule distiller",
+  research: "Market research",
+};
+
+function agentLabel(agent: string): string {
+  return AGENT_LABELS[agent] ?? agent;
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+/**
+ * A read-only view over agent.usage audit events every agent already logs
+ * (see audit() calls in api/src/agents/*.ts) — no new instrumentation, just
+ * a rollup. $ figures are estimates from list pricing, not a billing feed.
+ */
+function AgentUsagePanel() {
+  const [usage, setUsage] = useState<AgentUsageResponse | null>(null);
+
+  useEffect(() => { void api.get<AgentUsageResponse>("/admin/agent-usage").then(setUsage); }, []);
+
+  if (!usage) return <p className="muted">Loading…</p>;
+  if (usage.usage.length === 0) return <div className="card muted">No agent activity logged yet.</div>;
+
+  return (
+    <div className="card" style={{ padding: 4, marginTop: 16 }}>
+      <div style={{ padding: "10px 14px 0" }}>
+        <div className="row">
+          <div style={{ fontWeight: 600, flex: 1 }}>Agent usage</div>
+          <span className="muted" style={{ fontSize: 12 }}>
+            Estimated from list pricing, not a billing feed
+          </span>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Agent</th><th>Model</th><th>Calls</th><th>Input</th><th>Output</th>
+            <th>Cache read</th><th>Cache write</th><th>Est. cost</th><th>Last call</th>
+          </tr>
+        </thead>
+        <tbody>
+          {usage.usage.map((u) => (
+            <tr key={`${u.agent}:${u.model}`}>
+              <td>{agentLabel(u.agent)}</td>
+              <td className="muted">{u.model}</td>
+              <td>{u.calls}</td>
+              <td>{fmtTokens(u.input_tokens)}</td>
+              <td>{fmtTokens(u.output_tokens)}</td>
+              <td className="muted">{fmtTokens(u.cache_read_tokens)}</td>
+              <td className="muted">{fmtTokens(u.cache_write_tokens)}</td>
+              <td>{u.estimated_cost_usd !== null ? `$${u.estimated_cost_usd.toFixed(2)}` : "—"}</td>
+              <td className="muted">{new Date(u.last_call).toLocaleDateString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="row" style={{ padding: "10px 14px", justifyContent: "flex-end" }}>
+        <strong>
+          Total: {usage.total_estimated_cost_usd !== null ? `$${usage.total_estimated_cost_usd.toFixed(2)}` : "—"}
+        </strong>
+      </div>
+    </div>
+  );
+}
 
 export function Admin({ currentUserId }: { currentUserId: string }) {
   const [rows, setRows] = useState<AccountRow[] | null>(null);
@@ -104,6 +184,8 @@ export function Admin({ currentUserId }: { currentUserId: string }) {
           </table>
         </div>
       )}
+
+      <AgentUsagePanel />
     </div>
   );
 }

@@ -276,3 +276,21 @@ export interface Fact {
   quote: string;
   source_document_id: string;
 }
+
+export interface AgentUsageRow {
+  agent: string;
+  model: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  estimated_cost_usd: number | null;
+  first_call: string;
+  last_call: string;
+}
+
+export interface AgentUsageResponse {
+  usage: AgentUsageRow[];
+  total_estimated_cost_usd: number | null;
+}

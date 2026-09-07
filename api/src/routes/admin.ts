@@ -133,4 +133,90 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
     return { reset: true };
   });
+
+  /**
+   * Rolls up agent.usage audit events — already logged on every interview,
+   * extraction, planning, reconciliation, and distiller call (see audit()
+   * calls in api/src/agents/*.ts) — into per-agent, per-model cost. Nothing
+   * new to instrument; this is a read-side view over data that already
+   * exists. $ figures are estimates from list pricing, not billing —
+   * flagged as such rather than presented as exact, same honesty standard
+   * as every other advisor estimate in this app.
+   */
+  app.get("/admin/agent-usage", async (req, reply) => {
+    const user = requireAdmin(req, reply);
+    if (!user) return;
+
+    const rows = await query<{
+      agent: string; model: string; calls: string;
+      input_tokens: string; output_tokens: string;
+      cache_read_tokens: string; cache_write_tokens: string;
+      first_call: string; last_call: string;
+    }>(
+      `SELECT
+         payload->>'agent' AS agent,
+         payload->>'model' AS model,
+         count(*)::text AS calls,
+         sum(coalesce((payload->>'input')::numeric, 0))::text AS input_tokens,
+         sum(coalesce((payload->>'output')::numeric, 0))::text AS output_tokens,
+         sum(coalesce((payload->>'cacheRead')::numeric, 0))::text AS cache_read_tokens,
+         sum(coalesce((payload->>'cacheWrite')::numeric, 0))::text AS cache_write_tokens,
+         min(created_at)::text AS first_call,
+         max(created_at)::text AS last_call
+       FROM audit_events
+       WHERE action = 'agent.usage'
+       GROUP BY payload->>'agent', payload->>'model'
+       ORDER BY agent`,
+    );
+
+    const usage = rows.map((r) => {
+      const input = Number(r.input_tokens);
+      const output = Number(r.output_tokens);
+      const cacheRead = Number(r.cache_read_tokens);
+      const cacheWrite = Number(r.cache_write_tokens);
+      const pricing = MODEL_PRICING[r.model];
+      const estimatedCostUsd = pricing
+        ? Math.round(
+            ((input * pricing.input +
+              output * pricing.output +
+              cacheWrite * pricing.input * CACHE_WRITE_MULTIPLIER +
+              cacheRead * pricing.input * CACHE_READ_MULTIPLIER) /
+              1_000_000) *
+              100,
+          ) / 100
+        : null;
+
+      return {
+        agent: r.agent,
+        model: r.model,
+        calls: Number(r.calls),
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_tokens: cacheRead,
+        cache_write_tokens: cacheWrite,
+        estimated_cost_usd: estimatedCostUsd,
+        first_call: r.first_call,
+        last_call: r.last_call,
+      };
+    });
+
+    const totalCostUsd = usage.some((u) => u.estimated_cost_usd !== null)
+      ? Math.round(usage.reduce((sum, u) => sum + (u.estimated_cost_usd ?? 0), 0) * 100) / 100
+      : null;
+
+    return { usage, total_estimated_cost_usd: totalCostUsd };
+  });
 }
+
+/** List pricing, $ per 1M tokens, as of this writing — not billing, and not
+ *  auto-updated. A model missing here reports token counts with a null cost
+ *  rather than a silently wrong number. */
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  "claude-opus-5": { input: 5, output: 25 },
+  "claude-sonnet-5": { input: 3, output: 15 },
+  "claude-haiku-4-5-20251001": { input: 1, output: 5 },
+};
+
+/** Standard Anthropic cache multipliers on the base input price. */
+const CACHE_WRITE_MULTIPLIER = 1.25;
+const CACHE_READ_MULTIPLIER = 0.1;

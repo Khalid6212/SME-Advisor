@@ -13,9 +13,11 @@ import { z } from "zod";
 import { requireManager } from "../auth.ts";
 import { audit, one, query } from "../db.ts";
 import { buildPlanDocx, firmIdentity } from "../docx.ts";
+import { buildFinancialsXlsx } from "../xlsx.ts";
 import { informationRequestMail, sendMail } from "../mailer.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
-import { type Audience, sectionsForAudience } from "../../../src/planner/types.ts";
+import { type Audience, type Provenance, sectionsForAudience } from "../../../src/planner/types.ts";
+import { type ClaimLookup, buildClaimLookup, confidenceTier } from "../../../src/planner/confidence.ts";
 import { PLAN_PHASES, phaseForSection } from "../../../src/planner/phases.ts";
 import { editDistance } from "../../../src/learning/types.ts";
 import { approvePhase, createPlan, draftPhase, TEMPLATES } from "../agents/planner.ts";
@@ -261,8 +263,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     );
     if (!plan) return reply.code(404).send({ error: "not_found" });
 
-    const [sectionRows, assumptions, gaps, financials, phaseRows] = await Promise.all([
-      query<{ key: string; [k: string]: unknown }>(
+    const [sectionRows, assumptions, gaps, financials, phaseRows, claimRows] = await Promise.all([
+      query<{ key: string; provenance: Provenance[]; [k: string]: unknown }>(
         `SELECT id, key, position, title_en, title_ar, content, provenance,
                 confidence, status, updated_at
            FROM plan_sections WHERE plan_id = $1 ORDER BY position`, [planId]),
@@ -274,13 +276,20 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       query<{ phase_key: string; position: number; status: string; rating: number | null; rating_note: string | null }>(
         `SELECT phase_key, position, status, rating, rating_note
            FROM plan_phases WHERE plan_id = $1 ORDER BY position`, [planId]),
+      query<ClaimLookup>(
+        `SELECT claim_key, field_path, verification_status FROM claims
+          WHERE profile_id = $1 AND invalidated_at IS NULL`, [plan.profile_id]),
     ]);
 
     // Audience is a template-level fact, not stored per row — attached here
     // so the UI can preview a purpose-specific view without duplicating the
-    // template's section list client-side.
+    // template's section list client-side. Each provenance item also gets a
+    // derived confidence_tier (see confidence.ts) — a read-time mapping over
+    // data already collected, not anything newly stored per statement.
+    const claimLookup = buildClaimLookup(claimRows);
     const sections = sectionRows.map((s) => ({
       ...s,
+      provenance: (s.provenance ?? []).map((p) => ({ ...p, confidence_tier: confidenceTier(p, claimLookup) })),
       audiences: businessPlanTemplate.sections.find((spec) => spec.key === s.key)?.audiences ?? [],
     }));
 
@@ -664,6 +673,40 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     reply.header(
       "content-disposition",
       `attachment; filename="${plan.client_name.replace(/[^\w.-]+/g, "_")}-${audience}-plan.docx"`,
+    );
+    return reply.send(buffer);
+  });
+
+  /** The computed statements as a native workbook — not audience-filtered,
+   *  since the financials are the same regardless of who reads the prose
+   *  around them. */
+  app.get("/plans/:planId/export.xlsx", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { planId } = req.params as { planId: string };
+
+    const plan = await one<{ client_name: string; status: string }>(
+      `SELECT c.name AS client_name, p.status
+         FROM plans p JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
+      [planId],
+    );
+    if (!plan) return reply.code(404).send({ error: "not_found" });
+    if (plan.status !== "delivered") return reply.code(409).send({ error: "not_approved" });
+
+    const financials = await query<{ year_offset: number; line_item: string; value: string; scenario: string }>(
+      `SELECT year_offset, line_item, value, scenario FROM plan_financials
+        WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`,
+      [planId],
+    );
+
+    const buffer = await buildFinancialsXlsx(financials);
+
+    await audit("plan.exported", { actorUserId: user.id, payload: { plan_id: planId, format: "xlsx" } });
+
+    reply.header("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${plan.client_name.replace(/[^\w.-]+/g, "_")}-financials.xlsx"`,
     );
     return reply.send(buffer);
   });

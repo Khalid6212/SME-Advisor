@@ -30,6 +30,15 @@ export interface Provenance {
   ref: string;
 }
 
+/**
+ * Five tiers, mirroring the external evidence-pipeline brief's own
+ * vocabulary — derived from data this app already collects at two coarser
+ * granularities (claims.verification_status/materiality, provenance.source)
+ * rather than anything newly gathered. See confidence.ts for the mapping.
+ */
+export const CONFIDENCE_TIER = ["measured", "audited", "stated", "estimated", "unverified"] as const;
+export type ConfidenceTier = (typeof CONFIDENCE_TIER)[number];
+
 export interface PlanGap {
   section_key: string;
   /** What is missing, phrased as a question the client could answer. */
