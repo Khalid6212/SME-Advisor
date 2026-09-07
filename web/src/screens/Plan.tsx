@@ -14,6 +14,7 @@ interface Section {
 interface Gap {
   id: string; section_key: string; question: string;
   why_it_matters: string; blocking: boolean; request_id: string | null;
+  resolved_at: string | null; manager_response: string | null; resolved_by_email: string | null;
 }
 interface PlanView {
   plan: {
@@ -214,6 +215,7 @@ export function Plan({ clientId }: { clientId: string }) {
   const [showInputs, setShowInputs] = useState(false);
   const [outstanding, setOutstanding] = useState<{ count: number; items: { title_en: string }[] } | null>(null);
   const [selectedGaps, setSelectedGaps] = useState<Set<string>>(new Set());
+  const [gapResponseDrafts, setGapResponseDrafts] = useState<Record<string, string>>({});
   const [approvingPhase, setApprovingPhase] = useState<string | null>(null);
   const [phaseRating, setPhaseRating] = useState<number | null>(null);
   const [phaseRatingNote, setPhaseRatingNote] = useState("");
@@ -355,6 +357,24 @@ export function Plan({ clientId }: { clientId: string }) {
     setBusy(null);
   };
 
+  const resolveGap = async (gapId: string) => {
+    const response = (gapResponseDrafts[gapId] ?? "").trim();
+    if (!response) return;
+    setBusy(`gap-${gapId}`);
+    try {
+      await api.patch(`/plan-gaps/${gapId}`, { manager_response: response });
+      setGapResponseDrafts((prev) => {
+        const next = { ...prev };
+        delete next[gapId];
+        return next;
+      });
+      if (view) await openPlan(view.plan.id);
+    } catch {
+      setError("Couldn't save that response — try again.");
+    }
+    setBusy(null);
+  };
+
   const remindOutstanding = async () => {
     setBusy("remind");
     try {
@@ -373,6 +393,7 @@ export function Plan({ clientId }: { clientId: string }) {
   const phases = view?.phases ?? [];
   const allPhasesApproved = phases.length > 0 && phases.every((p) => p.status === "approved");
   const approvedPhaseCount = phases.filter((p) => p.status === "approved").length;
+  const openGapsCount = (view?.gaps ?? []).filter((g) => !g.resolved_at).length;
   const isPhaseUnlocked = (phase: PlanPhase) =>
     phase.position === 1 || phases.find((p) => p.position === phase.position - 1)?.status === "approved";
 
@@ -480,7 +501,7 @@ export function Plan({ clientId }: { clientId: string }) {
           <div className="row" role="tablist" style={{ gap: 6, margin: "26px 0 16px", flexWrap: "wrap" }}>
             {(
               [
-                ["gaps", `Gaps${view.gaps.length > 0 ? ` (${view.gaps.length})` : ""}`],
+                ["gaps", `Gaps${openGapsCount > 0 ? ` (${openGapsCount})` : ""}`],
                 ["phases", `Phases (${approvedPhaseCount}/${phases.length})`],
                 ["financials", "Financials"],
                 ["assumptions", `Assumptions${view.assumptions.length > 0 ? ` (${view.assumptions.length})` : ""}`],
@@ -495,45 +516,88 @@ export function Plan({ clientId }: { clientId: string }) {
             ))}
           </div>
 
-          {activeTab === "gaps" && (
-            view.gaps.length === 0 ? (
-              <div className="card muted">No open gaps — every section either has what it needs or hasn't been drafted yet.</div>
-            ) : (
+          {activeTab === "gaps" && (() => {
+            const openGaps = view.gaps.filter((g) => !g.resolved_at);
+            const resolvedGaps = view.gaps.filter((g) => g.resolved_at);
+            return (
               <>
-                {selectedGaps.size > 0 && (
-                  <div className="row" style={{ marginBottom: 12 }}>
-                    <div style={{ flex: 1 }} />
-                    <button className="primary" onClick={sendGapRequests} disabled={busy === "gaps"}>
-                      {busy === "gaps"
-                        ? "Sending…"
-                        : `Send ${selectedGaps.size} question${selectedGaps.size === 1 ? "" : "s"} in one email`}
-                    </button>
-                  </div>
+                {openGaps.length === 0 ? (
+                  <div className="card muted">No open gaps — every section either has what it needs or hasn't been drafted yet.</div>
+                ) : (
+                  <>
+                    {selectedGaps.size > 0 && (
+                      <div className="row" style={{ marginBottom: 12 }}>
+                        <div style={{ flex: 1 }} />
+                        <button className="primary" onClick={sendGapRequests} disabled={busy === "gaps"}>
+                          {busy === "gaps"
+                            ? "Sending…"
+                            : `Send ${selectedGaps.size} question${selectedGaps.size === 1 ? "" : "s"} in one email`}
+                        </button>
+                      </div>
+                    )}
+                    {openGaps.map((g) => (
+                      <div key={g.id} className="card">
+                        <div className="row">
+                          {!g.request_id && (
+                            <input
+                              type="checkbox" style={{ width: 16 }}
+                              checked={selectedGaps.has(g.id)}
+                              onChange={() => toggleGap(g.id)}
+                            />
+                          )}
+                          <span className={`pill ${g.blocking ? "bad" : "grey"}`}>
+                            {g.blocking ? "blocking" : "optional"}
+                          </span>
+                          <span className="muted" style={{ fontSize: 12 }}>{g.section_key}</span>
+                          <div style={{ flex: 1 }} />
+                          {g.request_id && <span className="pill info">requested</span>}
+                        </div>
+                        <p style={{ margin: "8px 0 4px" }}>{g.question}</p>
+                        <p className="muted" style={{ fontSize: 12, margin: "0 0 10px" }}>{g.why_it_matters}</p>
+
+                        <div className="stack" style={{ gap: 8, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                          <input
+                            value={gapResponseDrafts[g.id] ?? ""}
+                            onChange={(e) => setGapResponseDrafts((prev) => ({ ...prev, [g.id]: e.target.value }))}
+                            placeholder="Answer this directly — a call with the client, something you already know"
+                          />
+                          <div className="row">
+                            <button
+                              className="primary" onClick={() => resolveGap(g.id)}
+                              disabled={busy === `gap-${g.id}` || !(gapResponseDrafts[g.id] ?? "").trim()}
+                            >
+                              {busy === `gap-${g.id}` ? "Saving…" : "Save response"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </>
                 )}
-                {view.gaps.map((g) => (
-                  <div key={g.id} className="card">
-                    <div className="row">
-                      {!g.request_id && (
-                        <input
-                          type="checkbox" style={{ width: 16 }}
-                          checked={selectedGaps.has(g.id)}
-                          onChange={() => toggleGap(g.id)}
-                        />
-                      )}
-                      <span className={`pill ${g.blocking ? "bad" : "grey"}`}>
-                        {g.blocking ? "blocking" : "optional"}
-                      </span>
-                      <span className="muted" style={{ fontSize: 12 }}>{g.section_key}</span>
-                      <div style={{ flex: 1 }} />
-                      {g.request_id && <span className="pill info">requested</span>}
-                    </div>
-                    <p style={{ margin: "8px 0 4px" }}>{g.question}</p>
-                    <p className="muted" style={{ fontSize: 12, margin: 0 }}>{g.why_it_matters}</p>
-                  </div>
-                ))}
+
+                {resolvedGaps.length > 0 && (
+                  <details style={{ marginTop: 16 }}>
+                    <summary className="muted" style={{ cursor: "pointer" }}>
+                      {resolvedGaps.length} resolved
+                    </summary>
+                    {resolvedGaps.map((g) => (
+                      <div key={g.id} className="card" style={{ marginTop: 10, opacity: 0.75 }}>
+                        <div className="row">
+                          <span className="pill grey">{g.section_key}</span>
+                          <div style={{ flex: 1 }} />
+                          {g.resolved_by_email && <span className="muted" style={{ fontSize: 12 }}>by {g.resolved_by_email}</span>}
+                        </div>
+                        <p style={{ margin: "8px 0 4px" }}>{g.question}</p>
+                        {g.manager_response && (
+                          <p className="muted" style={{ fontSize: 13, margin: 0, fontStyle: "italic" }}>"{g.manager_response}"</p>
+                        )}
+                      </div>
+                    ))}
+                  </details>
+                )}
               </>
-            )
-          )}
+            );
+          })()}
 
           {activeTab === "phases" && (
           <>

@@ -47,6 +47,10 @@ const requestBatchSchema = z.object({
   message: z.string().trim().max(2000).optional(),
 });
 
+const resolveGapSchema = z.object({
+  manager_response: z.string().trim().min(1).max(2000),
+});
+
 const approvePhaseSchema = z.object({
   rating: z.number().int().min(1).max(5).nullable().optional(),
   rating_note: z.string().trim().max(2000).nullable().optional(),
@@ -274,8 +278,11 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
                 confidence, status, updated_at
            FROM plan_sections WHERE plan_id = $1 ORDER BY position`, [planId]),
       query(`SELECT label, value, basis, source FROM plan_assumptions WHERE plan_id = $1`, [planId]),
-      query(`SELECT id, section_key, question, why_it_matters, blocking, request_id, resolved_at
-               FROM plan_gaps WHERE plan_id = $1 ORDER BY blocking DESC`, [planId]),
+      query(`SELECT g.id, g.section_key, g.question, g.why_it_matters, g.blocking, g.request_id,
+                    g.resolved_at, g.manager_response, u.email AS resolved_by_email
+               FROM plan_gaps g LEFT JOIN users u ON u.id = g.resolved_by
+              WHERE g.plan_id = $1
+              ORDER BY (g.resolved_at IS NULL) DESC, g.blocking DESC`, [planId]),
       query(`SELECT year_offset, line_item, value, basis, scenario FROM plan_financials
               WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`, [planId]),
       query<{
@@ -579,6 +586,40 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return { requested: created.length, request_ids: created.map((c) => c.request_id) };
+  });
+
+  /**
+   * Answers a gap directly — an advisor or admin who already has the
+   * answer (a phone call, something they knew already) records it without
+   * going through the client-request flow above. Independent of that flow:
+   * a gap already sent as a request can still be resolved this way if the
+   * answer arrives some other way first, and resolving it here doesn't
+   * retract a request already sent.
+   */
+  app.patch("/plan-gaps/:gapId", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { gapId } = req.params as { gapId: string };
+
+    const parsed = resolveGapSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+
+    const gap = await one<{ id: string; plan_id: string; client_id: string }>(
+      `UPDATE plan_gaps g
+          SET manager_response = $2, resolved_at = now(), resolved_by = $3
+        WHERE g.id = $1
+        RETURNING g.id, g.plan_id, (SELECT client_id FROM plans WHERE id = g.plan_id) AS client_id`,
+      [gapId, parsed.data.manager_response, user.id],
+    );
+    if (!gap) return reply.code(404).send({ error: "not_found" });
+
+    await audit("plan_gap.resolved", {
+      actorUserId: user.id,
+      clientId: gap.client_id,
+      payload: { gap_id: gapId, plan_id: gap.plan_id },
+    });
+
+    return { ok: true };
   });
 
   // ─── export, gated on approval ───────────────────────────────────────────
