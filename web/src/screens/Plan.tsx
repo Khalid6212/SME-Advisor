@@ -90,6 +90,10 @@ const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 function fmtFinancial(item: string, v: string | undefined): string {
   if (v == null) return "—";
   const n = Number(v);
+  // Postgres's numeric type accepts a literal 'NaN' — a bad upstream
+  // computation must never render as that literal text on screen; treated
+  // the same as no value.
+  if (!Number.isFinite(n)) return "—";
   if (item === "dscr") return `${n.toFixed(2)}x`;
   const abs = Math.abs(n).toLocaleString();
   return n < 0 ? `(${abs})` : abs;

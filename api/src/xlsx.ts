@@ -104,7 +104,11 @@ function addStatementSheet(
     const rowValues: Record<string, string | number> = { label: LINE_ITEM_LABEL[item] ?? item };
     for (const y of years) {
       const raw = byKey.get(`${y}:${item}`);
-      if (raw !== undefined) rowValues[`y${y}`] = Number(raw);
+      if (raw === undefined) continue;
+      // See the sensitivity sheet's find() below — Postgres's numeric type
+      // accepts a literal 'NaN', so this must never render as that text.
+      const n = Number(raw);
+      if (Number.isFinite(n)) rowValues[`y${y}`] = n;
     }
     const row = sheet.addRow(rowValues);
     for (const y of years) {
@@ -136,9 +140,15 @@ export async function buildFinancialsXlsx(financials: FinRow[]): Promise<Buffer>
 
   if (sensitivityRows.length > 0) {
     const year = sensitivityRows[0]!.year_offset;
+    // Postgres's numeric type accepts a literal 'NaN', so a bad upstream
+    // computation can end up stored as one — this must never render as the
+    // literal text "NaN" in a document going to a bank. Treated the same as
+    // no value at all, not silently coerced to 0 (which would be its own lie).
     const find = (rows: FinRow[], scenario: string, item: string) => {
       const raw = rows.find((r) => r.scenario === scenario && r.year_offset === year && r.line_item === item)?.value;
-      return raw !== undefined ? Number(raw) : undefined;
+      if (raw === undefined) return undefined;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : undefined;
     };
     const sheet = workbook.addWorksheet("Sensitivity");
     sheet.columns = [

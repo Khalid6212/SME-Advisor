@@ -753,6 +753,10 @@ type FinRow = { year_offset: number; line_item: string; value: string; scenario:
 function fmtFinancial(item: string, v: string | undefined): string {
   if (v == null) return "—";
   const n = Number(v);
+  // Postgres's numeric type accepts a literal 'NaN' — a bad upstream
+  // computation must never render as that literal text in an exported
+  // document; treated the same as no value.
+  if (!Number.isFinite(n)) return "—";
   if (item === "dscr") return `${n.toFixed(2)}x`;
   const abs = Math.abs(n).toLocaleString("en-US");
   return n < 0 ? `(${abs})` : abs;
