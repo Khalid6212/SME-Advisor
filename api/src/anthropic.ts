@@ -20,6 +20,10 @@ export const RESEARCH_MODEL = "claude-sonnet-5";
  *  purpose from research, kept as its own constant so the two can be tuned
  *  independently even though they share a model today. */
 export const EVAL_JUDGE_MODEL = "claude-sonnet-5";
+/** Cross-document and document-vs-claim contradiction spotting — needs real
+ *  reading comprehension a threshold rule can't do (see patterns.ts for the
+ *  deterministic half of this), but not Opus-level generative depth. */
+export const RECONCILE_MODEL = "claude-sonnet-5";
 
 export type ContentBlock = Record<string, any>;
 export type Message = { role: "user" | "assistant"; content: string | ContentBlock[] };

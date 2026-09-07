@@ -252,3 +252,27 @@ export interface AgentPerformance {
   latest_eval_run: { id: string; run_at: string } | null;
   agents: AgentPerformanceRow[];
 }
+
+export interface Finding {
+  id: string;
+  client_id: string;
+  type: "contradiction" | "trend_break" | "concentration" | "anomaly" | "missing_evidence";
+  severity: "critical" | "high" | "medium" | "low";
+  statement: string;
+  detail: string;
+  supporting_fact_ids: string[];
+  raised_by: "reconciliation_agent" | "pattern_engine";
+  status: "open" | "acknowledged" | "resolved" | "dismissed";
+  dismissed_reason: string | null;
+  raised_at: string;
+}
+
+export interface Fact {
+  id: string;
+  key: string;
+  period: string | null;
+  value: string;
+  unit: string | null;
+  quote: string;
+  source_document_id: string;
+}

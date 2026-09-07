@@ -109,6 +109,60 @@ export interface FinancialLine {
   scenario: "base" | "bull" | "bear";
 }
 
+/**
+ * A normalized, keyed observation extracted from a document — `key` is a
+ * dotted, freeform-but-conventioned label ('pl.revenue', 'bs.payable_days',
+ * 'ops.practitioner_count'), reused verbatim across documents/periods for the
+ * same concept so facts can be compared to each other directly. `period` is
+ * null for a point-in-time fact (a headcount today) and a fiscal label
+ * ('FY2025') or month ('2026-07') for anything time-bound.
+ */
+export interface Fact {
+  id: string;
+  client_id: string;
+  key: string;
+  period: string | null;
+  value: string;
+  unit: string | null;
+  source_document_id: string;
+  quote: string;
+  created_at: string;
+}
+
+export const FINDING_TYPE = ["contradiction", "trend_break", "concentration", "anomaly", "missing_evidence"] as const;
+export type FindingType = (typeof FINDING_TYPE)[number];
+
+export const FINDING_SEVERITY = ["critical", "high", "medium", "low"] as const;
+export type FindingSeverity = (typeof FINDING_SEVERITY)[number];
+
+/** Raised by either the deterministic pattern engine or the reconciliation
+ *  agent — a proposal for a manager to act on, same spirit as a house-rule
+ *  candidate. Nothing changes on its own; an open finding is also surfaced
+ *  to the drafting agent as context (see buildPhaseMessages's openFindings). */
+export interface Finding {
+  id: string;
+  client_id: string;
+  type: FindingType;
+  severity: FindingSeverity;
+  statement: string;
+  detail: string;
+  supporting_fact_ids: string[];
+  raised_by: "reconciliation_agent" | "pattern_engine";
+  status: "open" | "acknowledged" | "resolved" | "dismissed";
+  dismissed_reason: string | null;
+  raised_at: string;
+  resolved_by: string | null;
+  resolved_at: string | null;
+}
+
+/** What a producer (the pattern engine, the reconciliation agent) hands back
+ *  before persistence — everything the DB assigns (id, status, timestamps)
+ *  is deliberately absent here. */
+export type NewFinding = Pick<
+  Finding,
+  "type" | "severity" | "statement" | "detail" | "supporting_fact_ids" | "raised_by"
+>;
+
 export const SECTION_STATUS = ["empty", "drafted", "edited", "approved"] as const;
 export type SectionStatus = (typeof SECTION_STATUS)[number];
 

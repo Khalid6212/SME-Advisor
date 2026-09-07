@@ -108,6 +108,11 @@ export interface PhaseContext {
   }[];
   planInputs: PlanInputs;
   documentFacts: { filename: string; summary: string | null; facts: unknown }[];
+  /** Open or acknowledged findings from reconciliation (see reconcile.ts) —
+   *  a live, unresolved contradiction should be visible to the drafting
+   *  agent, not just sitting in an inbox nobody's opened yet. Resolved and
+   *  dismissed findings are deliberately excluded — they're settled. */
+  openFindings: { statement: string; detail: string }[];
   earlierSections: { key: string; title_en: string; content: string }[];
   rules: string;
   /** "" for every phase except "financial" — see computeFinancialsBlock. */
@@ -140,6 +145,10 @@ export function buildPhaseMessages(phase: PhaseSpec, ctx: PhaseContext): { syste
         ctx.documentFacts.length > 0
           ? `DOCUMENT FACTS — extracted from uploaded documents:\n${JSON.stringify(ctx.documentFacts, null, 2)}`
           : "DOCUMENT FACTS: none extracted yet.",
+        "",
+        ctx.openFindings.length > 0
+          ? `UNRESOLVED FINDINGS — contradictions or gaps reconciliation has flagged and a manager has not yet resolved. Reflect these honestly rather than picking a side silently:\n${JSON.stringify(ctx.openFindings, null, 2)}`
+          : "UNRESOLVED FINDINGS: none open.",
         ctx.financialsBlock,
       ].join("\n"),
     },
@@ -416,6 +425,11 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     });
   }
 
+  const openFindings = await query<{ statement: string; detail: string }>(
+    `SELECT statement, detail FROM findings WHERE client_id = $1 AND status IN ('open', 'acknowledged')`,
+    [plan.client_id],
+  );
+
   const rules = await houseRules(phase.agent as RuleAgent, client!.sector_id);
   const earlierSectionKeys = sectionsBeforePhase(phase.key);
   const earlierSections = earlierSectionKeys.length > 0
@@ -432,6 +446,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     claims,
     planInputs,
     documentFacts,
+    openFindings,
     earlierSections,
     rules,
     financialsBlock,

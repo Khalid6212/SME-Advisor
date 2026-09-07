@@ -12,11 +12,17 @@
  * reliable native reading path here yet and are recorded as unsupported
  * rather than silently skipped, so a manager can see extraction was not
  * attempted rather than assuming it was and came back empty.
+ *
+ * Each reported fact also lands in the normalized `facts` table (keyed,
+ * dated), which is what lets reconcileClient (see reconcile.ts) compare this
+ * document against every other document and claim for the client, not just
+ * against whichever claims this one was told to check.
  */
 
 import { type ContentBlock, EXTRACT_MODEL, type Message, runAgentLoop } from "../anthropic.ts";
 import { audit, one, query } from "../db.ts";
 import { storage } from "../storage.ts";
+import { reconcileClient } from "./reconcile.ts";
 
 const SUPPORTED_DOCUMENT = new Set(["application/pdf"]);
 const SUPPORTED_IMAGE = new Set(["image/jpeg", "image/png"]);
@@ -26,7 +32,11 @@ const EXTRACT_SYSTEM = `You read a single document uploaded by a small business 
 
 Report only what is directly stated in the document. Never infer, estimate, or fill in a number the document does not show — if it is unreadable, empty, or not what its filename suggests, say so in the summary and record no facts.
 
-For each fact worth recording, give a short label, the value as shown, and a verbatim quote or the exact figure as it appears.
+For each fact worth recording, give a short label, the value as shown, a verbatim quote or the exact figure as it appears, a \`key\`, and a \`period\`.
+
+\`key\` is a dotted, reusable label for the underlying concept — \`pl.revenue\`, \`pl.net_profit\`, \`bs.payable_days\`, \`bs.inventory_days\`, \`bs.receivable_days\`, \`ops.practitioner_count\`, and similar. Reuse the exact same key across documents and periods for the same concept — this is what lets the same figure be compared across documents later. Coin a new dotted key when nothing existing fits; don't force a fact into a key it doesn't match.
+
+\`period\` is a fiscal year label ('FY2025') or month ('2026-07') the fact pertains to, or null for something point-in-time (a headcount today, not tied to a period). If the document shows comparatives — a P&L or balance sheet with two or three years of columns — record one fact per period shown, not just the most recent column. Comparatives are exactly where a restated or contradicted figure hides.
 
 You may also be given claims this document was requested to verify. For each one, state whether the document confirms it, contradicts it, or does not address it, comparing the document's own figure to the claimed value — not to what seems plausible.`;
 
@@ -46,8 +56,11 @@ const RECORD_TOOL = {
             label: { type: "string" },
             value: { type: "string" },
             quote: { type: "string", description: "Verbatim from the document." },
+            key: { type: "string", description: "Dotted, reusable label — see system prompt." },
+            period: { type: ["string", "null"], description: "Fiscal year or month, or null if point-in-time." },
+            unit: { type: ["string", "null"], description: "SAR, days, pct, count, or null if not numeric." },
           },
-          required: ["label", "value", "quote"],
+          required: ["label", "value", "quote", "key", "period", "unit"],
           additionalProperties: false,
         },
       },
@@ -217,4 +230,17 @@ export async function extractDocument(documentId: string): Promise<void> {
       [check.claim_id, check.outcome, documentId],
     );
   }
+
+  for (const fact of extraction.facts ?? []) {
+    if (!fact.key) continue; // graceful degradation, not a hard failure — see D-reconcile
+    await query(
+      `INSERT INTO facts (client_id, key, period, value, unit, source_document_id, quote)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [doc.client_id, fact.key, fact.period ?? null, fact.value, fact.unit ?? null, documentId, fact.quote],
+    );
+  }
+
+  // Best-effort, same as extraction itself — never lets a reconciliation
+  // failure surface to the upload that triggered it (see reconcile.ts).
+  reconcileClient(doc.client_id).catch(() => {});
 }

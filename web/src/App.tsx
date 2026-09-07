@@ -7,6 +7,7 @@ import { Consent } from "./screens/Consent";
 import { Interview } from "./screens/Interview";
 import { ManagerInterview } from "./screens/ManagerInterview";
 import { DataRoom } from "./screens/DataRoom";
+import { Findings } from "./screens/Findings";
 import { Plan } from "./screens/Plan";
 import { Admin } from "./screens/Admin";
 import { HouseRules } from "./screens/HouseRules";
@@ -434,12 +435,14 @@ export default function App() {
               </div>
               <h1>{open.name}</h1>
               <p className="sub">{open.contact_email} · {open.status.replace(/_/g, " ")}</p>
-              <Tabs tabs={["Interview", "Data room", "Plans"]} active={tab} onChange={setTab} />
+              <Tabs tabs={["Interview", "Data room", "Findings", "Plans"]} active={tab} onChange={setTab} />
               {tab === "Plans"
                 ? <Plan clientId={open.id} />
                 : tab === "Interview"
                   ? <ManagerInterview clientId={open.id} />
-                  : <DataRoom clientId={open.id} manager />}
+                  : tab === "Findings"
+                    ? <Findings clientId={open.id} />
+                    : <DataRoom clientId={open.id} manager />}
             </>
           ) : (
             <>
