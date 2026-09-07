@@ -210,6 +210,13 @@ export interface FinancialLine {
   scenario: "base" | "bull" | "bear";
 }
 
+export interface PhaseOption {
+  key: string;
+  label: string;
+  case_for: string;
+  case_against: string;
+}
+
 export interface PlanPhase {
   phase_key: string;
   position: number;
@@ -218,6 +225,9 @@ export interface PlanPhase {
   rating_note: string | null;
   title: { en: string; ar: string };
   section_keys: string[];
+  options_presented: { question: string; options: PhaseOption[] } | null;
+  chosen_option: string | null;
+  decision_rationale: string | null;
 }
 
 export interface EvalRunSummary {

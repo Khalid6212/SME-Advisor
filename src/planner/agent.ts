@@ -194,8 +194,48 @@ export const SUBMIT_PHASE_TOOL = {
   },
 } as const;
 
-export function buildPhaseTools() {
-  return [DRAFT_SECTION_TOOL, RECORD_ASSUMPTION_TOOL, FLAG_GAP_TOOL, SUBMIT_PHASE_TOOL];
+/**
+ * Milestone 6 (pilot): a real strategic choice, presented with tradeoffs
+ * rather than settled quietly inside drafted prose. Only registered for
+ * phases with presentsOptions set — see PhaseSpec and buildPhaseTools below.
+ * The approval gate requires a chosen option + rationale before a phase
+ * that called this can be approved (see approvePhase) — this tool is how a
+ * human decision actually gets recorded, not just implied by whatever the
+ * agent happened to draft.
+ */
+export const PRESENT_OPTIONS_TOOL = {
+  name: "present_options",
+  description:
+    "Present one real strategic choice for the manager to decide, with a case for and against each option — not a menu for everything, only where a genuine choice exists and the direction taken would materially change other sections. Call at most once per phase; most phases will never call this.",
+  input_schema: {
+    type: "object",
+    properties: {
+      question: { type: "string", description: "The decision being presented, in one sentence." },
+      options: {
+        type: "array",
+        minItems: 2,
+        items: {
+          type: "object",
+          properties: {
+            key: { type: "string", description: "Short, stable identifier for this option." },
+            label: { type: "string" },
+            case_for: { type: "string" },
+            case_against: { type: "string" },
+          },
+          required: ["key", "label", "case_for", "case_against"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["question", "options"],
+    additionalProperties: false,
+  },
+} as const;
+
+export function buildPhaseTools(phase: PhaseSpec) {
+  const tools: unknown[] = [DRAFT_SECTION_TOOL, RECORD_ASSUMPTION_TOOL, FLAG_GAP_TOOL, SUBMIT_PHASE_TOOL];
+  if (phase.presentsOptions) tools.push(PRESENT_OPTIONS_TOOL);
+  return tools;
 }
 
 /**

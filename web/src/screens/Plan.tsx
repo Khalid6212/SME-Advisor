@@ -218,6 +218,8 @@ export function Plan({ clientId }: { clientId: string }) {
   const [approvingPhase, setApprovingPhase] = useState<string | null>(null);
   const [phaseRating, setPhaseRating] = useState<number | null>(null);
   const [phaseRatingNote, setPhaseRatingNote] = useState("");
+  const [chosenOption, setChosenOption] = useState<string | null>(null);
+  const [decisionRationale, setDecisionRationale] = useState("");
 
   const loadList = async () => setPlans(await api.get(`/clients/${clientId}/plans`));
   const loadOutstanding = async () =>
@@ -273,14 +275,29 @@ export function Plan({ clientId }: { clientId: string }) {
   const approvePhaseAction = async (phaseKey: string) => {
     if (!view) return;
     setBusy(`approve-${phaseKey}`);
-    await api.post(`/plans/${view.plan.id}/phases/${phaseKey}/approve`, {
-      rating: phaseRating,
-      rating_note: phaseRatingNote.trim() || undefined,
-    });
-    setApprovingPhase(null);
-    setPhaseRating(null);
-    setPhaseRatingNote("");
-    await openPlan(view.plan.id);
+    setError(null);
+    try {
+      await api.post(`/plans/${view.plan.id}/phases/${phaseKey}/approve`, {
+        rating: phaseRating,
+        rating_note: phaseRatingNote.trim() || undefined,
+        chosen_option: chosenOption ?? undefined,
+        decision_rationale: decisionRationale.trim() || undefined,
+      });
+      setApprovingPhase(null);
+      setPhaseRating(null);
+      setPhaseRatingNote("");
+      setChosenOption(null);
+      setDecisionRationale("");
+      await openPlan(view.plan.id);
+    } catch (e: any) {
+      setError(
+        e.code === "option_required"
+          ? "Choose one of the presented options before approving."
+          : e.code === "rationale_required"
+            ? "Say why, before approving a chosen option."
+            : "Couldn't approve this phase — try again.",
+      );
+    }
     setBusy(null);
   };
 
@@ -496,6 +513,14 @@ export function Plan({ clientId }: { clientId: string }) {
                     {phase.rating && <span className="pill info">{phase.rating}/5</span>}
                   </div>
 
+                  {phase.status === "approved" && phase.chosen_option && phase.options_presented && (
+                    <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+                      <strong>Decision:</strong>{" "}
+                      {phase.options_presented.options.find((o) => o.key === phase.chosen_option)?.label ?? phase.chosen_option}
+                      {phase.decision_rationale && <> — "{phase.decision_rationale}"</>}
+                    </p>
+                  )}
+
                   {phase.status === "pending" && unlocked && (
                     <div className="row" style={{ marginTop: 10 }}>
                       <button className="primary" onClick={() => draftPhase(phase.phase_key)} disabled={busy === phase.phase_key}>
@@ -519,6 +544,37 @@ export function Plan({ clientId }: { clientId: string }) {
                   )}
                   {phase.status === "drafted" && approvingPhase === phase.phase_key && (
                     <div className="stack" style={{ marginTop: 10, gap: 8 }}>
+                      {phase.options_presented && (
+                        <div className="stack" style={{ gap: 8, paddingBottom: 8, borderBottom: "1px solid var(--line)" }}>
+                          <strong style={{ fontSize: 13 }}>{phase.options_presented.question}</strong>
+                          {phase.options_presented.options.map((o) => (
+                            <label
+                              key={o.key} className="card" style={{
+                                margin: 0, cursor: "pointer", display: "block",
+                                borderColor: chosenOption === o.key ? "var(--info)" : undefined,
+                              }}
+                            >
+                              <div className="row">
+                                <input
+                                  type="radio" name={`options-${phase.phase_key}`} style={{ width: 16 }}
+                                  checked={chosenOption === o.key} onChange={() => setChosenOption(o.key)}
+                                />
+                                <strong>{o.label}</strong>
+                              </div>
+                              <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>
+                                <strong>For:</strong> {o.case_for}
+                              </p>
+                              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                                <strong>Against:</strong> {o.case_against}
+                              </p>
+                            </label>
+                          ))}
+                          <input
+                            value={decisionRationale} onChange={(e) => setDecisionRationale(e.target.value)}
+                            placeholder="Why this one? (required)"
+                          />
+                        </div>
+                      )}
                       <div className="row" style={{ gap: 6 }}>
                         <span className="muted" style={{ fontSize: 12 }}>Rate this draft (optional):</span>
                         {[1, 2, 3, 4, 5].map((n) => (
@@ -537,11 +593,19 @@ export function Plan({ clientId }: { clientId: string }) {
                       <div className="row">
                         <button
                           className="primary" onClick={() => approvePhaseAction(phase.phase_key)}
-                          disabled={busy === `approve-${phase.phase_key}`}
+                          disabled={
+                            busy === `approve-${phase.phase_key}` ||
+                            !!(phase.options_presented && (!chosenOption || !decisionRationale.trim()))
+                          }
                         >
                           {busy === `approve-${phase.phase_key}` ? "Approving…" : "Approve phase"}
                         </button>
-                        <button onClick={() => { setApprovingPhase(null); setPhaseRating(null); setPhaseRatingNote(""); }}>
+                        <button
+                          onClick={() => {
+                            setApprovingPhase(null); setPhaseRating(null); setPhaseRatingNote("");
+                            setChosenOption(null); setDecisionRationale("");
+                          }}
+                        >
                           Cancel
                         </button>
                       </div>

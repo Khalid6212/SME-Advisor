@@ -157,11 +157,19 @@ export function buildPhaseMessages(phase: PhaseSpec, ctx: PhaseContext): { syste
   return { system, messages };
 }
 
+export interface PresentedOptions {
+  question: string;
+  options: { key: string; label: string; case_for: string; case_against: string }[];
+}
+
 export interface PhaseAgentOutcome {
   drafted: { section_key: string; content: string; provenance: any[]; confidence: string }[];
   gaps: { section_key: string; question: string; why_it_matters: string; blocking: boolean }[];
   assumptions: { label: string; value: string; basis: string; source: string }[];
   noteForManager: string | null;
+  /** Milestone 6 (pilot) — set only for phases with presentsOptions, and
+   *  only when the agent actually found a real choice worth presenting. */
+  optionsPresented: PresentedOptions | null;
   usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
 
@@ -180,12 +188,13 @@ export async function runPhaseAgent(
   const gaps: any[] = [];
   const assumptions: any[] = [];
   let phaseSummary: any = null;
+  let optionsPresented: PresentedOptions | null = null;
 
   const loopResult = await runAgentLoop({
     system,
-    tools: buildPhaseTools(),
+    tools: buildPhaseTools(phase),
     messages,
-    maxTurns: phase.sectionKeys.length + 6, // one call per section, plus assumptions, gaps, and submit
+    maxTurns: phase.sectionKeys.length + 6, // one call per section, plus assumptions, gaps, options, and submit
     model: MODEL,
     onTool: async (name, input) => {
       if (name === "draft_section") {
@@ -206,6 +215,10 @@ export async function runPhaseAgent(
         gaps.push(input);
         return { content: `Recorded gap in ${input.section_key}.` };
       }
+      if (name === "present_options") {
+        optionsPresented = { question: input.question, options: input.options };
+        return { content: "Recorded. The manager will choose one before this phase can be approved." };
+      }
       if (name === "submit_phase") {
         phaseSummary = input;
         return null; // terminal
@@ -219,6 +232,7 @@ export async function runPhaseAgent(
     gaps,
     assumptions,
     noteForManager: phaseSummary?.note_for_manager ?? null,
+    optionsPresented,
     usage: loopResult.usage,
   };
 }
@@ -488,9 +502,15 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       );
     }
 
+    // chosen_option/decision_rationale reset on every (re)draft, same reasoning
+    // as the cascade-reset below for later phases — a decision made against a
+    // prior draft's options cannot carry over to a fresh one, options included.
     await c.query(
-      `UPDATE plan_phases SET status = 'drafted', drafted_at = now() WHERE plan_id = $1 AND phase_key = $2`,
-      [planId, phase.key],
+      `UPDATE plan_phases
+          SET status = 'drafted', drafted_at = now(),
+              options_presented = $3, chosen_option = NULL, decision_rationale = NULL
+        WHERE plan_id = $1 AND phase_key = $2`,
+      [planId, phase.key, outcome.optionsPresented ? JSON.stringify(outcome.optionsPresented) : null],
     );
 
     await audit("plan_phase.drafted", {
@@ -525,27 +545,42 @@ export async function approvePhase(
   approvedBy: string,
   rating: number | null,
   ratingNote: string | null,
+  chosenOption: string | null,
+  decisionRationale: string | null,
 ): Promise<void> {
-  const phaseRow = await one<{ status: string }>(
-    `SELECT status FROM plan_phases WHERE plan_id = $1 AND phase_key = $2`,
+  const phaseRow = await one<{ status: string; options_presented: PresentedOptions | null }>(
+    `SELECT status, options_presented FROM plan_phases WHERE plan_id = $1 AND phase_key = $2`,
     [planId, phaseKey],
   );
   if (!phaseRow) throw new Error("not_found");
   if (phaseRow.status !== "drafted") throw new Error("not_drafted");
 
+  // Milestone 6 (pilot): a phase that presented a real choice cannot be
+  // approved until a human actually makes it — the whole point of surfacing
+  // options instead of letting the agent quietly pick a direction. No
+  // options presented is the common case and imposes nothing extra.
+  if (phaseRow.options_presented) {
+    const validKeys = phaseRow.options_presented.options.map((o) => o.key);
+    if (!chosenOption || !validKeys.includes(chosenOption)) {
+      throw new Error("option_required");
+    }
+    if (!decisionRationale?.trim()) throw new Error("rationale_required");
+  }
+
   const plan = await one<{ client_id: string }>(`SELECT client_id FROM plans WHERE id = $1`, [planId]);
 
   await query(
     `UPDATE plan_phases
-        SET status = 'approved', approved_by = $3, approved_at = now(), rating = $4, rating_note = $5
+        SET status = 'approved', approved_by = $3, approved_at = now(), rating = $4, rating_note = $5,
+            chosen_option = $6, decision_rationale = $7
       WHERE plan_id = $1 AND phase_key = $2`,
-    [planId, phaseKey, approvedBy, rating, ratingNote],
+    [planId, phaseKey, approvedBy, rating, ratingNote, chosenOption, decisionRationale],
   );
 
   await audit("plan_phase.approved", {
     actorUserId: approvedBy,
     clientId: plan?.client_id,
-    payload: { plan_id: planId, phase: phaseKey, rating },
+    payload: { plan_id: planId, phase: phaseKey, rating, chosen_option: chosenOption },
   });
 }
 

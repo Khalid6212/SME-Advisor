@@ -50,6 +50,11 @@ const requestBatchSchema = z.object({
 const approvePhaseSchema = z.object({
   rating: z.number().int().min(1).max(5).nullable().optional(),
   rating_note: z.string().trim().max(2000).nullable().optional(),
+  // Milestone 6 (pilot) — required only when the phase actually presented
+  // options; approvePhase itself enforces that, not this schema, since
+  // whether it's required depends on DB state the schema can't see.
+  chosen_option: z.string().trim().max(200).nullable().optional(),
+  decision_rationale: z.string().trim().max(2000).nullable().optional(),
 });
 
 const competitorNoteSchema = z.object({
@@ -273,8 +278,12 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
                FROM plan_gaps WHERE plan_id = $1 ORDER BY blocking DESC`, [planId]),
       query(`SELECT year_offset, line_item, value, basis, scenario FROM plan_financials
               WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`, [planId]),
-      query<{ phase_key: string; position: number; status: string; rating: number | null; rating_note: string | null }>(
-        `SELECT phase_key, position, status, rating, rating_note
+      query<{
+        phase_key: string; position: number; status: string; rating: number | null; rating_note: string | null;
+        options_presented: { question: string; options: { key: string; label: string; case_for: string; case_against: string }[] } | null;
+        chosen_option: string | null; decision_rationale: string | null;
+      }>(
+        `SELECT phase_key, position, status, rating, rating_note, options_presented, chosen_option, decision_rationale
            FROM plan_phases WHERE plan_id = $1 ORDER BY position`, [planId]),
       query<ClaimLookup>(
         `SELECT claim_key, field_path, verification_status FROM claims
@@ -364,12 +373,22 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
 
     try {
-      await approvePhase(planId, phaseKey, user.id, parsed.data.rating ?? null, parsed.data.rating_note ?? null);
+      await approvePhase(
+        planId, phaseKey, user.id,
+        parsed.data.rating ?? null, parsed.data.rating_note ?? null,
+        parsed.data.chosen_option ?? null, parsed.data.decision_rationale ?? null,
+      );
       return { approved: true };
     } catch (err: any) {
       if (err.message === "not_found") return reply.code(404).send({ error: "not_found" });
       if (err.message === "not_drafted") {
         return reply.code(409).send({ error: "not_drafted", message: "Draft this phase before approving it." });
+      }
+      if (err.message === "option_required") {
+        return reply.code(409).send({ error: "option_required", message: "Choose one of the presented options before approving." });
+      }
+      if (err.message === "rationale_required") {
+        return reply.code(409).send({ error: "rationale_required", message: "Say why, before approving a chosen option." });
       }
       throw err;
     }

@@ -25,6 +25,15 @@ export interface PhaseSpec {
   agent: string;
   title: { en: string; ar: string };
   sectionKeys: string[];
+  /**
+   * Milestone 6 (pilot): true for the one phase currently allowed to call
+   * present_options — separating "here's a real strategic choice, with
+   * tradeoffs" from drafted prose, so a manager decides it explicitly rather
+   * than the agent picking a direction and burying it in the section text.
+   * Deliberately scoped to one phase for now, not all six — see the
+   * reconciliation roadmap's Milestone 6 for the rollout rationale.
+   */
+  presentsOptions?: boolean;
 }
 
 export const PLAN_PHASES: PhaseSpec[] = [
@@ -42,6 +51,7 @@ export const PLAN_PHASES: PhaseSpec[] = [
     agent: "phase.strategy",
     title: { en: "Business & growth strategy", ar: "الاستراتيجية والنمو" },
     sectionKeys: ["business_model_and_unit_economics", "sales_and_marketing", "growth_strategy", "exit_strategy"],
+    presentsOptions: true,
   },
   {
     key: "operations",
