@@ -383,7 +383,15 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
             WHERE plan_id = $1 AND key = ANY($2)`,
           [planId, laterSpec.sectionKeys],
         );
-        await c.query(`DELETE FROM plan_gaps WHERE plan_id = $1 AND section_key = ANY($2)`, [planId, laterSpec.sectionKeys]);
+        // request_id IS NULL — a gap already sent to the client as an open
+        // question stays linked to that request even though this later
+        // phase resets to pending; only ungrounded gaps with nothing
+        // pending get cleared here (see the same guard in the redraft path
+        // below, for the phase actually being redrafted).
+        await c.query(
+          `DELETE FROM plan_gaps WHERE plan_id = $1 AND section_key = ANY($2) AND request_id IS NULL`,
+          [planId, laterSpec.sectionKeys],
+        );
       }
     });
   }
@@ -511,9 +519,15 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     // job by being fed into the prompt above (see resolvedGapAnswers); still-
     // open ones get re-evaluated fresh by this same draft. Without this, a
     // manager-answered gap the agent successfully used would sit around
-    // forever looking unresolved-looking-resolved, and a redraft would just
-    // pile up duplicate gap rows for the same question.
-    await c.query(`DELETE FROM plan_gaps WHERE plan_id = $1 AND section_key = ANY($2)`, [planId, phase.sectionKeys]);
+    // forever looking unresolved, and a redraft would just pile up duplicate
+    // gap rows for the same question. Excludes anything with a request_id —
+    // a gap already sent to the client as an open question stays linked to
+    // that request regardless of a redraft; only the direct-answer path
+    // (no request involved) gets cleared and re-evaluated here.
+    await c.query(
+      `DELETE FROM plan_gaps WHERE plan_id = $1 AND section_key = ANY($2) AND request_id IS NULL`,
+      [planId, phase.sectionKeys],
+    );
 
     for (const g of outcome.gaps) {
       await c.query(
