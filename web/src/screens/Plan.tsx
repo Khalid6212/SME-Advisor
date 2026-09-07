@@ -38,10 +38,9 @@ const CONFIDENCE: Record<string, string> = {
 };
 
 /** Per-statement, five-tier — a finer read on the same idea as CONFIDENCE
- *  above, which is a whole-section self-rating. See src/planner/confidence.ts. */
-const TIER_PILL: Record<string, string> = {
-  measured: "good", audited: "good", stated: "info", estimated: "warn", unverified: "bad",
-};
+ *  above, which is a whole-section self-rating. See src/planner/confidence.ts.
+ *  Rendered via the .tier class (styles.css), which maps tier name to color
+ *  directly — no lookup table needed here. */
 
 const AUDIENCE_LABEL: Record<string, string> = {
   full: "Full plan", lender: "Lender pack", internal: "Operating plan",
@@ -105,7 +104,7 @@ function YearsByItemTable({ rows, order }: { rows: FinancialLine[]; order: strin
   const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
 
   return (
-    <table>
+    <table className="fin">
       <thead>
         <tr>
           <th>SAR</th>
@@ -156,7 +155,7 @@ function FinancialsExhibits({ rows }: { rows: FinancialLine[] }) {
           <>
             <h2>Sensitivity (year {year})</h2>
             <div className="card" style={{ overflowX: "auto" }}>
-              <table>
+              <table className="fin">
                 <thead><tr><th>Scenario</th><th>Revenue</th><th>EBITDA</th></tr></thead>
                 <tbody>
                   <tr>
@@ -500,6 +499,7 @@ export function Plan({ clientId }: { clientId: string }) {
           )}
 
           <h2>Phases</h2>
+          <div className="stepper">
           {phases.map((phase) => {
             const unlocked = isPhaseUnlocked(phase);
             const phaseSections = visibleSections.filter((s) => phase.section_keys.includes(s.key));
@@ -508,6 +508,7 @@ export function Plan({ clientId }: { clientId: string }) {
               <div key={phase.phase_key}>
                 <div className="card" style={{ borderColor: phase.status === "approved" ? "var(--good)" : undefined }}>
                   <div className="row">
+                    <span className={`step-marker ${phase.status}`} />
                     <strong style={{ flex: 1 }}>{phase.position}. {phase.title.en}</strong>
                     <span className={`pill ${PHASE_STATUS_PILL[phase.status]}`}>{PHASE_STATUS_LABEL[phase.status]}</span>
                     {phase.rating && <span className="pill info">{phase.rating}/5</span>}
@@ -668,7 +669,7 @@ export function Plan({ clientId }: { clientId: string }) {
                         </summary>
                         {s.provenance.map((p, i) => (
                           <div key={i} className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                            <span className={`pill ${TIER_PILL[p.confidence_tier] ?? "grey"}`}>{p.confidence_tier}</span>{" "}
+                            <span className={`tier ${p.confidence_tier}`}>{p.confidence_tier}</span>{" "}
                             <span className="pill grey">{p.source}</span> {p.statement}
                             <span className="dim"> — {p.ref}</span>
                           </div>
@@ -680,6 +681,7 @@ export function Plan({ clientId }: { clientId: string }) {
               </div>
             );
           })}
+          </div>
 
           <FinancialsExhibits rows={view.financials} />
 

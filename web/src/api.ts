@@ -88,6 +88,8 @@ export interface ClientRow {
   readiness: string | null;
   high_claims?: string;
   open_requests?: string;
+  open_findings?: string;
+  critical_findings?: string;
 }
 
 export interface Node {

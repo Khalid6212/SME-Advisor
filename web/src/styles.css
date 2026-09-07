@@ -1,36 +1,56 @@
 /* Dark is the default palette — matches the app's history and needs no
  * explicit theme to render correctly before JS runs. Light overrides the
- * same tokens; nothing else in this file references a raw color. */
+ * same tokens; nothing else in this file references a raw color.
+ *
+ * --gold is a second accent, deliberately spent in exactly one place:
+ * verified evidence (the "audited"/"measured" confidence tiers, resolved
+ * findings) — see .tier below. Blue (--accent) stays for actions and
+ * navigation; the two never mix, so gold reads as a meaningful signal
+ * rather than decoration the moment it appears. */
 :root {
-  --bg: #0a1120;
-  --panel: #121b2e;
-  --line: #223052;
-  --text: #e8edf9;
-  --dim: #a6b3cf;
-  --faint: #67759c;
-  --accent: #5079e6;
-  --accent-strong: #6f95f2;
+  --bg: #0a0e1a;
+  --panel: #121729;
+  --panel-raised: #181f38;
+  --line: #262f4a;
+  --line-soft: #1b2340;
+  --text: #eef1fb;
+  --dim: #a7b0cc;
+  --faint: #6c7594;
+  --accent: #4a5fe0;
+  --accent-strong: #6b7ded;
+  --gold: #c9974a;
   --good: #34d399;
   --info: #38bdf8;
   --warn: #f2b84b;
   --bad: #f2617a;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px rgba(0, 0, 0, 0.28);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.32);
+  /* Serif carries headings and phase/document titles — gravitas fitting a
+   * platform that produces financial documents, not another dashboard sans.
+   * Monospace carries every number and every provenance/confidence tag,
+   * everywhere, so data always reads as data. Both are system stacks —
+   * no webfont to fail to load. */
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Noto Serif", serif;
+  --sans: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
 }
 
 :root[data-theme="light"] {
-  --bg: #ffffff;
-  --panel: #f6f8fc;
-  --line: #dde4f0;
-  --text: #16213e;
-  --dim: #4d5b7d;
-  --faint: #8894b0;
-  --accent: #2f5bd7;
-  --accent-strong: #24429c;
-  --good: #16a34a;
+  --bg: #faf9f6;
+  --panel: #ffffff;
+  --panel-raised: #f3f1ea;
+  --line: #e4e0d4;
+  --line-soft: #ece9de;
+  --text: #1c1f2b;
+  --dim: #565f7a;
+  --faint: #8b93ab;
+  --accent: #3648c9;
+  --accent-strong: #2937a3;
+  --gold: #96702c;
+  --good: #16915a;
   --info: #0284c7;
-  --warn: #d97706;
-  --bad: #dc2626;
-  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 28px rgba(15, 23, 42, 0.07);
+  --warn: #b5710a;
+  --bad: #c22f47;
+  --shadow: 0 1px 2px rgba(28, 26, 20, 0.05), 0 14px 32px rgba(28, 26, 20, 0.06);
 }
 
 * { box-sizing: border-box; }
@@ -39,7 +59,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  font-family: var(--sans);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -114,8 +134,9 @@ a { color: var(--accent); }
 
 .muted { color: var(--faint); }
 .dim { color: var(--dim); }
-h1 { font-size: 24px; margin: 28px 0 4px; letter-spacing: -0.3px; }
-h2 { font-size: 17px; margin: 28px 0 10px; }
+h1, h2, h3 { font-family: var(--serif); font-weight: 500; text-wrap: balance; }
+h1 { font-size: 26px; margin: 28px 0 4px; letter-spacing: -0.2px; }
+h2 { font-size: 18px; margin: 28px 0 10px; letter-spacing: -0.1px; }
 .sub { color: var(--faint); margin: 0 0 18px; }
 
 .pill {
@@ -128,6 +149,68 @@ h2 { font-size: 17px; margin: 28px 0 10px; }
 .pill.warn { background: color-mix(in srgb, var(--warn) 13%, transparent); color: var(--warn); }
 .pill.bad  { background: color-mix(in srgb, var(--bad) 13%, transparent); color: var(--bad); }
 .pill.grey { background: color-mix(in srgb, var(--faint) 13%, transparent); color: var(--faint); }
+.pill.gold { background: color-mix(in srgb, var(--gold) 14%, transparent); color: var(--gold); }
+
+/* Confidence/evidence tags (see src/planner/confidence.ts) — visually
+ * distinct from status pills on purpose: monospace, sharper corners, no
+ * uppercase-pill styling, so a reader learns to parse "this is a
+ * provenance signal" at a glance rather than confusing it with a status. */
+.tier {
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.3px; font-weight: 700; padding: 2px 7px; border-radius: 5px;
+  display: inline-block; flex: none;
+}
+.tier.audited, .tier.measured { background: color-mix(in srgb, var(--gold) 14%, transparent); color: var(--gold); }
+.tier.stated { background: color-mix(in srgb, var(--info) 13%, transparent); color: var(--info); }
+.tier.estimated { background: color-mix(in srgb, var(--warn) 13%, transparent); color: var(--warn); }
+.tier.unverified { background: color-mix(in srgb, var(--bad) 13%, transparent); color: var(--bad); }
+
+/* Stat tiles — pipeline summary strip. */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+.stat {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 18px;
+}
+.stat .stat-n {
+  font-family: var(--mono); font-size: 25px; font-weight: 600;
+  font-variant-numeric: tabular-nums; line-height: 1.2;
+}
+.stat .stat-n.gold { color: var(--gold); }
+.stat .stat-n.bad { color: var(--bad); }
+.stat .stat-label { color: var(--faint); font-size: 12px; margin-top: 3px; }
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+/* Phase stepper connecting line (Plan.tsx) — every phase stays fully
+ * visible and inline, same as before; this only adds a sequence cue. The
+ * line sits behind the (opaque) phase cards, so it only shows in the gaps
+ * between them — a deliberate use of the cards' own background rather than
+ * z-index tricks. */
+.stepper { position: relative; }
+.stepper::before {
+  content: ""; position: absolute; left: 27px; top: 0; bottom: 0;
+  width: 1.5px; background: var(--line); z-index: 0;
+}
+.step-marker {
+  position: relative; z-index: 1; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--panel); border: 1.5px solid var(--line); flex: none;
+}
+.step-marker.approved { background: var(--good); border-color: var(--good); }
+.step-marker.drafted { background: color-mix(in srgb, var(--warn) 20%, var(--panel)); border-color: var(--warn); }
+
+/* Findings — a colored stripe reads as severity faster than a pill alone. */
+.finding-stripe { width: 3px; border-radius: 2px; flex: none; align-self: stretch; }
+.finding-stripe.critical { background: var(--bad); }
+.finding-stripe.high { background: var(--warn); }
+.finding-stripe.medium { background: var(--info); }
+.finding-stripe.low { background: var(--faint); }
+
+/* Financial exhibits — monospace, tabular, right-aligned figures; the label
+ * column stays in the body sans so it reads as prose, not data. */
+table.fin { font-family: var(--mono); font-size: 12.5px; }
+table.fin th { text-align: right; font-family: var(--sans); }
+table.fin th:first-child, table.fin td:first-child { text-align: left; font-family: var(--sans); color: var(--dim); }
+table.fin td { text-align: right; font-variant-numeric: tabular-nums; }
+table.fin tr.total td { font-weight: 700; color: var(--text); border-top: 1px solid var(--line); }
 
 .row { display: flex; align-items: center; gap: 12px; }
 .stack { display: flex; flex-direction: column; gap: 10px; }

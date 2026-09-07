@@ -206,9 +206,22 @@ function Pipeline({ isAdmin, onOpen }: { isAdmin: boolean; onOpen: (c: ClientRow
   const load = () => api.get<ClientRow[]>("/clients").then(setRows);
   useEffect(() => { void load(); }, []);
 
+  const active = rows?.filter((c) => c.status !== "delivered" && c.status !== "abandoned").length ?? 0;
+  const awaitingReview = rows?.filter((c) => c.status === "review_pending" || c.status === "in_review").length ?? 0;
+  const openFindings = rows?.reduce((sum, c) => sum + Number(c.open_findings ?? 0), 0) ?? 0;
+  const criticalFindings = rows?.reduce((sum, c) => sum + Number(c.critical_findings ?? 0), 0) ?? 0;
+
   return (
     <div>
       <InviteClient isAdmin={isAdmin} onInvited={load} />
+      {rows && rows.length > 0 && (
+        <div className="stats">
+          <div className="stat"><div className="stat-n">{active}</div><div className="stat-label">Active engagements</div></div>
+          <div className="stat"><div className="stat-n">{awaitingReview}</div><div className="stat-label">Awaiting review</div></div>
+          <div className="stat"><div className={`stat-n${openFindings > 0 ? " gold" : ""}`}>{openFindings}</div><div className="stat-label">Open findings</div></div>
+          <div className="stat"><div className={`stat-n${criticalFindings > 0 ? " bad" : ""}`}>{criticalFindings}</div><div className="stat-label">Critical, unresolved</div></div>
+        </div>
+      )}
       {!rows ? (
         <p className="muted">Loading…</p>
       ) : rows.length === 0 ? (
@@ -219,28 +232,48 @@ function Pipeline({ isAdmin, onOpen }: { isAdmin: boolean; onOpen: (c: ClientRow
             <thead>
               <tr>
                 <th>Business</th><th>Status</th><th>Readiness</th>
-                <th>Claims</th><th>Open</th>
+                <th>Evidence</th><th>Open</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((c) => (
-                <tr key={c.id} className="clickable" onClick={() => onOpen(c)}>
-                  <td>
-                    <div>{c.name}</div>
-                    <div className="muted" style={{ fontSize: 12 }}>
-                      {c.contact_email}{c.group_name ? ` · ${c.group_name}` : ""}
-                    </div>
-                  </td>
-                  <td><span className="pill grey">{c.status.replace(/_/g, " ")}</span></td>
-                  <td>
-                    {c.readiness
-                      ? <span className={`pill ${READINESS[c.readiness]}`}>{c.readiness.replace(/_/g, " ")}</span>
-                      : <span className="muted">—</span>}
-                  </td>
-                  <td className="muted">{c.high_claims ?? "0"} high</td>
-                  <td className="muted">{c.open_requests ?? "0"}</td>
-                </tr>
-              ))}
+              {rows.map((c) => {
+                const critical = Number(c.critical_findings ?? 0);
+                const open = Number(c.open_findings ?? 0);
+                return (
+                  <tr key={c.id} className="clickable" onClick={() => onOpen(c)}>
+                    <td>
+                      <div>{c.name}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {c.contact_email}{c.group_name ? ` · ${c.group_name}` : ""}
+                      </div>
+                    </td>
+                    <td><span className="pill grey">{c.status.replace(/_/g, " ")}</span></td>
+                    <td>
+                      {c.readiness
+                        ? <span className={`pill ${READINESS[c.readiness]}`}>{c.readiness.replace(/_/g, " ")}</span>
+                        : <span className="muted">—</span>}
+                    </td>
+                    <td>
+                      {open === 0 ? (
+                        <span className="muted">none open</span>
+                      ) : (
+                        <span className="row" style={{ gap: 6 }}>
+                          <span
+                            style={{
+                              width: 7, height: 7, borderRadius: "50%", display: "inline-block",
+                              background: critical > 0 ? "var(--bad)" : "var(--warn)",
+                            }}
+                          />
+                          <span className="muted">
+                            {critical > 0 ? `${critical} critical` : `${open} open`}
+                          </span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="muted">{c.open_requests ?? "0"} requests</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

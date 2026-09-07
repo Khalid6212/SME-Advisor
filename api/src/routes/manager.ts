@@ -69,7 +69,11 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
               (SELECT count(*) FROM claims cm
                 WHERE cm.profile_id = p.id AND cm.materiality = 'high') AS high_claims,
               (SELECT count(*) FROM requests r
-                WHERE r.client_id = c.id AND r.status = 'open') AS open_requests
+                WHERE r.client_id = c.id AND r.status = 'open') AS open_requests,
+              (SELECT count(*) FROM findings f
+                WHERE f.client_id = c.id AND f.status IN ('open', 'acknowledged')) AS open_findings,
+              (SELECT count(*) FROM findings f
+                WHERE f.client_id = c.id AND f.status IN ('open', 'acknowledged') AND f.severity = 'critical') AS critical_findings
          FROM clients c
          JOIN users u ON u.id = c.owner_user_id
          LEFT JOIN client_groups g ON g.id = c.group_id

@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { api, type Fact, type Finding } from "../api";
 
 const SEVERITY_PILL: Record<string, string> = { critical: "bad", high: "warn", medium: "info", low: "grey" };
+/** A colored left edge reads as severity faster than the pill alone —
+ *  matches the stripe language used everywhere severity/status appears. */
+const SEVERITY_EDGE: Record<string, string> = {
+  critical: "var(--bad)", high: "var(--warn)", medium: "var(--info)", low: "var(--faint)",
+};
 const TYPE_LABEL: Record<string, string> = {
   contradiction: "Contradiction",
   trend_break: "Trend break",
@@ -65,7 +70,7 @@ export function Findings({ clientId }: { clientId: string }) {
         </div>
       ) : (
         open.map((f) => (
-          <div key={f.id} className="card">
+          <div key={f.id} className="card" style={{ borderLeft: `3px solid ${SEVERITY_EDGE[f.severity] ?? "var(--faint)"}` }}>
             <div className="row">
               <span className={`pill ${SEVERITY_PILL[f.severity] ?? "grey"}`}>{f.severity}</span>
               <span className="pill grey">{TYPE_LABEL[f.type] ?? f.type}</span>
