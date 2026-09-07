@@ -180,11 +180,17 @@ h2 { font-size: 18px; margin: 28px 0 10px; letter-spacing: -0.1px; }
 .stat .stat-label { color: var(--faint); font-size: 12px; margin-top: 3px; }
 @media (max-width: 640px) { .stats { grid-template-columns: repeat(2, 1fr); } }
 
-/* Phase stepper connecting line (Plan.tsx) — every phase stays fully
- * visible and inline, same as before; this only adds a sequence cue. The
- * line sits behind the (opaque) phase cards, so it only shows in the gaps
- * between them — a deliberate use of the cards' own background rather than
- * z-index tricks. */
+/* A section within an expanded phase — a divider, not a nested card. Every
+ * phase is exactly one opaque .card regardless of expand state, which is
+ * what lets the stepper line below sit cleanly in the gaps between phases
+ * instead of bleeding through unrelated section content. */
+.section-block { padding: 16px 0 0; margin-top: 16px; border-top: 1px solid var(--line-soft); }
+.section-block:first-of-type { border-top: none; margin-top: 12px; padding-top: 0; }
+
+/* Phase stepper connecting line (Plan.tsx) — every phase is exactly one
+ * card regardless of expand state (see .section-block above), so the line
+ * only ever shows in the fixed-height gaps between phases, never bleeding
+ * through a phase's own expanded content. */
 .stepper { position: relative; }
 .stepper::before {
   content: ""; position: absolute; left: 27px; top: 0; bottom: 0;

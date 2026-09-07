@@ -219,6 +219,7 @@ export function Plan({ clientId }: { clientId: string }) {
   const [phaseRatingNote, setPhaseRatingNote] = useState("");
   const [chosenOption, setChosenOption] = useState<string | null>(null);
   const [decisionRationale, setDecisionRationale] = useState("");
+  const [expandedPhase, setExpandedPhase] = useState<string | null>(null);
 
   const loadList = async () => setPlans(await api.get(`/clients/${clientId}/plans`));
   const loadOutstanding = async () =>
@@ -231,6 +232,18 @@ export function Plan({ clientId }: { clientId: string }) {
   }, [clientId]);
 
   const openPlan = async (id: string) => setView(await api.get<PlanView>(`/plans/${id}`));
+
+  // Defaults to whichever phase actually needs attention (the first
+  // unlocked, not-yet-approved one) so opening a plan lands somewhere
+  // useful — but only when switching to a different plan, not on every
+  // refetch after an action, or a manual expand/collapse would keep
+  // getting silently reverted mid-review.
+  useEffect(() => {
+    if (!view) return;
+    const ph = view.phases;
+    const active = ph.find((p, i) => p.status !== "approved" && (i === 0 || ph[i - 1]!.status === "approved"));
+    setExpandedPhase(active?.phase_key ?? null);
+  }, [view?.plan.id]);
 
   const startPlan = async (key: string) => {
     setBusy(key);
@@ -499,29 +512,44 @@ export function Plan({ clientId }: { clientId: string }) {
           )}
 
           <h2>Phases</h2>
+          <p className="section-sub" style={{ marginTop: -6 }}>
+            Click a phase to open it. Collapsed phases show status only, so the whole plan's progress
+            fits on one screen.
+          </p>
           <div className="stepper">
           {phases.map((phase) => {
             const unlocked = isPhaseUnlocked(phase);
             const phaseSections = visibleSections.filter((s) => phase.section_keys.includes(s.key));
+            const isOpen = expandedPhase === phase.phase_key;
 
             return (
-              <div key={phase.phase_key}>
-                <div className="card" style={{ borderColor: phase.status === "approved" ? "var(--good)" : undefined }}>
-                  <div className="row">
-                    <span className={`step-marker ${phase.status}`} />
-                    <strong style={{ flex: 1 }}>{phase.position}. {phase.title.en}</strong>
-                    <span className={`pill ${PHASE_STATUS_PILL[phase.status]}`}>{PHASE_STATUS_LABEL[phase.status]}</span>
-                    {phase.rating && <span className="pill info">{phase.rating}/5</span>}
-                  </div>
+              <div
+                key={phase.phase_key} className="card"
+                style={{ borderColor: phase.status === "approved" ? "var(--good)" : undefined }}
+              >
+                <div
+                  className="row" style={{ cursor: "pointer" }}
+                  onClick={() => setExpandedPhase(isOpen ? null : phase.phase_key)}
+                >
+                  <span className={`step-marker ${phase.status}`} />
+                  <strong style={{ flex: 1 }}>{phase.position}. {phase.title.en}</strong>
+                  {phase.rating && <span className="pill info">{phase.rating}/5</span>}
+                  <span className={`pill ${PHASE_STATUS_PILL[phase.status]}`}>{PHASE_STATUS_LABEL[phase.status]}</span>
+                  <span className="muted" aria-hidden style={{ transform: isOpen ? "rotate(90deg)" : undefined, transition: "transform 0.15s ease", display: "inline-block" }}>
+                    ›
+                  </span>
+                </div>
 
-                  {phase.status === "approved" && phase.chosen_option && phase.options_presented && (
-                    <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
-                      <strong>Decision:</strong>{" "}
-                      {phase.options_presented.options.find((o) => o.key === phase.chosen_option)?.label ?? phase.chosen_option}
-                      {phase.decision_rationale && <> — "{phase.decision_rationale}"</>}
-                    </p>
-                  )}
+                {phase.status === "approved" && phase.chosen_option && phase.options_presented && (
+                  <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+                    <strong>Decision:</strong>{" "}
+                    {phase.options_presented.options.find((o) => o.key === phase.chosen_option)?.label ?? phase.chosen_option}
+                    {phase.decision_rationale && <> — "{phase.decision_rationale}"</>}
+                  </p>
+                )}
 
+                {isOpen && (
+                <>
                   {phase.status === "pending" && unlocked && (
                     <div className="row" style={{ marginTop: 10 }}>
                       <button className="primary" onClick={() => draftPhase(phase.phase_key)} disabled={busy === phase.phase_key}>
@@ -622,10 +650,11 @@ export function Plan({ clientId }: { clientId: string }) {
                   {error && (busy === phase.phase_key || approvingPhase === phase.phase_key) && (
                     <p style={{ color: "var(--bad)", fontSize: 13, margin: "8px 0 0" }}>{error}</p>
                   )}
-                </div>
+                </>
+                )}
 
-                {phaseSections.map((s) => (
-                  <div key={s.id} className="card">
+                {isOpen && phaseSections.map((s) => (
+                  <div key={s.id} className="section-block">
                     <div className="row">
                       <strong style={{ flex: 1 }}>{s.title_en}</strong>
                       {s.confidence && (
