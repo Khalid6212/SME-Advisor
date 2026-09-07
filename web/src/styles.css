@@ -299,6 +299,50 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--text) 2%, transpare
 
 .cta-footer { text-align: center; padding: 56px 0 72px; }
 
+/* ─── client workspace (sidebar layout) ──────────────────────────────────── */
+
+.workspace { display: flex; align-items: flex-start; max-width: 1400px; margin: 0 auto; }
+.workspace-sidebar {
+  width: 230px; flex: none; padding: 24px 16px 40px; border-right: 1px solid var(--line);
+}
+.workspace-back {
+  border: none; background: none; color: var(--faint); padding: 0; cursor: pointer;
+  font-size: 12.5px; margin-bottom: 20px; display: block; font-family: inherit;
+}
+.workspace-back:hover { color: var(--accent); }
+.workspace-client-name { font-family: var(--serif); font-size: 17px; letter-spacing: -0.1px; text-wrap: balance; }
+.workspace-client-meta { color: var(--faint); font-size: 12px; margin: 3px 0 22px; text-transform: capitalize; }
+.workspace-nav { display: flex; flex-direction: column; gap: 2px; margin-bottom: 24px; }
+.workspace-nav button {
+  border: none; background: none; text-align: left; padding: 9px 12px; border-radius: 8px;
+  font-size: 13.5px; color: var(--dim); border-left: 2px solid transparent; cursor: pointer;
+  font-family: inherit;
+}
+.workspace-nav button:hover:not(.active) { color: var(--text); background: var(--panel-raised); }
+.workspace-nav button.active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent); font-weight: 600; border-left-color: var(--accent);
+}
+.workspace-sidebar-actions {
+  display: flex; flex-direction: column; gap: 8px; padding-top: 16px; border-top: 1px solid var(--line);
+}
+.workspace-main { flex: 1; min-width: 0; padding: 22px 32px 64px; }
+
+@media (max-width: 860px) {
+  .workspace { flex-direction: column; }
+  .workspace-sidebar {
+    width: 100%; border-right: none; border-bottom: 1px solid var(--line);
+    padding: 14px 16px;
+  }
+  .workspace-back { margin-bottom: 10px; }
+  .workspace-client-meta { margin-bottom: 12px; }
+  .workspace-nav { flex-direction: row; overflow-x: auto; gap: 6px; margin-bottom: 0; }
+  .workspace-nav button { border-left: none; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .workspace-nav button.active { border-left-color: transparent; border-bottom-color: var(--accent); }
+  .workspace-sidebar-actions { flex-direction: row; margin-top: 12px; padding-top: 12px; border-top: none; }
+  .workspace-main { padding: 18px 16px 40px; }
+}
+
 /* ─── responsive baseline ────────────────────────────────────────────────── */
 
 @media (max-width: 640px) {

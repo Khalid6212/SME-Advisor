@@ -108,6 +108,13 @@ export interface PhaseContext {
   }[];
   planInputs: PlanInputs;
   documentFacts: { filename: string; summary: string | null; facts: unknown }[];
+  /** Gaps this phase's sections previously flagged, since answered directly
+   *  by a manager (see PATCH /plan-gaps/:gapId) rather than sent to the
+   *  client — the whole point of capturing that answer is for a redraft to
+   *  actually use it instead of re-flagging the same gap. Cleared and
+   *  reinserted fresh from this run's own outcome.gaps in draftPhase, same
+   *  as the section content itself. */
+  resolvedGapAnswers: { section_key: string; question: string; manager_response: string }[];
   /** Open or acknowledged findings from reconciliation (see reconcile.ts) —
    *  a live, unresolved contradiction should be visible to the drafting
    *  agent, not just sitting in an inbox nobody's opened yet. Resolved and
@@ -145,6 +152,10 @@ export function buildPhaseMessages(phase: PhaseSpec, ctx: PhaseContext): { syste
         ctx.documentFacts.length > 0
           ? `DOCUMENT FACTS — extracted from uploaded documents:\n${JSON.stringify(ctx.documentFacts, null, 2)}`
           : "DOCUMENT FACTS: none extracted yet.",
+        "",
+        ctx.resolvedGapAnswers.length > 0
+          ? `MANAGER-PROVIDED ANSWERS — a manager answered these directly after an earlier draft flagged them as gaps. Use them to write the content now (provenance source "manager_note"); do not flag the same question again:\n${JSON.stringify(ctx.resolvedGapAnswers, null, 2)}`
+          : "MANAGER-PROVIDED ANSWERS: none recorded.",
         "",
         ctx.openFindings.length > 0
           ? `UNRESOLVED FINDINGS — contradictions or gaps reconciliation has flagged and a manager has not yet resolved. Reflect these honestly rather than picking a side silently:\n${JSON.stringify(ctx.openFindings, null, 2)}`
@@ -444,6 +455,15 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     [plan.client_id],
   );
 
+  // Gaps this phase's own sections previously flagged, since answered
+  // directly by a manager — the point of PATCH /plan-gaps/:gapId is exactly
+  // so a redraft can use the answer instead of asking again.
+  const resolvedGapAnswers = await query<{ section_key: string; question: string; manager_response: string }>(
+    `SELECT section_key, question, manager_response FROM plan_gaps
+      WHERE plan_id = $1 AND section_key = ANY($2) AND resolved_at IS NOT NULL AND manager_response IS NOT NULL`,
+    [planId, phase.sectionKeys],
+  );
+
   const rules = await houseRules(phase.agent as RuleAgent, client!.sector_id);
   const earlierSectionKeys = sectionsBeforePhase(phase.key);
   const earlierSections = earlierSectionKeys.length > 0
@@ -460,6 +480,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     claims,
     planInputs,
     documentFacts,
+    resolvedGapAnswers,
     openFindings,
     earlierSections,
     rules,
@@ -485,6 +506,14 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
         [draft.content, JSON.stringify(draft.provenance ?? []), draft.confidence ?? null, planId, spec.key],
       );
     }
+
+    // Clears this phase's own prior gaps — resolved ones already did their
+    // job by being fed into the prompt above (see resolvedGapAnswers); still-
+    // open ones get re-evaluated fresh by this same draft. Without this, a
+    // manager-answered gap the agent successfully used would sit around
+    // forever looking unresolved-looking-resolved, and a redraft would just
+    // pile up duplicate gap rows for the same question.
+    await c.query(`DELETE FROM plan_gaps WHERE plan_id = $1 AND section_key = ANY($2)`, [planId, phase.sectionKeys]);
 
     for (const g of outcome.gaps) {
       await c.query(

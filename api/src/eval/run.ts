@@ -71,6 +71,7 @@ export async function runEvalSuite(triggeredBy: string | null, note?: string): P
       claims: fixture.claims,
       planInputs: fixture.plan_inputs,
       documentFacts: fixture.document_facts,
+      resolvedGapAnswers: [], // fixtures test the base drafting prompt in isolation, not a live redraft-with-feedback loop
       openFindings: [], // fixtures test the base drafting prompt in isolation, not live reconciliation state
       earlierSections: [], // fixtures are single-phase — nothing "earlier" to simulate
       rules: "", // see file header: house rules excluded on purpose

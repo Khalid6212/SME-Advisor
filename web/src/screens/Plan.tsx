@@ -535,43 +535,61 @@ export function Plan({ clientId }: { clientId: string }) {
                         </button>
                       </div>
                     )}
-                    {openGaps.map((g) => (
-                      <div key={g.id} className="card">
-                        <div className="row">
-                          {!g.request_id && (
-                            <input
-                              type="checkbox" style={{ width: 16 }}
-                              checked={selectedGaps.has(g.id)}
-                              onChange={() => toggleGap(g.id)}
-                            />
-                          )}
-                          <span className={`pill ${g.blocking ? "bad" : "grey"}`}>
-                            {g.blocking ? "blocking" : "optional"}
-                          </span>
-                          <span className="muted" style={{ fontSize: 12 }}>{g.section_key}</span>
-                          <div style={{ flex: 1 }} />
-                          {g.request_id && <span className="pill info">requested</span>}
-                        </div>
-                        <p style={{ margin: "8px 0 4px" }}>{g.question}</p>
-                        <p className="muted" style={{ fontSize: 12, margin: "0 0 10px" }}>{g.why_it_matters}</p>
-
-                        <div className="stack" style={{ gap: 8, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
-                          <input
-                            value={gapResponseDrafts[g.id] ?? ""}
-                            onChange={(e) => setGapResponseDrafts((prev) => ({ ...prev, [g.id]: e.target.value }))}
-                            placeholder="Answer this directly — a call with the client, something you already know"
-                          />
-                          <div className="row">
-                            <button
-                              className="primary" onClick={() => resolveGap(g.id)}
-                              disabled={busy === `gap-${g.id}` || !(gapResponseDrafts[g.id] ?? "").trim()}
-                            >
-                              {busy === `gap-${g.id}` ? "Saving…" : "Save response"}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                    <div className="card" style={{ padding: 4, overflowX: "auto" }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th></th>
+                            <th>Section</th>
+                            <th>Question</th>
+                            <th>Status</th>
+                            <th>Response</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {openGaps.map((g) => (
+                            <tr key={g.id}>
+                              <td>
+                                {!g.request_id && (
+                                  <input
+                                    type="checkbox" style={{ width: 16 }}
+                                    checked={selectedGaps.has(g.id)}
+                                    onChange={() => toggleGap(g.id)}
+                                  />
+                                )}
+                              </td>
+                              <td className="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }}>{g.section_key}</td>
+                              <td style={{ minWidth: 220 }}>
+                                <div>{g.question}</div>
+                                <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{g.why_it_matters}</div>
+                              </td>
+                              <td style={{ whiteSpace: "nowrap" }}>
+                                <span className={`pill ${g.blocking ? "bad" : "grey"}`}>
+                                  {g.blocking ? "blocking" : "optional"}
+                                </span>
+                                {g.request_id && <span className="pill info" style={{ marginLeft: 6 }}>requested</span>}
+                              </td>
+                              <td style={{ minWidth: 220 }}>
+                                <input
+                                  value={gapResponseDrafts[g.id] ?? ""}
+                                  onChange={(e) => setGapResponseDrafts((prev) => ({ ...prev, [g.id]: e.target.value }))}
+                                  placeholder="Answer directly — a call with the client, something you already know"
+                                />
+                              </td>
+                              <td>
+                                <button
+                                  className="primary" onClick={() => resolveGap(g.id)}
+                                  disabled={busy === `gap-${g.id}` || !(gapResponseDrafts[g.id] ?? "").trim()}
+                                >
+                                  {busy === `gap-${g.id}` ? "Saving…" : "Save"}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </>
                 )}
 
@@ -580,19 +598,28 @@ export function Plan({ clientId }: { clientId: string }) {
                     <summary className="muted" style={{ cursor: "pointer" }}>
                       {resolvedGaps.length} resolved
                     </summary>
-                    {resolvedGaps.map((g) => (
-                      <div key={g.id} className="card" style={{ marginTop: 10, opacity: 0.75 }}>
-                        <div className="row">
-                          <span className="pill grey">{g.section_key}</span>
-                          <div style={{ flex: 1 }} />
-                          {g.resolved_by_email && <span className="muted" style={{ fontSize: 12 }}>by {g.resolved_by_email}</span>}
-                        </div>
-                        <p style={{ margin: "8px 0 4px" }}>{g.question}</p>
-                        {g.manager_response && (
-                          <p className="muted" style={{ fontSize: 13, margin: 0, fontStyle: "italic" }}>"{g.manager_response}"</p>
-                        )}
-                      </div>
-                    ))}
+                    <div className="card" style={{ padding: 4, marginTop: 10, overflowX: "auto" }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Section</th>
+                            <th>Question</th>
+                            <th>Response</th>
+                            <th>Resolved by</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {resolvedGaps.map((g) => (
+                            <tr key={g.id}>
+                              <td className="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }}>{g.section_key}</td>
+                              <td>{g.question}</td>
+                              <td className="muted" style={{ fontStyle: "italic" }}>{g.manager_response}</td>
+                              <td className="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }}>{g.resolved_by_email ?? "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </details>
                 )}
               </>

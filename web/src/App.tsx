@@ -438,82 +438,90 @@ export default function App() {
         </button>
       </div>
 
-      <div className="shell">
-        {view === "admin" ? (
-          <>
-            <h1>Team</h1>
-            <p className="sub">Advisors and admins who can access the platform.</p>
-            <Admin currentUserId={user.id} />
-          </>
-        ) : view === "rules" ? (
-          <>
-            <h1>House rules</h1>
-            <p className="sub">
-              Patterns the team's edits have taught the drafting agents — nothing here applies
-              until you approve it.
-            </p>
-            <HouseRules />
-          </>
-        ) : manager ? (
-          open ? (
+      {view !== "admin" && view !== "rules" && manager && open ? (
+        <div className="workspace">
+          <aside className="workspace-sidebar">
+            <button className="workspace-back" onClick={() => setOpen(null)}>← All clients</button>
+            <div className="workspace-client-name">{open.name}</div>
+            <div className="workspace-client-meta">{open.status.replace(/_/g, " ")}</div>
+            <nav className="workspace-nav">
+              {(["Data room", "Interview", "Findings", "Plans"] as const).map((t) => (
+                <button key={t} className={tab === t ? "active" : undefined} onClick={() => setTab(t)}>
+                  {t}
+                </button>
+              ))}
+            </nav>
+            <div className="workspace-sidebar-actions">
+              {user.role === "admin" && open.owner_user_id && (
+                <ResetPasswordButton userId={open.owner_user_id} />
+              )}
+              <DeleteClientButton client={open} onDeleted={() => setOpen(null)} />
+            </div>
+          </aside>
+          <div className="workspace-main">
+            {tab === "Plans"
+              ? <Plan clientId={open.id} />
+              : tab === "Interview"
+                ? <ManagerInterview clientId={open.id} />
+                : tab === "Findings"
+                  ? <Findings clientId={open.id} />
+                  : <DataRoom clientId={open.id} manager />}
+          </div>
+        </div>
+      ) : (
+        <div className="shell">
+          {view === "admin" ? (
             <>
-              <div className="row" style={{ marginTop: 20, justifyContent: "space-between" }}>
-                <button onClick={() => setOpen(null)}>← Pipeline</button>
-                <div className="row" style={{ gap: 8 }}>
-                  {user.role === "admin" && open.owner_user_id && (
-                    <ResetPasswordButton userId={open.owner_user_id} />
-                  )}
-                  <DeleteClientButton client={open} onDeleted={() => setOpen(null)} />
-                </div>
-              </div>
-              <h1>{open.name}</h1>
-              <p className="sub">{open.contact_email} · {open.status.replace(/_/g, " ")}</p>
-              <Tabs tabs={["Interview", "Data room", "Findings", "Plans"]} active={tab} onChange={setTab} />
-              {tab === "Plans"
-                ? <Plan clientId={open.id} />
-                : tab === "Interview"
-                  ? <ManagerInterview clientId={open.id} />
-                  : tab === "Findings"
-                    ? <Findings clientId={open.id} />
-                    : <DataRoom clientId={open.id} manager />}
+              <h1>Team</h1>
+              <p className="sub">Advisors and admins who can access the platform.</p>
+              <Admin currentUserId={user.id} />
             </>
-          ) : (
+          ) : view === "rules" ? (
+            <>
+              <h1>House rules</h1>
+              <p className="sub">
+                Patterns the team's edits have taught the drafting agents — nothing here applies
+                until you approve it.
+              </p>
+              <HouseRules />
+            </>
+          ) : manager ? (
             <>
               <h1>Client pipeline</h1>
               <p className="sub">Assessments awaiting review, and engagements in progress.</p>
               <Pipeline isAdmin={user.role === "admin"} onOpen={(c) => { setOpen(c); setTab("Data room"); }} />
             </>
-          )
-        ) : (
-          <>
-            <h1>{active?.name ?? "Your business"}</h1>
-            <p className="sub">
-              Just questions and the documents your adviser asks for. Nothing else.
-            </p>
-            {clients.length > 1 && (
-              <div className="row" style={{ gap: 6, marginBottom: 12 }}>
-                {clients.map((c) => (
-                  <button key={c.id} onClick={() => setOpen(c)}
-                    style={c.id === active?.id ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}>
-                    {c.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            {active ? (
-              <>
-                <Tabs tabs={["Assessment", "Documents"]} active={tab === "Data room" ? "Documents" : tab}
-                      onChange={setTab} />
-                {tab === "Assessment"
-                  ? <Interview clientId={active.id} />
-                  : <DataRoom clientId={active.id} manager={false} />}
-              </>
-            ) : (
-              <NewBusiness onCreated={(c) => { setClients((prev) => [...prev, c]); setOpen(c); }} />
-            )}
-          </>
-        )}
-      </div>
+          ) : (
+            <>
+              <h1>{active?.name ?? "Your business"}</h1>
+              <p className="sub">
+                Just questions and the documents your adviser asks for. Nothing else.
+              </p>
+              {clients.length > 1 && (
+                <div className="row" style={{ gap: 6, marginBottom: 12 }}>
+                  {clients.map((c) => (
+                    <button key={c.id} onClick={() => setOpen(c)}
+                      style={c.id === active?.id ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}>
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {active ? (
+                <>
+                  <Tabs tabs={["Assessment", "Documents"]} active={tab === "Data room" ? "Documents" : tab}
+                        onChange={setTab} />
+                  {tab === "Assessment"
+                    ? <Interview clientId={active.id} />
+                    : <DataRoom clientId={active.id} manager={false} />}
+                </>
+              ) : (
+                <NewBusiness onCreated={(c) => { setClients((prev) => [...prev, c]); setOpen(c); }} />
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
