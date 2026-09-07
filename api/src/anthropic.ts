@@ -24,6 +24,10 @@ export const EVAL_JUDGE_MODEL = "claude-sonnet-5";
  *  reading comprehension a threshold rule can't do (see patterns.ts for the
  *  deterministic half of this), but not Opus-level generative depth. */
 export const RECONCILE_MODEL = "claude-sonnet-5";
+/** Writing and running real code against a transaction ledger — the same
+ *  reasoning depth as the phase-drafting agents, not a simple read-and-
+ *  summarise task, so it shares MODEL's tier rather than a cheaper one. */
+export const LEDGER_MODEL = MODEL;
 
 export type ContentBlock = Record<string, any>;
 export type Message = { role: "user" | "assistant"; content: string | ContentBlock[] };

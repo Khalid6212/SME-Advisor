@@ -17,12 +17,18 @@
  * dated), which is what lets reconcileClient (see reconcile.ts) compare this
  * document against every other document and claim for the client, not just
  * against whichever claims this one was told to check.
+ *
+ * A sales-ledger export (document_type = 'sales_export') is dispatched to
+ * ledger.ts's code-execution agent instead of the single-pass reading below
+ * — see that file's header comment for why a transaction-level CSV needs a
+ * fundamentally different kind of agent.
  */
 
 import { type ContentBlock, EXTRACT_MODEL, type Message, runAgentLoop } from "../anthropic.ts";
 import { audit, one, query } from "../db.ts";
 import { storage } from "../storage.ts";
 import { reconcileClient } from "./reconcile.ts";
+import { analyzeLedger } from "./ledger.ts";
 
 const SUPPORTED_DOCUMENT = new Set(["application/pdf"]);
 const SUPPORTED_IMAGE = new Set(["image/jpeg", "image/png"]);
@@ -125,16 +131,24 @@ export async function extractDocument(documentId: string): Promise<void> {
   );
   if (!doc) return;
 
+  const node = await one<{ claim_keys: string[]; document_type: string | null }>(
+    `SELECT claim_keys, document_type FROM data_room_nodes WHERE id = $1`,
+    [doc.node_id],
+  );
+
+  // A sales-ledger export is a data job, not a reading job — routed to a
+  // dedicated code-execution agent instead of this single-pass reader. See
+  // ledger.ts's header comment for why that distinction matters in practice.
+  if (node?.document_type === "sales_export" && doc.mime_type === "text/csv") {
+    return analyzeLedger(documentId);
+  }
+
   const isText = TEXT_TYPES.has(doc.mime_type);
   if (!isText && !SUPPORTED_DOCUMENT.has(doc.mime_type) && !SUPPORTED_IMAGE.has(doc.mime_type)) {
     await recordStatus(documentId, "unsupported");
     return;
   }
 
-  const node = await one<{ claim_keys: string[] }>(
-    `SELECT claim_keys FROM data_room_nodes WHERE id = $1`,
-    [doc.node_id],
-  );
   const claimKeys = node?.claim_keys ?? [];
 
   const profile = await one<{ id: string }>(
