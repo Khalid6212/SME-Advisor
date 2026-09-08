@@ -11,6 +11,27 @@ const STATUS_PILL: Record<string, string> = {
   rejected: "bad",
 };
 
+const FOLDER_MARK: Record<string, string> = {
+  not_requested: "--line",
+  requested: "--info",
+  uploaded: "--warn",
+  under_review: "--warn",
+  accepted: "--good",
+  rejected: "--bad",
+};
+
+/** All `item`-kind descendants under a set of nodes, recursing through
+ *  nested folders — used to roll a folder's contents up into a single
+ *  ratio + status-mark strip in its collapsed header. */
+function flattenItems(nodes: Node[]): Node[] {
+  const out: Node[] = [];
+  for (const n of nodes) {
+    if (n.kind === "item") out.push(n);
+    else out.push(...flattenItems(n.children));
+  }
+  return out;
+}
+
 function bytes(n: number) {
   return n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
@@ -114,6 +135,7 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
   const [addingTo, setAddingTo] = useState<string | "root" | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<{ id: string; label: string } | null>(null);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
 
   const path = manager ? `/clients/${clientId}/data-room` : `/me/clients/${clientId}/data-room`;
 
@@ -272,47 +294,82 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
   const pct = room.progress.requested
     ? Math.round((room.progress.provided / room.progress.requested) * 100)
     : 0;
+  const statusCounts = room.tree.length
+    ? flattenItems(room.tree).reduce<Record<string, number>>((acc, it) => {
+        acc[it.status] = (acc[it.status] ?? 0) + 1;
+        return acc;
+      }, {})
+    : {};
 
   const notYetAdded = suggestions.filter((s) => s.node_id === null);
 
+  const toggleFolder = (id: string) =>
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
   const renderNode = (n: Node) => {
     if (n.kind === "folder") {
+      const items = flattenItems([n]);
+      const done = items.filter((it) => it.status === "accepted").length;
+      const isOpen = !collapsedFolders.has(n.id);
       return (
         <div key={n.id} className="node">
-          <div className="row" style={{ margin: "14px 0 4px" }}>
-            <div style={{ flex: 1, fontWeight: 600 }}>
-              <span className="path">{n.path}</span>{n.title_en}
-            </div>
-            {manager && editing !== n.id && (
+          <button className={`folder-head${isOpen ? " open" : ""}`} onClick={() => toggleFolder(n.id)}>
+            <svg className="chev" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor"
+                 strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 3.5 10.5 8 6 12.5" />
+            </svg>
+            <span className="path" style={{ fontSize: 11.5 }}>{n.path}</span>
+            <strong style={{ fontFamily: "var(--serif)", fontWeight: 500, fontSize: 15 }}>{n.title_en}</strong>
+            <span dir="rtl" className="muted" style={{ fontSize: 13 }}>{n.title_ar}</span>
+            <div style={{ flex: 1 }} />
+            {items.length > 0 && (
               <>
-                <button onClick={() => { setEditing(n.id); setAddingTo(null); }}>Edit</button>
-                <button onClick={() => setDeleting({ id: n.id, label: n.title_en })}>Delete</button>
+                <span className="muted" style={{ fontSize: 11.5 }}>{done}/{items.length}</span>
+                <div className="folder-marks">
+                  {items.map((it) => (
+                    <div key={it.id} style={{ background: `var(${FOLDER_MARK[it.status] ?? "--line"})` }} />
+                  ))}
+                </div>
               </>
             )}
-          </div>
-          {manager && editing === n.id && (
-            <NodeForm
-              allowKind={false}
-              initial={{ title_en: n.title_en, title_ar: n.title_ar, description_en: n.description_en ?? "" }}
-              submitLabel="Save"
-              onSubmit={(data) => updateNode(n.id, data)}
-              onCancel={() => setEditing(null)}
-            />
-          )}
-          {n.children.map(renderNode)}
-          {manager && (
-            addingTo === n.id ? (
-              <NodeForm
-                allowKind
-                submitLabel="Add"
-                onSubmit={(data) => addNode(n.id, data)}
-                onCancel={() => setAddingTo(null)}
-              />
-            ) : (
-              <button onClick={() => { setAddingTo(n.id); setEditing(null); }} style={{ marginTop: 4 }}>
-                + Add here
-              </button>
-            )
+          </button>
+
+          {isOpen && (
+            <>
+              {manager && editing === n.id ? (
+                <NodeForm
+                  allowKind={false}
+                  initial={{ title_en: n.title_en, title_ar: n.title_ar, description_en: n.description_en ?? "" }}
+                  submitLabel="Save"
+                  onSubmit={(data) => updateNode(n.id, data)}
+                  onCancel={() => setEditing(null)}
+                />
+              ) : manager && (
+                <div className="row" style={{ padding: "6px 4px 0", gap: 8 }}>
+                  <button onClick={() => { setEditing(n.id); setAddingTo(null); }}>Edit folder</button>
+                  <button onClick={() => setDeleting({ id: n.id, label: n.title_en })}>Delete folder</button>
+                </div>
+              )}
+              {n.children.map(renderNode)}
+              {manager && (
+                addingTo === n.id ? (
+                  <NodeForm
+                    allowKind
+                    submitLabel="Add"
+                    onSubmit={(data) => addNode(n.id, data)}
+                    onCancel={() => setAddingTo(null)}
+                  />
+                ) : (
+                  <button onClick={() => { setAddingTo(n.id); setEditing(null); }} style={{ marginTop: 4 }}>
+                    + Add here
+                  </button>
+                )
+              )}
+            </>
           )}
         </div>
       );
@@ -337,104 +394,124 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
       );
     }
 
+    const checkbox =
+      manager && n.status === "not_requested" ? (
+        <input
+          type="checkbox" style={{ width: 16 }}
+          checked={selected.has(n.id)}
+          onChange={(e) => {
+            const next = new Set(selected);
+            e.target.checked ? next.add(n.id) : next.delete(n.id);
+            setSelected(next);
+          }}
+        />
+      ) : manager && ["requested", "rejected"].includes(n.status) ? (
+        <input
+          type="checkbox" style={{ width: 16 }} title="Select to remind"
+          checked={remindSelected.has(n.id)}
+          onChange={(e) => {
+            const next = new Set(remindSelected);
+            e.target.checked ? next.add(n.id) : next.delete(n.id);
+            setRemindSelected(next);
+          }}
+        />
+      ) : null;
+
     return (
-      <div key={n.id} className="node item card" style={{ padding: 14 }}>
-        <div className="row">
-          {manager && n.status === "not_requested" && (
-            <input
-              type="checkbox" style={{ width: 16 }}
-              checked={selected.has(n.id)}
-              onChange={(e) => {
-                const next = new Set(selected);
-                e.target.checked ? next.add(n.id) : next.delete(n.id);
-                setSelected(next);
-              }}
-            />
-          )}
-          {manager && ["requested", "rejected"].includes(n.status) && (
-            <input
-              type="checkbox" style={{ width: 16 }} title="Select to remind"
-              checked={remindSelected.has(n.id)}
-              onChange={(e) => {
-                const next = new Set(remindSelected);
-                e.target.checked ? next.add(n.id) : next.delete(n.id);
-                setRemindSelected(next);
-              }}
-            />
-          )}
-          <div style={{ flex: 1 }}>
-            <span className="path">{n.path}</span>
-            {n.title_en}
-            {!n.required && <span className="muted" style={{ fontSize: 12 }}> · optional</span>}
+      <div key={n.id} className="node item">
+        <div className="drrow">
+          <div>{checkbox}</div>
+          <span className="path" style={{ fontSize: 11.5, paddingTop: 1 }}>{n.path}</span>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              <span>{n.title_en}</span>
+              <span dir="rtl" className="muted" style={{ fontSize: 12 }}>{n.title_ar}</span>
+              {!n.required && <span className="muted" style={{ fontSize: 12 }}>optional</span>}
+            </div>
+            {n.description_en && (
+              <p className="muted" style={{ fontSize: 12.5, margin: "4px 0 0" }}>{n.description_en}</p>
+            )}
+            {reasons.map((r, i) => (
+              <p key={i} className="dim" style={{ fontSize: 12, margin: "4px 0 0", fontStyle: "italic" }}>
+                “{r.owner_quote}”
+              </p>
+            ))}
           </div>
+
+          <div style={{ fontSize: 12.5 }}>
+            {docs.length === 0 ? (
+              <span className="muted">Nothing uploaded</span>
+            ) : (
+              docs.map((d: Doc) => (
+                <div key={d.id} style={{ marginBottom: 3 }}>
+                  <span className="dim">{d.filename}</span>{" "}
+                  <span className="muted">{bytes(d.size_bytes)}</span>
+                  {manager && <a href={api.downloadUrl(d.id)} style={{ marginLeft: 8 }}>Download</a>}
+                </div>
+              ))
+            )}
+            {manager && docs.length > 0 && (
+              <a href="#" onClick={(e) => { e.preventDefault(); void toggleHistory(n.id); }}>
+                {historyOpen === n.id ? "Hide history" : "History"}
+              </a>
+            )}
+          </div>
+
           <span className={`pill ${STATUS_PILL[n.status] ?? "grey"}`}>
             {n.status.replace(/_/g, " ")}
           </span>
-          {manager && (
-            <>
-              <button onClick={() => { setEditing(n.id); setAddingTo(null); }}>Edit</button>
-              <button onClick={() => setDeleting({ id: n.id, label: n.title_en })}>Delete</button>
-            </>
-          )}
-        </div>
 
-        {n.description_en && (
-          <p className="muted" style={{ fontSize: 13, margin: "6px 0 0" }}>{n.description_en}</p>
-        )}
-
-        {/* Why this was asked for, in the owner's own words. */}
-        {reasons.map((r, i) => (
-          <p key={i} className="dim" style={{ fontSize: 12, margin: "6px 0 0", fontStyle: "italic" }}>
-            “{r.owner_quote}”
-          </p>
-        ))}
-
-        {docs.map((d: Doc) => (
-          <div key={d.id} className="row" style={{ marginTop: 8, fontSize: 13 }}>
-            <span className="dim">{d.filename}</span>
-            <span className="muted">{bytes(d.size_bytes)}</span>
-            <div style={{ flex: 1 }} />
+          <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
+            {canReview && (
+              <>
+                <button
+                  style={{ borderColor: "var(--good)", color: "var(--good)" }}
+                  disabled={busy === n.id}
+                  onClick={() => setNodeStatus(n.id, "accepted")}
+                >
+                  Accept
+                </button>
+                <button
+                  style={{ borderColor: "var(--bad)", color: "var(--bad)" }}
+                  disabled={busy === n.id}
+                  onClick={() => setNodeStatus(n.id, "rejected")}
+                >
+                  Reject
+                </button>
+              </>
+            )}
+            {canUpload && (
+              <label style={{ display: "inline-block" }}>
+                <input
+                  type="file" style={{ display: "none" }}
+                  onChange={(e) => e.target.files?.[0] && upload(n.id, e.target.files[0])}
+                />
+                <span className="pill info" style={{ cursor: "pointer", padding: "6px 12px" }}>
+                  {busy === n.id ? "Uploading…" : "Upload"}
+                </span>
+              </label>
+            )}
             {manager && (
               <>
-                <a href="#" onClick={(e) => { e.preventDefault(); void toggleHistory(n.id); }}>
-                  {historyOpen === n.id ? "Hide history" : "History"}
-                </a>
-                <a href={api.downloadUrl(d.id)} style={{ marginLeft: 12 }}>Download</a>
+                <button onClick={() => { setEditing(n.id); setAddingTo(null); }}>Edit</button>
+                <button onClick={() => setDeleting({ id: n.id, label: n.title_en })}>Delete</button>
               </>
             )}
           </div>
-        ))}
-
-        {canReview && (
-          <div className="row" style={{ marginTop: 10, gap: 8 }}>
-            <button
-              style={{ borderColor: "var(--good)", color: "var(--good)" }}
-              disabled={busy === n.id}
-              onClick={() => setNodeStatus(n.id, "accepted")}
-            >
-              Accept
-            </button>
-            <button
-              style={{ borderColor: "var(--bad)", color: "var(--bad)" }}
-              disabled={busy === n.id}
-              onClick={() => setNodeStatus(n.id, "rejected")}
-            >
-              Reject
-            </button>
-          </div>
-        )}
+        </div>
 
         {manager && historyOpen === n.id && (() => {
           const nodeVersions = versions[n.id];
           return (
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+          <div style={{ padding: "0 12px 10px", borderTop: "1px solid var(--line-soft)" }}>
             {!nodeVersions ? (
-              <p className="muted" style={{ fontSize: 12, margin: 0 }}>Loading…</p>
+              <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>Loading…</p>
             ) : nodeVersions.length === 0 ? (
-              <p className="muted" style={{ fontSize: 12, margin: 0 }}>Nothing uploaded yet.</p>
+              <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>Nothing uploaded yet.</p>
             ) : (
               nodeVersions.map((v) => (
-                <div key={v.id} style={{ marginTop: 6 }}>
+                <div key={v.id} style={{ marginTop: 8 }}>
                   <div className="row" style={{ fontSize: 12 }}>
                     <span className={`pill ${v.superseded_at ? "grey" : "good"}`}>v{v.version}</span>
                     <span className="dim">{v.filename}</span>
@@ -467,20 +544,14 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
           </div>
           );
         })()}
-
-        {canUpload && (
-          <label style={{ display: "inline-block", marginTop: 10 }}>
-            <input
-              type="file" style={{ display: "none" }}
-              onChange={(e) => e.target.files?.[0] && upload(n.id, e.target.files[0])}
-            />
-            <span className="pill info" style={{ cursor: "pointer", padding: "6px 12px" }}>
-              {busy === n.id ? "Uploading…" : "Upload"}
-            </span>
-          </label>
-        )}
       </div>
     );
+  };
+
+  const totalItems = Object.values(statusCounts).reduce((a, b) => a + b, 0);
+  const STATUS_LABEL: Record<string, string> = {
+    not_requested: "not requested", requested: "requested", uploaded: "uploaded",
+    under_review: "in review", accepted: "accepted", rejected: "rejected",
   };
 
   return (
@@ -502,50 +573,78 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
             </button>
           )}
         </div>
-        <div className="bar" style={{ marginTop: 10 }}><div style={{ width: `${pct}%` }} /></div>
+        {totalItems > 0 ? (
+          <>
+            <div className="bar-segmented" style={{ marginTop: 10 }}>
+              {Object.entries(statusCounts)
+                .filter(([, count]) => count > 0)
+                .map(([status, count]) => (
+                  <div key={status} style={{ width: `${(count / totalItems) * 100}%`, background: `var(${FOLDER_MARK[status] ?? "--line"})` }} />
+                ))}
+            </div>
+            <div className="row" style={{ marginTop: 6, gap: 14, flexWrap: "wrap" }}>
+              {Object.entries(statusCounts).filter(([, count]) => count > 0).map(([status, count]) => (
+                <span key={status} className="muted" style={{ fontSize: 11.5 }}>
+                  <span style={{ color: `var(${FOLDER_MARK[status] ?? "--line"})` }}>●</span> {count} {STATUS_LABEL[status] ?? status}
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="bar" style={{ marginTop: 10 }}><div style={{ width: `${pct}%` }} /></div>
+        )}
       </div>
 
-      {manager && notYetAdded.length > 0 && (
-        <div className="card">
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>Suggested, based on the interview</div>
-          <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
-            Documents that would verify what the owner already told us — not yet in this room.
-          </p>
-          {notYetAdded.map((s) => (
-            <div key={s.document_type} className="row" style={{ marginTop: 8, gap: 8 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13 }}>{s.title}</div>
-                {s.reasons.map((r, i) => (
-                  <p key={i} className="dim" style={{ fontSize: 12, margin: "2px 0 0", fontStyle: "italic" }}>
-                    “{r.owner_quote}”
-                  </p>
-                ))}
-              </div>
-              <button onClick={() => addSuggestion(s)} disabled={busy === `suggest-${s.document_type}`}>
-                {busy === `suggest-${s.document_type}` ? "Adding…" : "Add to room"}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
       {error && error !== "none" && <div className="card" style={{ color: "var(--bad)" }}>{error}</div>}
-      {room.tree.map(renderNode)}
 
-      {manager && (
-        addingTo === "root" ? (
-          <NodeForm
-            allowKind
-            submitLabel="Add"
-            onSubmit={(data) => addNode(null, data)}
-            onCancel={() => setAddingTo(null)}
-          />
-        ) : (
-          <button onClick={() => { setAddingTo("root"); setEditing(null); }} style={{ marginTop: 12 }}>
-            + Add top-level folder or document
-          </button>
-        )
-      )}
+      <div className="split" style={{ marginTop: 12 }}>
+        <div className="mainc">
+          {room.tree.map(renderNode)}
+
+          {manager && (
+            addingTo === "root" ? (
+              <NodeForm
+                allowKind
+                submitLabel="Add"
+                onSubmit={(data) => addNode(null, data)}
+                onCancel={() => setAddingTo(null)}
+              />
+            ) : (
+              <button onClick={() => { setAddingTo("root"); setEditing(null); }} style={{ marginTop: 12 }}>
+                + Add top-level folder or document
+              </button>
+            )
+          )}
+        </div>
+
+        {manager && notYetAdded.length > 0 && (
+          <div className="rail">
+            <div className="card">
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Suggested, based on the interview</div>
+              <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+                Documents that would verify what the owner already told us — not yet in this room.
+              </p>
+              {notYetAdded.map((s) => (
+                <div key={s.document_type} style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 13 }}>{s.title}</div>
+                  {s.reasons.map((r, i) => (
+                    <p key={i} className="dim" style={{ fontSize: 12, margin: "2px 0 0", fontStyle: "italic" }}>
+                      “{r.owner_quote}”
+                    </p>
+                  ))}
+                  <button
+                    style={{ marginTop: 6 }}
+                    onClick={() => addSuggestion(s)}
+                    disabled={busy === `suggest-${s.document_type}`}
+                  >
+                    {busy === `suggest-${s.document_type}` ? "Adding…" : "Add to room"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       <ConfirmDialog
         open={deleting !== null}

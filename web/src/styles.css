@@ -11,6 +11,7 @@
   --bg: #0a0e1a;
   --panel: #121729;
   --panel-raised: #181f38;
+  --panel-sunken: #0e1324;
   --line: #262f4a;
   --line-soft: #1b2340;
   --text: #eef1fb;
@@ -38,6 +39,7 @@
   --bg: #faf9f6;
   --panel: #ffffff;
   --panel-raised: #f3f1ea;
+  --panel-sunken: #f7f5ef;
   --line: #e4e0d4;
   --line-soft: #ece9de;
   --text: #1c1f2b;
@@ -203,12 +205,83 @@ h2 { font-size: 18px; margin: 28px 0 10px; letter-spacing: -0.1px; }
 .step-marker.approved { background: var(--good); border-color: var(--good); }
 .step-marker.drafted { background: color-mix(in srgb, var(--warn) 20%, var(--panel)); border-color: var(--warn); }
 
-/* Findings — a colored stripe reads as severity faster than a pill alone. */
-.finding-stripe { width: 3px; border-radius: 2px; flex: none; align-self: stretch; }
-.finding-stripe.critical { background: var(--bad); }
-.finding-stripe.high { background: var(--warn); }
-.finding-stripe.medium { background: var(--info); }
-.finding-stripe.low { background: var(--faint); }
+/* A colored stripe reads as severity/confidence faster than a pill alone —
+ * used for Findings (severity) and House Rules (confidence). Default
+ * (no modifier) is --faint, for anything without a specific tone. */
+.stripe { width: 3px; border-radius: 2px; flex: none; align-self: stretch; background: var(--faint); }
+.stripe.critical { background: var(--bad); }
+.stripe.high { background: var(--warn); }
+.stripe.medium { background: var(--info); }
+.stripe.low { background: var(--faint); }
+.stripe.strong { background: var(--good); }
+.stripe.plausible { background: var(--info); }
+.stripe.weak { background: var(--faint); }
+
+/* Skeleton loading placeholder. */
+@keyframes shimmer { 0% { opacity: .35; } 50% { opacity: .7; } 100% { opacity: .35; } }
+.sk { background: var(--panel-raised); border-radius: 6px; animation: shimmer 1.4s ease-in-out infinite; }
+
+/* Sidebar nav item, with an icon slot — extends the .workspace-nav buttons
+ * (App.tsx) with an inline SVG icon (currentColor, so it themes for free)
+ * and an optional trailing count. */
+.navi { display: flex; align-items: center; gap: 10px; }
+.navi svg { flex: none; color: var(--faint); }
+.navi.active svg { color: var(--accent); }
+.navi .navi-count { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+
+/* Data room item row — a compact grid instead of a stacked card, so a full
+ * checklist reads at a glance. Collapses to a simpler stacked layout under
+ * 1000px rather than force horizontal scroll on a form-heavy row. */
+.drrow {
+  display: grid; align-items: start; gap: 12px; padding: 9px 12px;
+  border-top: 1px solid var(--line-soft);
+  grid-template-columns: 16px 30px minmax(0, 1fr) 170px 104px 132px;
+}
+.drrow:first-child { border-top: none; }
+.drrow:hover { background: color-mix(in srgb, var(--text) 2.5%, transparent); }
+.drrow.sel { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+@media (max-width: 1000px) {
+  .drrow { grid-template-columns: 16px 26px minmax(0, 1fr) 100px; row-gap: 8px; }
+  .drrow > :nth-child(1) { grid-column: 1; grid-row: 1; }
+  .drrow > :nth-child(2) { grid-column: 2; grid-row: 1; }
+  .drrow > :nth-child(3) { grid-column: 3; grid-row: 1; }
+  .drrow > :nth-child(5) { grid-column: 4; grid-row: 1; }
+  .drrow > :nth-child(4) { grid-column: 3 / -1; grid-row: 2; }
+  .drrow > :nth-child(6) { grid-column: 3 / -1; grid-row: 3; justify-content: flex-start; }
+}
+
+/* Collapsible folder header (Data room) — same chevron-rotate language as
+ * the phase accordion, plus a compact per-item status strip so a folder's
+ * shape is visible even collapsed. */
+.folder-head {
+  width: 100%; display: flex; align-items: center; gap: 10px; cursor: pointer;
+  background: var(--panel-sunken); border: none; border-radius: 10px;
+  padding: 9px 12px; font: inherit; color: var(--text); text-align: left;
+}
+.folder-head .chev { transition: transform 0.15s ease; color: var(--faint); flex: none; }
+.folder-head.open .chev { transform: rotate(90deg); }
+.folder-marks { display: flex; gap: 2px; width: 56px; flex: none; }
+.folder-marks > div { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
+
+/* Segmented progress bar — shows the status breakdown (accepted/under
+ * review/rejected), not just raw completion percentage. */
+.bar-segmented { display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: var(--line); }
+.bar-segmented > div { height: 100%; }
+
+/* Two-column layout: main content + a narrower side rail (suggestions,
+ * a claims ledger). Rail stacks below content on narrow screens rather
+ * than squeezing to illegibility. */
+.split { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+.split .mainc { flex: 1 1 460px; min-width: 0; }
+.split .rail { width: 280px; flex: none; }
+@media (max-width: 1120px) { .split .rail { width: 100%; } }
+
+/* Before/after comparison (House Rules' source edits). */
+.diff2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+.diff2 > div { background: var(--panel-sunken); border-radius: 10px; padding: 10px 12px; }
+.diff2 > div.before { border-left: 2px solid var(--bad); }
+.diff2 > div.after { border-left: 2px solid var(--good); }
+@media (max-width: 640px) { .diff2 { grid-template-columns: 1fr; } }
 
 /* Financial exhibits — monospace, tabular, right-aligned figures; the label
  * column stays in the body sans so it reads as prose, not data. */

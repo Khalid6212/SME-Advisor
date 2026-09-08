@@ -333,6 +333,27 @@ function NewBusiness({ onCreated }: { onCreated: (client: ClientRow) => void }) 
   );
 }
 
+/** Sidebar nav icons — plain inline SVG (currentColor, no icon font/CDN)
+ *  so they theme for free and never fail to load. One 16x16 stroke path
+ *  per workspace section. */
+const NAV_ICON_PATH: Record<string, string> = {
+  "Data room": "M2 4.2c0-.7.5-1.2 1.2-1.2h2.6l1.4 1.6h4.6c.7 0 1.2.5 1.2 1.2v6.6c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2z",
+  Interview: "M13.5 9.4c0 .8-.6 1.4-1.4 1.4H6.2L3 13.4V4.4c0-.8.6-1.4 1.4-1.4h7.7c.8 0 1.4.6 1.4 1.4z",
+  Findings: "M4 13.5V2.8M4 3.4h7.6l-1.1 2.6 1.1 2.6H4",
+  Plans: "M4 2.6h5l3 3v7.8H4zM9 2.6v3h3M6 9h4M6 11.2h4",
+};
+
+function NavIcon({ label }: { label: string }) {
+  const d = NAV_ICON_PATH[label];
+  if (!d) return null;
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor"
+         strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round">
+      <path d={d} />
+    </svg>
+  );
+}
+
 function Tabs({ tabs, active, onChange }: {
   tabs: string[]; active: string; onChange: (t: string) => void;
 }) {
@@ -446,8 +467,9 @@ export default function App() {
             <div className="workspace-client-meta">{open.status.replace(/_/g, " ")}</div>
             <nav className="workspace-nav">
               {(["Data room", "Interview", "Findings", "Plans"] as const).map((t) => (
-                <button key={t} className={tab === t ? "active" : undefined} onClick={() => setTab(t)}>
-                  {t}
+                <button key={t} className={`navi${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>
+                  <NavIcon label={t} />
+                  <span>{t}</span>
                 </button>
               ))}
             </nav>
