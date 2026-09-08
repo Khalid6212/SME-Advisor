@@ -235,8 +235,13 @@ h2 { font-size: 18px; margin: 28px 0 10px; letter-spacing: -0.1px; }
 .drrow {
   display: grid; align-items: start; gap: 12px; padding: 9px 12px;
   border-top: 1px solid var(--line-soft);
-  grid-template-columns: 16px 30px minmax(0, 1fr) 170px 104px 132px;
+  grid-template-columns: 16px 30px minmax(0, 1fr) minmax(0, 170px) minmax(0, 104px) minmax(0, 132px);
 }
+/* Grid items default to min-width:auto, which refuses to shrink below
+ * content size — a status pill next to the upload/edit/delete buttons
+ * would rather overflow into the neighboring column than wrap. */
+.drrow > * { min-width: 0; }
+.drrow > :last-child { flex-wrap: wrap; }
 .drrow:first-child { border-top: none; }
 .drrow:hover { background: color-mix(in srgb, var(--text) 2.5%, transparent); }
 .drrow.sel { background: color-mix(in srgb, var(--accent) 8%, transparent); }

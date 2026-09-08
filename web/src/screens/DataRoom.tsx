@@ -136,6 +136,7 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
   const [editing, setEditing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<{ id: string; label: string } | null>(null);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
 
   const path = manager ? `/clients/${clientId}/data-room` : `/me/clients/${clientId}/data-room`;
 
@@ -597,6 +598,14 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
 
       {error && error !== "none" && <div className="card" style={{ color: "var(--bad)" }}>{error}</div>}
 
+      {manager && notYetAdded.length > 0 && !suggestionsOpen && (
+        <div style={{ textAlign: "right", marginTop: 12 }}>
+          <button onClick={() => setSuggestionsOpen(true)}>
+            Suggested documents ({notYetAdded.length})
+          </button>
+        </div>
+      )}
+
       <div className="split" style={{ marginTop: 12 }}>
         <div className="mainc">
           {room.tree.map(renderNode)}
@@ -617,10 +626,15 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
           )}
         </div>
 
-        {manager && notYetAdded.length > 0 && (
+        {manager && notYetAdded.length > 0 && suggestionsOpen && (
           <div className="rail">
             <div className="card">
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>Suggested, based on the interview</div>
+              <div className="row" style={{ marginBottom: 4 }}>
+                <div style={{ fontWeight: 600, flex: 1 }}>Suggested, based on the interview</div>
+                <button onClick={() => setSuggestionsOpen(false)} style={{ fontSize: 11.5, padding: "3px 8px" }}>
+                  Hide
+                </button>
+              </div>
               <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
                 Documents that would verify what the owner already told us — not yet in this room.
               </p>
