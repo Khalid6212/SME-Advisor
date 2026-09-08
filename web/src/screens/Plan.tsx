@@ -33,6 +33,7 @@ const PHASE_STATUS_PILL: Record<string, string> = { pending: "grey", drafted: "w
 const PHASE_STATUS_LABEL: Record<string, string> = {
   pending: "Not started", drafted: "Drafted — needs approval", approved: "Approved",
 };
+const PHASE_DOT: Record<string, string> = { pending: "faint", drafted: "warn", approved: "good" };
 
 const CONFIDENCE: Record<string, string> = {
   well_supported: "good", thin: "warn", blocked: "bad",
@@ -221,8 +222,10 @@ export function Plan({ clientId }: { clientId: string }) {
   const [phaseRatingNote, setPhaseRatingNote] = useState("");
   const [chosenOption, setChosenOption] = useState<string | null>(null);
   const [decisionRationale, setDecisionRationale] = useState("");
-  const [expandedPhase, setExpandedPhase] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"gaps" | "phases" | "financials" | "assumptions">("phases");
+  // Rail selection: either a phase_key or one of the fixed non-phase
+  // destinations ("gaps" | "financials" | "assumptions") — replaces the old
+  // tab bar + separate expanded-phase state with one selection.
+  const [selectedNav, setSelectedNav] = useState<string | null>(null);
 
   const loadList = async () => setPlans(await api.get(`/clients/${clientId}/plans`));
   const loadOutstanding = async () =>
@@ -239,13 +242,13 @@ export function Plan({ clientId }: { clientId: string }) {
   // Defaults to whichever phase actually needs attention (the first
   // unlocked, not-yet-approved one) so opening a plan lands somewhere
   // useful — but only when switching to a different plan, not on every
-  // refetch after an action, or a manual expand/collapse would keep
+  // refetch after an action, or a manual rail selection would keep
   // getting silently reverted mid-review.
   useEffect(() => {
     if (!view) return;
     const ph = view.phases;
     const active = ph.find((p, i) => p.status !== "approved" && (i === 0 || ph[i - 1]!.status === "approved"));
-    setExpandedPhase(active?.phase_key ?? null);
+    setSelectedNav(active?.phase_key ?? ph[0]?.phase_key ?? "gaps");
   }, [view?.plan.id]);
 
   const startPlan = async (key: string) => {
@@ -498,25 +501,46 @@ export function Plan({ clientId }: { clientId: string }) {
             </div>
           )}
 
-          <div className="row" role="tablist" style={{ gap: 6, margin: "26px 0 16px", flexWrap: "wrap" }}>
-            {(
-              [
-                ["gaps", `Gaps${openGapsCount > 0 ? ` (${openGapsCount})` : ""}`],
-                ["phases", `Phases (${approvedPhaseCount}/${phases.length})`],
-                ["financials", "Financials"],
-                ["assumptions", `Assumptions${view.assumptions.length > 0 ? ` (${view.assumptions.length})` : ""}`],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key} role="tab" aria-selected={activeTab === key} onClick={() => setActiveTab(key)}
-                style={activeTab === key ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <p className="section-sub" style={{ margin: "26px 0 12px" }}>
+            {approvedPhaseCount}/{phases.length} phases approved. Pick a phase, or jump to gaps,
+            financials, or assumptions below.
+          </p>
 
-          {activeTab === "gaps" && (() => {
+          <div className="split">
+            <div className="rail" style={{ ["--rw" as any]: "236px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {phases.map((phase) => (
+                  <button
+                    key={phase.phase_key}
+                    className={`prow${selectedNav === phase.phase_key ? " on" : ""}`}
+                    onClick={() => setSelectedNav(phase.phase_key)}
+                  >
+                    <span className="num" style={{ fontSize: 11, color: "var(--faint)", flex: "none" }}>
+                      {String(phase.position).padStart(2, "0")}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {phase.title.en}
+                    </span>
+                    <span className="dot" style={{ background: `var(--${PHASE_DOT[phase.status]})` }} />
+                  </button>
+                ))}
+                <div style={{ borderTop: "1px solid var(--line)", margin: "8px 4px" }} />
+                <button className={`prow${selectedNav === "gaps" ? " on" : ""}`} onClick={() => setSelectedNav("gaps")}>
+                  <span style={{ flex: 1 }}>Gaps</span>
+                  {openGapsCount > 0 && <span className="num" style={{ fontSize: 11, color: "var(--faint)" }}>{openGapsCount}</span>}
+                </button>
+                <button className={`prow${selectedNav === "financials" ? " on" : ""}`} onClick={() => setSelectedNav("financials")}>
+                  Financials
+                </button>
+                <button className={`prow${selectedNav === "assumptions" ? " on" : ""}`} onClick={() => setSelectedNav("assumptions")}>
+                  <span style={{ flex: 1 }}>Assumptions</span>
+                  {view.assumptions.length > 0 && <span className="num" style={{ fontSize: 11, color: "var(--faint)" }}>{view.assumptions.length}</span>}
+                </button>
+              </div>
+            </div>
+
+            <div className="mainc">
+          {selectedNav === "gaps" && (() => {
             const openGaps = view.gaps.filter((g) => !g.resolved_at);
             const resolvedGaps = view.gaps.filter((g) => g.resolved_at);
             return (
@@ -632,150 +656,164 @@ export function Plan({ clientId }: { clientId: string }) {
             );
           })()}
 
-          {activeTab === "phases" && (
-          <>
-          <p className="section-sub" style={{ marginTop: 0 }}>
-            Click a phase to open it. Collapsed phases show status only, so the whole plan's progress
-            fits on one screen.
-          </p>
-          <div className="stepper">
-          {phases.map((phase) => {
+          {selectedNav === "financials" && (
+            view.financials.length === 0 ? (
+              <div className="card muted">No financial statements computed yet — these appear once the financial phase is drafted.</div>
+            ) : (
+              <FinancialsExhibits rows={view.financials} />
+            )
+          )}
+
+          {selectedNav === "assumptions" && (
+            view.assumptions.length === 0 ? (
+              <div className="card muted">No forward-looking assumptions recorded yet.</div>
+            ) : (
+              <div className="card">
+                {view.assumptions.map((a, i) => (
+                  <div key={i} className="row" style={{ borderTop: i ? "1px solid var(--line)" : undefined, padding: "8px 0" }}>
+                    <span style={{ flex: 1 }}>{a.label}</span>
+                    <strong>{a.value}</strong>
+                    <span className="muted" style={{ fontSize: 12, flex: 1, textAlign: "right" }}>{a.basis}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {(() => {
+            const phase = phases.find((p) => p.phase_key === selectedNav);
+            if (!phase) return null;
             const unlocked = isPhaseUnlocked(phase);
             const phaseSections = visibleSections.filter((s) => phase.section_keys.includes(s.key));
-            const isOpen = expandedPhase === phase.phase_key;
+            const phaseGaps = view.gaps.filter((g) => phase.section_keys.includes(g.section_key) && !g.resolved_at);
 
             return (
-              <div
-                key={phase.phase_key} className="card"
-                style={{ borderColor: phase.status === "approved" ? "var(--good)" : undefined }}
-              >
-                <div
-                  className="row" style={{ cursor: "pointer" }}
-                  onClick={() => setExpandedPhase(isOpen ? null : phase.phase_key)}
-                >
-                  <span className={`step-marker ${phase.status}`} />
-                  <strong style={{ flex: 1 }}>{phase.position}. {phase.title.en}</strong>
+              <div className="card" style={{ padding: "22px 26px 18px" }}>
+                <div className="row" style={{ marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                  <span className="muted" style={{ fontSize: 11.5 }}>Phase {phase.position}</span>
+                  <h2 style={{ margin: 0, flex: 1, minWidth: 0 }}>{phase.title.en}</h2>
                   {phase.rating && <span className="pill info">{phase.rating}/5</span>}
                   <span className={`pill ${PHASE_STATUS_PILL[phase.status]}`}>{PHASE_STATUS_LABEL[phase.status]}</span>
-                  <span className="muted" aria-hidden style={{ transform: isOpen ? "rotate(90deg)" : undefined, transition: "transform 0.15s ease", display: "inline-block" }}>
-                    ›
-                  </span>
                 </div>
 
                 {phase.status === "approved" && phase.chosen_option && phase.options_presented && (
-                  <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+                  <p className="muted" style={{ fontSize: 12, margin: "0 0 14px" }}>
                     <strong>Decision:</strong>{" "}
                     {phase.options_presented.options.find((o) => o.key === phase.chosen_option)?.label ?? phase.chosen_option}
                     {phase.decision_rationale && <> — "{phase.decision_rationale}"</>}
                   </p>
                 )}
 
-                {isOpen && (
-                <>
-                  {phase.status === "pending" && unlocked && (
-                    <div className="row" style={{ marginTop: 10 }}>
-                      <button className="primary" onClick={() => draftPhase(phase.phase_key)} disabled={busy === phase.phase_key}>
-                        {busy === phase.phase_key ? "Drafting…" : "Draft this phase"}
-                      </button>
-                    </div>
-                  )}
-                  {phase.status === "pending" && !unlocked && (
-                    <p className="muted" style={{ fontSize: 12, margin: "10px 0 0" }}>
-                      Approve the preceding phase to unlock this one.
-                    </p>
-                  )}
-
-                  {phase.status === "drafted" && approvingPhase !== phase.phase_key && (
-                    <div className="row" style={{ marginTop: 10 }}>
-                      <button onClick={() => draftPhase(phase.phase_key)} disabled={!!busy}>
-                        {busy === phase.phase_key ? "Redrafting…" : "Redraft"}
-                      </button>
-                      <button className="primary" onClick={() => setApprovingPhase(phase.phase_key)}>Approve phase</button>
-                    </div>
-                  )}
-                  {phase.status === "drafted" && approvingPhase === phase.phase_key && (
-                    <div className="stack" style={{ marginTop: 10, gap: 8 }}>
-                      {phase.options_presented && (
-                        <div className="stack" style={{ gap: 8, paddingBottom: 8, borderBottom: "1px solid var(--line)" }}>
-                          <strong style={{ fontSize: 13 }}>{phase.options_presented.question}</strong>
-                          {phase.options_presented.options.map((o) => (
-                            <label
-                              key={o.key} className="card" style={{
-                                margin: 0, cursor: "pointer", display: "block",
-                                borderColor: chosenOption === o.key ? "var(--info)" : undefined,
-                              }}
-                            >
-                              <div className="row">
-                                <input
-                                  type="radio" name={`options-${phase.phase_key}`} style={{ width: 16 }}
-                                  checked={chosenOption === o.key} onChange={() => setChosenOption(o.key)}
-                                />
-                                <strong>{o.label}</strong>
-                              </div>
-                              <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>
-                                <strong>For:</strong> {o.case_for}
-                              </p>
-                              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
-                                <strong>Against:</strong> {o.case_against}
-                              </p>
-                            </label>
-                          ))}
-                          <input
-                            value={decisionRationale} onChange={(e) => setDecisionRationale(e.target.value)}
-                            placeholder="Why this one? (required)"
-                          />
-                        </div>
-                      )}
-                      <div className="row" style={{ gap: 6 }}>
-                        <span className="muted" style={{ fontSize: 12 }}>Rate this draft (optional):</span>
-                        {[1, 2, 3, 4, 5].map((n) => (
-                          <button
-                            key={n} onClick={() => setPhaseRating(phaseRating === n ? null : n)}
-                            style={phaseRating === n ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
-                          >
-                            {n}
-                          </button>
-                        ))}
-                      </div>
-                      <input
-                        value={phaseRatingNote} onChange={(e) => setPhaseRatingNote(e.target.value)}
-                        placeholder="Note (optional)"
-                      />
-                      <div className="row">
-                        <button
-                          className="primary" onClick={() => approvePhaseAction(phase.phase_key)}
-                          disabled={
-                            busy === `approve-${phase.phase_key}` ||
-                            !!(phase.options_presented && (!chosenOption || !decisionRationale.trim()))
-                          }
-                        >
-                          {busy === `approve-${phase.phase_key}` ? "Approving…" : "Approve phase"}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setApprovingPhase(null); setPhaseRating(null); setPhaseRatingNote("");
-                            setChosenOption(null); setDecisionRationale("");
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {phase.status === "approved" && (
-                    <div className="row" style={{ marginTop: 10 }}>
-                      <button onClick={() => draftPhase(phase.phase_key)} disabled={!!busy}>
-                        {busy === phase.phase_key ? "Redrafting…" : "Redraft (resets later phases)"}
-                      </button>
-                    </div>
-                  )}
-                  {error && (busy === phase.phase_key || approvingPhase === phase.phase_key) && (
-                    <p style={{ color: "var(--bad)", fontSize: 13, margin: "8px 0 0" }}>{error}</p>
-                  )}
-                </>
+                {phase.status === "pending" && unlocked && (
+                  <div className="row">
+                    <button className="primary" onClick={() => draftPhase(phase.phase_key)} disabled={busy === phase.phase_key}>
+                      {busy === phase.phase_key ? "Drafting…" : "Draft this phase"}
+                    </button>
+                  </div>
+                )}
+                {phase.status === "pending" && !unlocked && (
+                  <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                    Approve the preceding phase to unlock this one.
+                  </p>
                 )}
 
-                {isOpen && phaseSections.map((s) => (
+                {phase.status === "drafted" && approvingPhase !== phase.phase_key && (
+                  <div className="row">
+                    <button onClick={() => draftPhase(phase.phase_key)} disabled={!!busy}>
+                      {busy === phase.phase_key ? "Redrafting…" : "Redraft"}
+                    </button>
+                    <button className="primary" onClick={() => setApprovingPhase(phase.phase_key)}>Approve phase</button>
+                  </div>
+                )}
+                {phase.status === "drafted" && approvingPhase === phase.phase_key && (
+                  <div className="stack" style={{ gap: 8 }}>
+                    {phase.options_presented && (
+                      <div className="stack" style={{ gap: 8, paddingBottom: 8, borderBottom: "1px solid var(--line)" }}>
+                        <strong style={{ fontSize: 13 }}>{phase.options_presented.question}</strong>
+                        {phase.options_presented.options.map((o) => (
+                          <label
+                            key={o.key} className="card" style={{
+                              margin: 0, cursor: "pointer", display: "block",
+                              borderColor: chosenOption === o.key ? "var(--info)" : undefined,
+                            }}
+                          >
+                            <div className="row">
+                              <input
+                                type="radio" name={`options-${phase.phase_key}`} style={{ width: 16 }}
+                                checked={chosenOption === o.key} onChange={() => setChosenOption(o.key)}
+                              />
+                              <strong>{o.label}</strong>
+                            </div>
+                            <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>
+                              <strong>For:</strong> {o.case_for}
+                            </p>
+                            <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                              <strong>Against:</strong> {o.case_against}
+                            </p>
+                          </label>
+                        ))}
+                        <input
+                          value={decisionRationale} onChange={(e) => setDecisionRationale(e.target.value)}
+                          placeholder="Why this one? (required)"
+                        />
+                      </div>
+                    )}
+                    <div className="row" style={{ gap: 6 }}>
+                      <span className="muted" style={{ fontSize: 12 }}>Rate this draft (optional):</span>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <button
+                          key={n} onClick={() => setPhaseRating(phaseRating === n ? null : n)}
+                          style={phaseRating === n ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      value={phaseRatingNote} onChange={(e) => setPhaseRatingNote(e.target.value)}
+                      placeholder="Note (optional)"
+                    />
+                    <div className="row">
+                      <button
+                        className="primary" onClick={() => approvePhaseAction(phase.phase_key)}
+                        disabled={
+                          busy === `approve-${phase.phase_key}` ||
+                          !!(phase.options_presented && (!chosenOption || !decisionRationale.trim()))
+                        }
+                      >
+                        {busy === `approve-${phase.phase_key}` ? "Approving…" : "Approve phase"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setApprovingPhase(null); setPhaseRating(null); setPhaseRatingNote("");
+                          setChosenOption(null); setDecisionRationale("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {phase.status === "approved" && (
+                  <div className="row">
+                    <button onClick={() => draftPhase(phase.phase_key)} disabled={!!busy}>
+                      {busy === phase.phase_key ? "Redrafting…" : "Redraft (resets later phases)"}
+                    </button>
+                  </div>
+                )}
+                {error && (busy === phase.phase_key || approvingPhase === phase.phase_key) && (
+                  <p style={{ color: "var(--bad)", fontSize: 13, margin: "8px 0 0" }}>{error}</p>
+                )}
+
+                {phaseGaps.length > 0 && (
+                  <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--line-soft)" }}>
+                    <a href="#" onClick={(e) => { e.preventDefault(); setSelectedNav("gaps"); }} style={{ fontSize: 12 }}>
+                      {phaseGaps.length} open gap{phaseGaps.length === 1 ? "" : "s"} in this phase
+                    </a>
+                  </div>
+                )}
+
+                {phaseSections.map((s) => (
                   <div key={s.id} className="section-block">
                     <div className="row">
                       <strong style={{ flex: 1 }}>{s.title_en}</strong>
@@ -831,34 +869,9 @@ export function Plan({ clientId }: { clientId: string }) {
                 ))}
               </div>
             );
-          })}
+          })()}
+            </div>
           </div>
-          </>
-          )}
-
-          {activeTab === "financials" && (
-            view.financials.length === 0 ? (
-              <div className="card muted">No financial statements computed yet — these appear once the financial phase is drafted.</div>
-            ) : (
-              <FinancialsExhibits rows={view.financials} />
-            )
-          )}
-
-          {activeTab === "assumptions" && (
-            view.assumptions.length === 0 ? (
-              <div className="card muted">No forward-looking assumptions recorded yet.</div>
-            ) : (
-              <div className="card">
-                {view.assumptions.map((a, i) => (
-                  <div key={i} className="row" style={{ borderTop: i ? "1px solid var(--line)" : undefined, padding: "8px 0" }}>
-                    <span style={{ flex: 1 }}>{a.label}</span>
-                    <strong>{a.value}</strong>
-                    <span className="muted" style={{ fontSize: 12, flex: 1, textAlign: "right" }}>{a.basis}</span>
-                  </div>
-                ))}
-              </div>
-            )
-          )}
         </>
       )}
     </div>

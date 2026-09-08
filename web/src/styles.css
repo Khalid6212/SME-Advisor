@@ -229,30 +229,35 @@ h2 { font-size: 18px; margin: 28px 0 10px; letter-spacing: -0.1px; }
 .navi.active svg { color: var(--accent); }
 .navi .navi-count { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); }
 
-/* Data room item row — a compact grid instead of a stacked card, so a full
- * checklist reads at a glance. Collapses to a simpler stacked layout under
- * 1000px rather than force horizontal scroll on a form-heavy row. */
+/* Data room item row — a collapsed summary (checkbox / path / title / status
+ * / chevron) that expands in place to show description, quote, file info,
+ * and actions. Keeping the collapsed row lean avoids ever needing the wide
+ * fixed columns a fully-inline row would — the earlier "everything visible
+ * at once" layout is what caused pills to overflow into neighboring
+ * columns on narrow rails. */
 .drrow {
-  display: grid; align-items: start; gap: 12px; padding: 9px 12px;
+  display: grid; align-items: center; gap: 12px; padding: 8px 12px;
   border-top: 1px solid var(--line-soft);
-  grid-template-columns: 16px 30px minmax(0, 1fr) minmax(0, 170px) minmax(0, 104px) minmax(0, 132px);
+  grid-template-columns: 16px 28px minmax(0, 1fr) 104px 18px;
 }
-/* Grid items default to min-width:auto, which refuses to shrink below
- * content size — a status pill next to the upload/edit/delete buttons
- * would rather overflow into the neighboring column than wrap. */
 .drrow > * { min-width: 0; }
-.drrow > :last-child { flex-wrap: wrap; }
 .drrow:first-child { border-top: none; }
 .drrow:hover { background: color-mix(in srgb, var(--text) 2.5%, transparent); }
 .drrow.sel { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.drt {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  border: none; background: none; font: inherit; font-size: 13px; color: var(--text);
+  text-align: left; padding: 0; cursor: pointer;
+}
+.drt:hover { color: var(--accent); }
+.drt > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drchev { border: none; background: none; padding: 0; cursor: pointer; display: flex; justify-content: center; }
+.drchev svg { transition: transform 0.15s ease; }
+/* Expanded detail — a full-width row spanning under the title/status/chevron
+ * columns, on its own grid row rather than squeezed into any one column. */
+.drdet { grid-column: 3 / -1; align-self: start; padding: 2px 0 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 @media (max-width: 1000px) {
-  .drrow { grid-template-columns: 16px 26px minmax(0, 1fr) 100px; row-gap: 8px; }
-  .drrow > :nth-child(1) { grid-column: 1; grid-row: 1; }
-  .drrow > :nth-child(2) { grid-column: 2; grid-row: 1; }
-  .drrow > :nth-child(3) { grid-column: 3; grid-row: 1; }
-  .drrow > :nth-child(5) { grid-column: 4; grid-row: 1; }
-  .drrow > :nth-child(4) { grid-column: 3 / -1; grid-row: 2; }
-  .drrow > :nth-child(6) { grid-column: 3 / -1; grid-row: 3; justify-content: flex-start; }
+  .drrow { grid-template-columns: 16px 24px minmax(0, 1fr) 92px 18px; gap: 9px; }
 }
 
 /* Collapsible folder header (Data room) — same chevron-rotate language as
@@ -274,12 +279,27 @@ h2 { font-size: 18px; margin: 28px 0 10px; letter-spacing: -0.1px; }
 .bar-segmented > div { height: 100%; }
 
 /* Two-column layout: main content + a narrower side rail (suggestions,
- * a claims ledger). Rail stacks below content on narrow screens rather
- * than squeezing to illegibility. */
+ * a claims ledger, a phase list). Callers set --rw inline per use since the
+ * right width differs by content (a suggestions card vs. a phase-number
+ * list); falls back to 280px if omitted. Rail stacks below content on
+ * narrow screens rather than squeezing to illegibility. */
 .split { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
 .split .mainc { flex: 1 1 460px; min-width: 0; }
-.split .rail { width: 280px; flex: none; }
+.split .rail { width: var(--rw, 280px); flex: none; }
 @media (max-width: 1120px) { .split .rail { width: 100%; } }
+
+/* Plan phase rail — same nav-row language as the sidebar's .navi, minus the
+ * icon: a number, a truncating name, and a status dot instead of an active
+ * left border (the plan rail can have many rows; a dot per row scans faster
+ * than a wide colored bar per row). */
+.prow {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border: none; background: none; text-align: left; padding: 9px 11px; border-radius: 9px;
+  font: inherit; font-size: 13px; color: var(--dim); cursor: pointer;
+}
+.prow:hover { background: var(--panel-raised); color: var(--text); }
+.prow.on { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font-weight: 600; }
+.dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 
 /* Before/after comparison (House Rules' source edits). */
 .diff2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }

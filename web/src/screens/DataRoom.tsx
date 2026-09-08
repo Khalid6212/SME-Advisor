@@ -137,6 +137,7 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
   const [deleting, setDeleting] = useState<{ id: string; label: string } | null>(null);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
   const path = manager ? `/clients/${clientId}/data-room` : `/me/clients/${clientId}/data-room`;
 
@@ -395,156 +396,174 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
       );
     }
 
-    const checkbox =
-      manager && n.status === "not_requested" ? (
-        <input
-          type="checkbox" style={{ width: 16 }}
-          checked={selected.has(n.id)}
-          onChange={(e) => {
-            const next = new Set(selected);
-            e.target.checked ? next.add(n.id) : next.delete(n.id);
-            setSelected(next);
-          }}
-        />
-      ) : manager && ["requested", "rejected"].includes(n.status) ? (
-        <input
-          type="checkbox" style={{ width: 16 }} title="Select to remind"
-          checked={remindSelected.has(n.id)}
-          onChange={(e) => {
-            const next = new Set(remindSelected);
-            e.target.checked ? next.add(n.id) : next.delete(n.id);
-            setRemindSelected(next);
-          }}
-        />
-      ) : null;
+    const canSelect = manager && (n.status === "not_requested" || ["requested", "rejected"].includes(n.status));
+    const isOpen = expandedItem === n.id;
+    const toggleExpanded = () => setExpandedItem(isOpen ? null : n.id);
 
     return (
       <div key={n.id} className="node item">
         <div className="drrow">
-          <div>{checkbox}</div>
-          <span className="path" style={{ fontSize: 11.5, paddingTop: 1 }}>{n.path}</span>
+          <input
+            type="checkbox" disabled={!canSelect}
+            style={{ width: 15, height: 15, margin: 0, visibility: canSelect ? "visible" : "hidden" }}
+            checked={
+              n.status === "not_requested" ? selected.has(n.id) :
+              ["requested", "rejected"].includes(n.status) ? remindSelected.has(n.id) : false
+            }
+            onChange={(e) => {
+              if (n.status === "not_requested") {
+                const next = new Set(selected);
+                e.target.checked ? next.add(n.id) : next.delete(n.id);
+                setSelected(next);
+              } else if (["requested", "rejected"].includes(n.status)) {
+                const next = new Set(remindSelected);
+                e.target.checked ? next.add(n.id) : next.delete(n.id);
+                setRemindSelected(next);
+              }
+            }}
+          />
+          <span className="path" style={{ fontSize: 11.5 }}>{n.path}</span>
 
-          <div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-              <span>{n.title_en}</span>
-              <span dir="rtl" className="muted" style={{ fontSize: 12 }}>{n.title_ar}</span>
-              {!n.required && <span className="muted" style={{ fontSize: 12 }}>optional</span>}
-            </div>
-            {n.description_en && (
-              <p className="muted" style={{ fontSize: 12.5, margin: "4px 0 0" }}>{n.description_en}</p>
-            )}
-            {reasons.map((r, i) => (
-              <p key={i} className="dim" style={{ fontSize: 12, margin: "4px 0 0", fontStyle: "italic" }}>
-                “{r.owner_quote}”
-              </p>
-            ))}
-          </div>
-
-          <div style={{ fontSize: 12.5 }}>
-            {docs.length === 0 ? (
-              <span className="muted">Nothing uploaded</span>
-            ) : (
-              docs.map((d: Doc) => (
-                <div key={d.id} style={{ marginBottom: 3 }}>
-                  <span className="dim">{d.filename}</span>{" "}
-                  <span className="muted">{bytes(d.size_bytes)}</span>
-                  {manager && <a href={api.downloadUrl(d.id)} style={{ marginLeft: 8 }}>Download</a>}
-                </div>
-              ))
-            )}
-            {manager && docs.length > 0 && (
-              <a href="#" onClick={(e) => { e.preventDefault(); void toggleHistory(n.id); }}>
-                {historyOpen === n.id ? "Hide history" : "History"}
-              </a>
-            )}
-          </div>
+          <button className="drt" onClick={toggleExpanded}>
+            <span>{n.title_en}</span>
+            {!n.required && <span className="muted" style={{ fontSize: 10, flex: "none" }}>optional</span>}
+          </button>
 
           <span className={`pill ${STATUS_PILL[n.status] ?? "grey"}`}>
             {n.status.replace(/_/g, " ")}
           </span>
 
-          <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
-            {canReview && (
-              <>
-                <button
-                  style={{ borderColor: "var(--good)", color: "var(--good)" }}
-                  disabled={busy === n.id}
-                  onClick={() => setNodeStatus(n.id, "accepted")}
-                >
-                  Accept
-                </button>
-                <button
-                  style={{ borderColor: "var(--bad)", color: "var(--bad)" }}
-                  disabled={busy === n.id}
-                  onClick={() => setNodeStatus(n.id, "rejected")}
-                >
-                  Reject
-                </button>
-              </>
-            )}
-            {canUpload && (
-              <label style={{ display: "inline-block" }}>
-                <input
-                  type="file" style={{ display: "none" }}
-                  onChange={(e) => e.target.files?.[0] && upload(n.id, e.target.files[0])}
-                />
-                <span className="pill info" style={{ cursor: "pointer", padding: "6px 12px" }}>
-                  {busy === n.id ? "Uploading…" : "Upload"}
-                </span>
-              </label>
-            )}
-            {manager && (
-              <>
-                <button onClick={() => { setEditing(n.id); setAddingTo(null); }}>Edit</button>
-                <button onClick={() => setDeleting({ id: n.id, label: n.title_en })}>Delete</button>
-              </>
-            )}
-          </div>
-        </div>
+          <button className="drchev" onClick={toggleExpanded} aria-label={isOpen ? "Collapse" : "Expand"}>
+            <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="var(--faint)"
+                 strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"
+                 style={{ transform: isOpen ? "rotate(180deg)" : undefined }}>
+              <path d="M3.5 6 8 10.5 12.5 6" />
+            </svg>
+          </button>
 
-        {manager && historyOpen === n.id && (() => {
-          const nodeVersions = versions[n.id];
-          return (
-          <div style={{ padding: "0 12px 10px", borderTop: "1px solid var(--line-soft)" }}>
-            {!nodeVersions ? (
-              <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>Loading…</p>
-            ) : nodeVersions.length === 0 ? (
-              <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>Nothing uploaded yet.</p>
-            ) : (
-              nodeVersions.map((v) => (
-                <div key={v.id} style={{ marginTop: 8 }}>
-                  <div className="row" style={{ fontSize: 12 }}>
-                    <span className={`pill ${v.superseded_at ? "grey" : "good"}`}>v{v.version}</span>
-                    <span className="dim">{v.filename}</span>
-                    <span className="muted">
-                      {v.uploaded_by_email} · {new Date(v.uploaded_at).toLocaleString()}
-                      {v.superseded_at ? " · replaced" : " · current"}
-                    </span>
-                    <div style={{ flex: 1 }} />
-                    <a href={api.downloadUrl(v.id)}>Download</a>
-                  </div>
-                  {v.extract_status === "done" && v.extract_summary && (
-                    <p className="dim" style={{ fontSize: 11, margin: "3px 0 0", fontStyle: "italic" }}>
-                      {v.extract_summary}
-                    </p>
-                  )}
-                  {v.extract_status === "pending" && (
-                    <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>Reading document…</p>
-                  )}
-                  {v.extract_status === "unsupported" && (
-                    <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>
-                      Automatic reading not available for this file type — review it directly.
-                    </p>
-                  )}
-                  {v.extract_status === "failed" && (
-                    <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>Reading failed — review it directly.</p>
+          {isOpen && (
+            <div className="drdet">
+              <div dir="rtl" className="muted" style={{ fontSize: 12 }}>{n.title_ar}</div>
+
+              {n.description_en && (
+                <p className="dim" style={{ fontSize: 12.5, margin: 0, textWrap: "pretty" as any }}>{n.description_en}</p>
+              )}
+
+              {reasons.map((r, i) => (
+                <div key={i} style={{ display: "flex", gap: 7, alignItems: "flex-start" }}>
+                  <div className="stripe" style={{ minHeight: 15 }} />
+                  <span className="dim" style={{ fontSize: 11.5, fontStyle: "italic" }}>“{r.owner_quote}”</span>
+                </div>
+              ))}
+
+              {docs.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+                  {docs.map((d: Doc) => (
+                    <div
+                      key={d.id}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                        background: "var(--panel-sunken)", border: "1px solid var(--line-soft)",
+                        borderRadius: 9, padding: "7px 11px", fontSize: 11.5,
+                      }}
+                    >
+                      <span className="dim">{d.filename}</span>
+                      <span className="muted">{bytes(d.size_bytes)}</span>
+                      {manager && <a href={api.downloadUrl(d.id)}>Download</a>}
+                    </div>
+                  ))}
+                  {manager && (
+                    <a href="#" onClick={(e) => { e.preventDefault(); void toggleHistory(n.id); }} style={{ fontSize: 12 }}>
+                      {historyOpen === n.id ? "Hide history" : "History"}
+                    </a>
                   )}
                 </div>
-              ))
-            )}
-          </div>
-          );
-        })()}
+              )}
+
+              {manager && historyOpen === n.id && (() => {
+                const nodeVersions = versions[n.id];
+                return (
+                  <div style={{ width: "100%" }}>
+                    {!nodeVersions ? (
+                      <p className="muted" style={{ fontSize: 12, margin: 0 }}>Loading…</p>
+                    ) : nodeVersions.length === 0 ? (
+                      <p className="muted" style={{ fontSize: 12, margin: 0 }}>Nothing uploaded yet.</p>
+                    ) : (
+                      nodeVersions.map((v) => (
+                        <div key={v.id} style={{ marginTop: 6 }}>
+                          <div className="row" style={{ fontSize: 12 }}>
+                            <span className={`pill ${v.superseded_at ? "grey" : "good"}`}>v{v.version}</span>
+                            <span className="dim">{v.filename}</span>
+                            <span className="muted">
+                              {v.uploaded_by_email} · {new Date(v.uploaded_at).toLocaleString()}
+                              {v.superseded_at ? " · replaced" : " · current"}
+                            </span>
+                            <div style={{ flex: 1 }} />
+                            <a href={api.downloadUrl(v.id)}>Download</a>
+                          </div>
+                          {v.extract_status === "done" && v.extract_summary && (
+                            <p className="dim" style={{ fontSize: 11, margin: "3px 0 0", fontStyle: "italic" }}>
+                              {v.extract_summary}
+                            </p>
+                          )}
+                          {v.extract_status === "pending" && (
+                            <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>Reading document…</p>
+                          )}
+                          {v.extract_status === "unsupported" && (
+                            <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>
+                              Automatic reading not available for this file type — review it directly.
+                            </p>
+                          )}
+                          {v.extract_status === "failed" && (
+                            <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>Reading failed — review it directly.</p>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {canReview && (
+                  <>
+                    <button
+                      style={{ borderColor: "var(--good)", color: "var(--good)" }}
+                      disabled={busy === n.id}
+                      onClick={() => setNodeStatus(n.id, "accepted")}
+                    >
+                      Accept
+                    </button>
+                    <button
+                      style={{ borderColor: "var(--bad)", color: "var(--bad)" }}
+                      disabled={busy === n.id}
+                      onClick={() => setNodeStatus(n.id, "rejected")}
+                    >
+                      Reject
+                    </button>
+                  </>
+                )}
+                {canUpload && (
+                  <label style={{ display: "inline-block" }}>
+                    <input
+                      type="file" style={{ display: "none" }}
+                      onChange={(e) => e.target.files?.[0] && upload(n.id, e.target.files[0])}
+                    />
+                    <span className="pill info" style={{ cursor: "pointer", padding: "6px 12px" }}>
+                      {busy === n.id ? "Uploading…" : "Upload"}
+                    </span>
+                  </label>
+                )}
+                {manager && (
+                  <>
+                    <button onClick={() => { setEditing(n.id); setAddingTo(null); }}>Edit</button>
+                    <button onClick={() => setDeleting({ id: n.id, label: n.title_en })}>Delete</button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   };
