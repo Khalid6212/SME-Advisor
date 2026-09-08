@@ -26,6 +26,7 @@ export const RULE_AGENT = [
   "interview", "planner", "review",
   "phase.company_market", "phase.strategy", "phase.operations",
   "phase.financial", "phase.investment_case", "phase.summary",
+  "reconcile", "research", "ledger",
 ] as const;
 export type RuleAgent = (typeof RULE_AGENT)[number];
 

@@ -18,6 +18,7 @@ import type { Fact, NewFinding } from "../../../src/planner/types.ts";
 import { detectPatterns } from "../../../src/planner/patterns.ts";
 import { type Message, RECONCILE_MODEL, runAgentLoop } from "../anthropic.ts";
 import { audit, one, query } from "../db.ts";
+import { houseRules } from "./house-rules.ts";
 
 const RECONCILE_SYSTEM = `You review the evidence collected so far for a small business seeking financing, looking for places where two sources disagree or where something material is asserted with nothing behind it.
 
@@ -107,19 +108,26 @@ function buildUserMessage(facts: Fact[], claims: ClaimRow[], alreadyFlagged: str
 
 async function runReconciliationAgent(
   clientId: string,
+  sectorId: string | null,
   facts: Fact[],
   claims: ClaimRow[],
   alreadyFlagged: string[],
 ): Promise<NewFinding[]> {
   const findings: NewFinding[] = [];
   const messages: Message[] = [{ role: "user", content: buildUserMessage(facts, claims, alreadyFlagged) }];
+  const rules = await houseRules("reconcile", sectorId);
+  const system = rules ? `${RECONCILE_SYSTEM}\n\n${rules}` : RECONCILE_SYSTEM;
 
   const loopResult = await runAgentLoop({
-    system: RECONCILE_SYSTEM,
+    system,
     tools: [RECORD_FINDING_TOOL, SUBMIT_TOOL],
     messages,
     model: RECONCILE_MODEL,
     maxTurns: 12,
+    // Spotting a real contradiction vs. a rounding difference, and judging
+    // materiality for severity, is the exact kind of call worth reasoning
+    // through rather than pattern-matching straight into a tool call.
+    thinking: true,
     onTool: async (name, input) => {
       if (name === "record_finding") {
         findings.push({
@@ -172,6 +180,7 @@ async function insertNewFindings(clientId: string, findings: NewFinding[]): Prom
 }
 
 export async function reconcileClient(clientId: string): Promise<void> {
+  const client = await one<{ sector_id: string }>(`SELECT sector_id FROM clients WHERE id = $1`, [clientId]);
   const facts = await query<Fact>(`SELECT * FROM facts WHERE client_id = $1 ORDER BY key, period`, [clientId]);
 
   // Deterministic pass first — free, no model call, always current.
@@ -199,6 +208,7 @@ export async function reconcileClient(clientId: string): Promise<void> {
   try {
     const llmFindings = await runReconciliationAgent(
       clientId,
+      client?.sector_id ?? null,
       facts,
       claims,
       existingStatements.map((e) => e.statement),

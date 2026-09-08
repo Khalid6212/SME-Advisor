@@ -9,10 +9,9 @@ import { buildSystemPrompt } from "../../../src/core/prompt.ts";
 import { assertProfileShape, buildTools } from "../../../src/core/tools.ts";
 import { assessReadiness } from "../../../src/core/readiness.ts";
 import { getPack } from "../../../src/sectors/registry.ts";
-import { renderRules, selectRules } from "../../../src/learning/rules.ts";
-import type { HouseRule } from "../../../src/learning/types.ts";
 import { MODEL, runAgentLoop, textOf, type Message } from "../anthropic.ts";
 import { audit, one, query, tx } from "../db.ts";
+import { houseRules } from "./house-rules.ts";
 
 interface InterviewRow {
   id: string;
@@ -20,29 +19,6 @@ interface InterviewRow {
   status: string;
   sector_id: string;
   sector_pack_version: string;
-}
-
-async function activeRules(sectorId: string): Promise<HouseRule[]> {
-  const rows = await query<any>(
-    `SELECT id, text, scope_agents, scope_audiences, scope_sectors, scope_sections,
-            status, occurrences
-       FROM house_rules WHERE status = 'active'`,
-  );
-  const rules: HouseRule[] = rows.map((r) => ({
-    id: r.id,
-    text: r.text,
-    status: "active",
-    occurrences: r.occurrences,
-    source_edit_ids: [],
-    created_at: "",
-    scope: {
-      agents: r.scope_agents,
-      audiences: r.scope_audiences,
-      sectors: r.scope_sectors,
-      section_keys: r.scope_sections,
-    },
-  }));
-  return selectRules(rules, { agent: "interview", sector: sectorId });
 }
 
 /**
@@ -53,7 +29,7 @@ async function activeRules(sectorId: string): Promise<HouseRule[]> {
 async function buildSystem(sectorId: string): Promise<string> {
   const pack = getPack(sectorId);
   const base = buildSystemPrompt(pack.promptModule);
-  const rules = renderRules(await activeRules(sectorId));
+  const rules = await houseRules("interview", sectorId);
   return rules ? `${base}\n\n${rules}` : base;
 }
 
@@ -196,6 +172,10 @@ export async function runTurn(
     system: await buildSystem(interview.sector_id),
     tools: buildTools(getPack(interview.sector_id)),
     messages,
+    // Deciding what the owner's answer actually means, whether a section is
+    // genuinely complete or just superficially answered, and how to phrase
+    // the next question is real judgment each turn, not a lookup.
+    thinking: true,
     onTool: async (name, input) => {
       if (name === "save_section") {
         await saveSection(interview.id, input);

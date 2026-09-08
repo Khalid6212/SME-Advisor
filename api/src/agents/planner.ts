@@ -15,42 +15,12 @@ import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import { computeBalanceSheet, computeCashFlowStatement, computeProjections, computeSensitivity } from "../../../src/planner/projections.ts";
 import type { PlanInputs } from "../../../src/planner/types.ts";
 import { PLAN_PHASES, phaseByKey, sectionsBeforePhase, type PhaseSpec } from "../../../src/planner/phases.ts";
-import { renderRules, selectRules } from "../../../src/learning/rules.ts";
-import type { HouseRule, RuleAgent } from "../../../src/learning/types.ts";
+import type { RuleAgent } from "../../../src/learning/types.ts";
 import { MODEL, runAgentLoop, type Message } from "../anthropic.ts";
 import { audit, one, query, tx } from "../db.ts";
+import { houseRules } from "./house-rules.ts";
 
 export const TEMPLATES = { [businessPlanTemplate.key]: businessPlanTemplate };
-
-/**
- * Scoped by agent id, not just sector — a rule learned from the financial
- * phase's edits must never surface in the strategy phase's prompt. Not
- * scoped by audience: one phase drafts every audience's sections together,
- * so a rule scoped to one audience is over-included here rather than
- * dropped, which costs nothing visible (a section a rule doesn't really
- * apply to is simply never exported to that audience).
- */
-async function houseRules(agent: RuleAgent, sector: string): Promise<string> {
-  const rows = await query<any>(
-    `SELECT id, text, scope_agents, scope_audiences, scope_sectors, scope_sections, occurrences
-       FROM house_rules WHERE status = 'active'`,
-  );
-  const rules: HouseRule[] = rows.map((r) => ({
-    id: r.id,
-    text: r.text,
-    status: "active",
-    occurrences: r.occurrences,
-    source_edit_ids: [],
-    created_at: "",
-    scope: {
-      agents: r.scope_agents,
-      audiences: r.scope_audiences,
-      sectors: r.scope_sectors,
-      section_keys: r.scope_sections,
-    },
-  }));
-  return renderRules(selectRules(rules, { agent, sector }));
-}
 
 /** Only the financial phase needs the computed statements — sending them to
  *  every phase would bloat cost for context nothing else draws on. Pure and

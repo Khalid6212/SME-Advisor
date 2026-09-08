@@ -1,12 +1,17 @@
 /**
- * Distillation agent — turns a manager's edit into a candidate house rule,
- * or, the common and expected case, decides it teaches nothing. Runs
- * fire-and-forget after every section edit, the same pattern as document
- * extraction after an upload: best-effort enrichment that must never affect
- * the action that triggered it.
+ * Distillation agent — turns a manager's correction into a candidate house
+ * rule, or, the common and expected case, decides it teaches nothing. Two
+ * entry points share one classify/propose tool contract and one
+ * recordCandidate: distillEdit for a text edit to a drafted section
+ * (section_edits), distillFindingDismissal for a manager dismissing a
+ * reconciliation finding with a reason (findings.dismissed_reason) — a
+ * different shape of "the agent was wrong," same question underneath. Both
+ * run fire-and-forget, the same pattern as document extraction after an
+ * upload: best-effort enrichment that must never affect the action that
+ * triggered it.
  *
  * Nothing this writes takes effect on its own — a candidate only reaches
- * 'active' (and only then gets injected into a drafting prompt, via
+ * 'active' (and only then gets injected into an agent's prompt, via
  * selectRules) through a human approving it in the house-rules review
  * screen. This module only ever proposes.
  */
@@ -25,11 +30,52 @@ interface SectionEditRow {
   manager_note: string | null;
 }
 
+interface FindingRow {
+  id: string;
+  type: string;
+  severity: string;
+  statement: string;
+  detail: string;
+  dismissed_reason: string | null;
+}
+
 interface RuleProposal {
   text: string;
   confidence: string;
   rationale: string;
   scope: { agents: string[]; audiences: string[]; sectors: string[]; section_keys: string[] };
+}
+
+/** Runs the shared classify → maybe-propose loop against one framed user
+ *  message, common to both entry points below. */
+async function runDistiller(userMessage: string): Promise<{ kind: string | null; proposal: RuleProposal | null }> {
+  let classifiedKind: string | null = null;
+  let proposal: RuleProposal | null = null;
+
+  const loopResult = await runAgentLoop({
+    system: DISTILLER_SYSTEM,
+    tools: buildDistillerTools(),
+    messages: [{ role: "user", content: userMessage }],
+    model: EXTRACT_MODEL,
+    maxTurns: 3,
+    maxTokens: 1000,
+    onTool: async (name, input) => {
+      if (name === "classify_edit") {
+        classifiedKind = input.kind;
+        return { content: "Recorded." };
+      }
+      if (name === "propose_rule") {
+        proposal = input;
+        return null; // terminal
+      }
+      return { content: `Unknown tool ${name}.`, is_error: true };
+    },
+  });
+  await audit("agent.usage", {
+    payload: { agent: "distiller", model: EXTRACT_MODEL, ...loopResult.usage },
+  });
+
+  return { kind: classifiedKind, proposal };
 }
 
 export async function distillEdit(editId: string): Promise<void> {
@@ -61,51 +107,71 @@ export async function distillEdit(editId: string): Promise<void> {
     .filter((line) => line !== null)
     .join("\n");
 
-  let classifiedKind: string | null = null;
-  let proposal: RuleProposal | null = null;
-
+  let result: { kind: string | null; proposal: RuleProposal | null };
   try {
-    const loopResult = await runAgentLoop({
-      system: DISTILLER_SYSTEM,
-      tools: buildDistillerTools(),
-      messages: [{ role: "user", content: userMessage }],
-      model: EXTRACT_MODEL,
-      maxTurns: 3,
-      maxTokens: 1000,
-      onTool: async (name, input) => {
-        if (name === "classify_edit") {
-          classifiedKind = input.kind;
-          return { content: "Recorded." };
-        }
-        if (name === "propose_rule") {
-          proposal = input;
-          return null; // terminal
-        }
-        return { content: `Unknown tool ${name}.`, is_error: true };
-      },
-    });
-    await audit("agent.usage", {
-      payload: { agent: "distiller", model: EXTRACT_MODEL, ...loopResult.usage },
-    });
+    result = await runDistiller(userMessage);
   } catch {
     return; // best-effort; a failed run is not worth retrying on its own
   }
 
   // Classified as fact_correction / client_specific / noise — the expected,
   // common outcome. Nothing to record.
-  if (!proposal) return;
+  if (!result.proposal) return;
 
-  await recordCandidate(editId, proposal, classifiedKind ?? "preference");
+  await recordCandidate(editId, result.proposal, result.kind ?? "preference");
 }
 
 /**
- * One edit is weak evidence — the distiller's own prompt says so. When the
- * same text, at the same scope, is already on file as a candidate or an
- * active rule, this is the second or third occurrence rather than the
- * first, so the existing entry is strengthened instead of queuing a
- * duplicate for review.
+ * A dismissal is the reconciliation agent's analogue of a text edit: the
+ * agent asserted something (a contradiction, a missing-evidence flag) and a
+ * human said no, with a reason. "The two figures were a rounding
+ * difference, not a real contradiction" is exactly the kind of pattern
+ * worth learning; "this specific number was wrong" is not — the same
+ * fact_correction/preference/directive/client_specific/noise split applies.
  */
-async function recordCandidate(editId: string, proposal: RuleProposal, kind: string): Promise<void> {
+export async function distillFindingDismissal(findingId: string): Promise<void> {
+  const finding = await one<FindingRow>(
+    `SELECT id, type, severity, statement, detail, dismissed_reason
+       FROM findings WHERE id = $1`,
+    [findingId],
+  );
+  if (!finding || !finding.dismissed_reason?.trim()) return;
+
+  const userMessage = [
+    `Agent: reconcile`,
+    `Finding type: ${finding.type}`,
+    `Severity the agent gave it: ${finding.severity}`,
+    "",
+    "WHAT THE AGENT FLAGGED:",
+    `${finding.statement}\n${finding.detail}`,
+    "",
+    "MANAGER'S DISMISSAL — treat this as the correction (there is no separate before/after text here; the",
+    "agent's finding is the \"before\", and the dismissal is the manager saying it should not have been raised):",
+    finding.dismissed_reason,
+  ].join("\n");
+
+  let result: { kind: string | null; proposal: RuleProposal | null };
+  try {
+    result = await runDistiller(userMessage);
+  } catch {
+    return;
+  }
+
+  if (!result.proposal) return;
+
+  await recordCandidate(findingId, result.proposal, result.kind ?? "preference");
+}
+
+/**
+ * One correction is weak evidence — the distiller's own prompt says so.
+ * When the same text, at the same scope, is already on file as a candidate
+ * or an active rule, this is the second or third occurrence rather than the
+ * first, so the existing entry is strengthened instead of queuing a
+ * duplicate for review. `sourceId` is a `section_edits.id` or a
+ * `findings.id` — house_rules.source_edit_ids is a plain uuid[] with no FK,
+ * so both share the column rather than needing a second one.
+ */
+async function recordCandidate(sourceId: string, proposal: RuleProposal, kind: string): Promise<void> {
   const normalized = proposal.text.trim().toLowerCase();
 
   const existing = await one<{ id: string }>(
@@ -122,7 +188,7 @@ async function recordCandidate(editId: string, proposal: RuleProposal, kind: str
       `UPDATE house_rules
           SET occurrences = occurrences + 1, source_edit_ids = array_append(source_edit_ids, $2)
         WHERE id = $1`,
-      [existing.id, editId],
+      [existing.id, sourceId],
     );
     return;
   }
@@ -141,7 +207,7 @@ async function recordCandidate(editId: string, proposal: RuleProposal, kind: str
       kind,
       proposal.confidence,
       proposal.rationale,
-      [editId],
+      [sourceId],
     ],
   );
 }

@@ -17,6 +17,7 @@ const AGENT_LABELS: Record<string, string> = {
   reconcile: "Reconciliation",
   distiller: "House-rule distiller",
   research: "Market research",
+  ledger: "Ledger analyst",
 };
 
 function agentLabel(agent: string): string {

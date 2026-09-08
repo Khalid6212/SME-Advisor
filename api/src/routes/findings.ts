@@ -8,6 +8,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireManager } from "../auth.ts";
+import { distillFindingDismissal } from "../agents/distiller.ts";
 import { audit, one, query } from "../db.ts";
 
 const actSchema = z.object({
@@ -76,6 +77,15 @@ export async function findingsRoutes(app: FastifyInstance): Promise<void> {
       clientId: finding.client_id,
       payload: { finding_id: findingId },
     });
+
+    // Best-effort, same fire-and-forget pattern as distillEdit after a
+    // section save — a dismissal with a reason is the reconciliation
+    // agent's version of "the manager corrected this," worth learning from.
+    if (parsed.data.status === "dismissed") {
+      distillFindingDismissal(findingId).catch((err) =>
+        req.log.error({ err, findingId }, "finding-dismissal distillation failed"),
+      );
+    }
 
     return { ok: true };
   });

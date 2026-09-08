@@ -205,7 +205,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (!user) return;
     const { id } = req.params as { id: string };
 
-    const client = await one<{ name: string }>(`SELECT name FROM clients WHERE id = $1`, [id]);
+    const client = await one<{ name: string; sector_id: string }>(`SELECT name, sector_id FROM clients WHERE id = $1`, [id]);
     if (!client) return reply.code(404).send({ error: "not_found" });
 
     const profile = await one<{ data: any }>(
@@ -225,6 +225,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         businessDescription: profile.data.business_identity.business_description,
         geographies: profile.data.market_position?.geographies ?? [],
         ownerNamedCompetitors: profile.data.market_position?.named_competitors ?? [],
+        sectorId: client.sector_id,
       });
 
       await audit("agent.usage", {

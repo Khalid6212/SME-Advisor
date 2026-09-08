@@ -35,8 +35,13 @@ export async function learningRoutes(app: FastifyInstance): Promise<void> {
     );
   });
 
-  /** A source edit, so a manager reviewing a candidate can see the actual
-   *  before/after it was distilled from rather than trusting the summary. */
+  /** The evidence behind a candidate, so a manager can see the actual
+   *  correction it was distilled from rather than trusting the summary.
+   *  source_edit_ids is a plain uuid[] shared by two distiller entry points
+   *  (see distiller.ts) — a text edit to a drafted section, or a manager
+   *  dismissing a reconciliation finding with a reason — so this checks
+   *  both tables and returns a normalized, tagged list rather than assuming
+   *  every id is a section_edits row. */
   app.get("/house-rules/:id/source-edits", async (req, reply) => {
     const user = requireManager(req, reply);
     if (!user) return;
@@ -49,11 +54,32 @@ export async function learningRoutes(app: FastifyInstance): Promise<void> {
     if (!rule) return reply.code(404).send({ error: "not_found" });
     if (rule.source_edit_ids.length === 0) return [];
 
-    return query(
+    const edits = await query<{
+      id: string; section_key: string; before_text: string; after_text: string;
+      manager_note: string | null; created_at: string;
+    }>(
       `SELECT id, section_key, before_text, after_text, manager_note, created_at
-         FROM section_edits WHERE id = ANY($1::uuid[]) ORDER BY created_at`,
+         FROM section_edits WHERE id = ANY($1::uuid[])`,
       [rule.source_edit_ids],
     );
+    const dismissals = await query<{
+      id: string; statement: string; detail: string; dismissed_reason: string; resolved_at: string;
+    }>(
+      `SELECT id, statement, detail, dismissed_reason, resolved_at
+         FROM findings WHERE id = ANY($1::uuid[]) AND dismissed_reason IS NOT NULL`,
+      [rule.source_edit_ids],
+    );
+
+    const items = [
+      ...edits.map((e) => ({ kind: "edit" as const, ...e })),
+      ...dismissals.map((d) => ({
+        kind: "finding_dismissal" as const,
+        id: d.id, statement: d.statement, detail: d.detail,
+        dismissed_reason: d.dismissed_reason, created_at: d.resolved_at,
+      })),
+    ];
+    items.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    return items;
   });
 
   app.post("/house-rules/:id/approve", async (req, reply) => {

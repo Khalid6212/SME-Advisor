@@ -60,6 +60,9 @@ export async function judgeSection(
     tools: [RECORD_SCORE_TOOL],
     model: EVAL_JUDGE_MODEL,
     maxTurns: 2,
+    // Scoring grounding and internal consistency means actually checking
+    // each claim against the source material, not skimming for a vibe.
+    thinking: true,
     messages: [
       {
         role: "user",

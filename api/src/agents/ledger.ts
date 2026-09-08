@@ -18,6 +18,7 @@
 import { type Message, LEDGER_MODEL, runAgentLoop } from "../anthropic.ts";
 import { audit, one, query } from "../db.ts";
 import { storage } from "../storage.ts";
+import { houseRules } from "./house-rules.ts";
 import { reconcileClient } from "./reconcile.ts";
 
 // Non-beta server tool — Claude writes and runs real code against the
@@ -145,13 +146,22 @@ export async function analyzeLedger(documentId: string): Promise<void> {
 
   let analysis: any = null;
   try {
+    const client = await one<{ sector_id: string }>(`SELECT sector_id FROM clients WHERE id = $1`, [doc.client_id]);
+    const rules = await houseRules("ledger", client?.sector_id ?? null);
+    const system = rules ? `${LEDGER_SYSTEM}\n\n${rules}` : LEDGER_SYSTEM;
+
     const loopResult = await runAgentLoop({
-      system: LEDGER_SYSTEM,
+      system,
       tools: [CODE_EXECUTION_TOOL, RECORD_TOOL],
       messages,
       model: LEDGER_MODEL,
       maxTurns: 14,
-      maxTokens: 12000,
+      maxTokens: 20000, // headroom for thinking alongside code_execution's own output
+      // Deciding whether a date column is genuinely ambiguous, whether two
+      // rows are real duplicates vs. legitimate repeat purchases, and how
+      // to reconcile a computed total against a stated one is judgment,
+      // not just running code — worth reasoning about before each call.
+      thinking: true,
       onTool: async (name, input) => {
         if (name === "record_ledger_analysis") {
           analysis = input;

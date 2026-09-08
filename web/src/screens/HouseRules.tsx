@@ -16,14 +16,18 @@ interface Rule {
   proposed_at: string;
 }
 
-interface SourceEdit {
-  id: string;
-  section_key: string;
-  before_text: string;
-  after_text: string;
-  manager_note: string | null;
-  created_at: string;
-}
+/** Two shapes, tagged by `kind` — a text edit to a drafted section, or a
+ *  manager dismissing a reconciliation finding with a reason. See
+ *  distiller.ts / GET /house-rules/:id/source-edits. */
+type SourceItem =
+  | {
+      kind: "edit"; id: string; section_key: string;
+      before_text: string; after_text: string; manager_note: string | null; created_at: string;
+    }
+  | {
+      kind: "finding_dismissal"; id: string;
+      statement: string; detail: string; dismissed_reason: string; created_at: string;
+    };
 
 const CONFIDENCE_PILL: Record<string, string> = { strong: "good", plausible: "info", weak: "grey" };
 
@@ -37,6 +41,9 @@ const AGENT_LABELS: Record<string, string> = {
   planner: "Planner (legacy)",
   interview: "Interview",
   review: "Review",
+  reconcile: "Reconciliation",
+  research: "Market research",
+  ledger: "Ledger analyst",
 };
 
 function agentLabel(agent: string): string {
@@ -196,7 +203,7 @@ export function HouseRules() {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState<string | null>(null);
-  const [sources, setSources] = useState<Record<string, SourceEdit[]>>({});
+  const [sources, setSources] = useState<Record<string, SourceItem[]>>({});
 
   const load = () => api.get<Rule[]>(`/house-rules?status=${status}`).then(setRules);
   useEffect(() => { setRules(null); void load(); }, [status]);
@@ -205,7 +212,7 @@ export function HouseRules() {
     if (sourcesOpen === ruleId) return setSourcesOpen(null);
     setSourcesOpen(ruleId);
     if (!sources[ruleId]) {
-      const rows = await api.get<SourceEdit[]>(`/house-rules/${ruleId}/source-edits`);
+      const rows = await api.get<SourceItem[]>(`/house-rules/${ruleId}/source-edits`);
       setSources((prev) => ({ ...prev, [ruleId]: rows }));
     }
   };
@@ -305,22 +312,38 @@ export function HouseRules() {
                 {!sources[r.id] ? (
                   <p className="muted" style={{ fontSize: 12 }}>Loading…</p>
                 ) : (
-                  sources[r.id]!.map((s) => (
-                    <div key={s.id} style={{ marginBottom: 12, fontSize: 12 }}>
-                      <div className="muted">{s.section_key} · {new Date(s.created_at).toLocaleDateString()}</div>
-                      {s.manager_note && <p className="dim" style={{ margin: "4px 0", fontStyle: "italic" }}>“{s.manager_note}”</p>}
-                      <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
-                        <div style={{ flex: 1 }}>
-                          <div className="muted">Before</div>
-                          <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.before_text}</p>
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <div className="muted">After</div>
-                          <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.after_text}</p>
+                  sources[r.id]!.map((s) =>
+                    s.kind === "edit" ? (
+                      <div key={s.id} style={{ marginBottom: 12, fontSize: 12 }}>
+                        <div className="muted">{s.section_key} · {new Date(s.created_at).toLocaleDateString()}</div>
+                        {s.manager_note && <p className="dim" style={{ margin: "4px 0", fontStyle: "italic" }}>“{s.manager_note}”</p>}
+                        <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
+                          <div style={{ flex: 1 }}>
+                            <div className="muted">Before</div>
+                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.before_text}</p>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div className="muted">After</div>
+                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.after_text}</p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    ) : (
+                      <div key={s.id} style={{ marginBottom: 12, fontSize: 12 }}>
+                        <div className="muted">Dismissed finding · {new Date(s.created_at).toLocaleDateString()}</div>
+                        <div className="row" style={{ alignItems: "flex-start", gap: 12, marginTop: 4 }}>
+                          <div style={{ flex: 1 }}>
+                            <div className="muted">Agent flagged</div>
+                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.statement} — {s.detail}</p>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div className="muted">Manager's reason for dismissing</div>
+                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.dismissed_reason}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ),
+                  )
                 )}
               </div>
             )}

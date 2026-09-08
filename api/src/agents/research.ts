@@ -8,6 +8,7 @@
  */
 
 import { RESEARCH_MODEL, runAgentLoop, type Message } from "../anthropic.ts";
+import { houseRules } from "./house-rules.ts";
 
 // max_uses bounds cost per run — this is an advisor-triggered, paid action.
 const WEB_SEARCH_TOOL = { type: "web_search_20260209", name: "web_search", max_uses: 8 };
@@ -92,6 +93,7 @@ export interface ResearchInput {
   businessDescription: string;
   geographies: string[];
   ownerNamedCompetitors: string[];
+  sectorId: string | null;
 }
 
 export interface CompetitorSuggestion {
@@ -140,13 +142,19 @@ export async function researchMarket(input: ResearchInput): Promise<ResearchResu
   ];
 
   let suggestion: ResearchSuggestion | null = null;
+  const rules = await houseRules("research", input.sectorId);
+  const system = rules ? `${RESEARCH_SYSTEM}\n\n${rules}` : RESEARCH_SYSTEM;
 
   const loopResult = await runAgentLoop({
-    system: RESEARCH_SYSTEM,
+    system,
     tools: [WEB_SEARCH_TOOL, SAVE_RESEARCH_TOOL],
     messages,
     model: RESEARCH_MODEL,
     maxTurns: 8,
+    // Judging which sources are credible enough to use, and whether a
+    // figure is narrow/recent enough to prefer over a global one, benefits
+    // from a reasoning step before committing to save_research.
+    thinking: true,
     onTool: async (name, toolInput) => {
       if (name === "save_research") {
         suggestion = toolInput;

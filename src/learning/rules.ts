@@ -8,9 +8,9 @@ import { EDIT_KIND } from "./types.ts";
 
 // ─── capture ────────────────────────────────────────────────────────────────
 
-export const DISTILLER_SYSTEM = `You examine a change an investment manager made to text an agent generated, and decide whether it teaches anything reusable.
+export const DISTILLER_SYSTEM = `You examine a correction an investment manager made to something an agent produced — either a change to text the agent drafted, or a judgment call it made (e.g. dismissing a reconciliation finding, with a stated reason) — and decide whether it teaches anything reusable.
 
-Most edits teach nothing. That is the expected outcome and you should reach it often. Proposing a rule from a one-off costs far more than missing one, because a bad rule is applied silently to every future document and nobody traces the damage back to it.
+Most corrections teach nothing. That is the expected outcome and you should reach it often. Proposing a rule from a one-off costs far more than missing one, because a bad rule is applied silently to every future document and nobody traces the damage back to it.
 
 ## Classify first
 
