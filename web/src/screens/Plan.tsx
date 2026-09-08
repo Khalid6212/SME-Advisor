@@ -571,10 +571,16 @@ export function Plan({ clientId }: { clientId: string }) {
                                 {g.request_id && <span className="pill info" style={{ marginLeft: 6 }}>requested</span>}
                               </td>
                               <td style={{ minWidth: 220 }}>
-                                <input
+                                <textarea
+                                  rows={1}
                                   value={gapResponseDrafts[g.id] ?? ""}
-                                  onChange={(e) => setGapResponseDrafts((prev) => ({ ...prev, [g.id]: e.target.value }))}
+                                  onChange={(e) => {
+                                    setGapResponseDrafts((prev) => ({ ...prev, [g.id]: e.target.value }));
+                                    e.target.style.height = "auto";
+                                    e.target.style.height = `${e.target.scrollHeight}px`;
+                                  }}
                                   placeholder="Answer directly — a call with the client, something you already know"
+                                  style={{ width: "100%", resize: "vertical", overflow: "hidden", fontFamily: "inherit" }}
                                 />
                               </td>
                               <td>
