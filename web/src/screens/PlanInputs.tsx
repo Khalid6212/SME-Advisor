@@ -122,6 +122,11 @@ export function PlanInputs({ clientId }: { clientId: string }) {
     await api.patch(`/clients/${clientId}/plan-inputs`, {
       ...data,
       competitor_notes: data.competitor_notes.filter((c) => c.name.trim()),
+      // If research ran this session, the backend diffs it against what's
+      // actually being saved — overriding a suggestion is a correction
+      // signal worth learning from; accepting it verbatim teaches nothing,
+      // and the backend only fires distillation when the two differ.
+      research_suggestion: research ?? undefined,
     });
     setBusy(false);
     setSaved(true);

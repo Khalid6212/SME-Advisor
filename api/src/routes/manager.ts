@@ -9,6 +9,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { issueMagicLink, requireManager } from "../auth.ts";
 import { getInterview, loadMessages } from "../agents/interview.ts";
+import { distillEdit } from "../agents/distiller.ts";
 import { textOf } from "../anthropic.ts";
 import { buildInterviewDocx, firmIdentity } from "../docx.ts";
 import { clientCredentialsMail, clientInviteMail, sendMail } from "../mailer.ts";
@@ -16,6 +17,7 @@ import { generateTemporaryPassword, hashPassword } from "../password.ts";
 import { config } from "../config.ts";
 import { audit, one, query, tx } from "../db.ts";
 import { purge } from "../storage.ts";
+import { editDistance } from "../../../src/learning/types.ts";
 
 const closeSchema = z.object({
   reason: z.enum(["delivered", "abandoned"]),
@@ -448,8 +450,13 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Corrects an owner-reported claim. Distinct from confirming/contradicting
    * it (verification_status) — this changes what was recorded, so it is
-   * audited and stamped the same way a plan-section edit is (D19-adjacent:
-   * a correction here is signal too, even without a learning loop over it yet).
+   * audited and stamped the same way a plan-section edit is, and — unlike
+   * before — actually feeds the learning loop: a manager overriding what
+   * the interview agent recorded is the same "the agent was wrong, here's
+   * the right version" signal a plan-section edit is, just on a claim
+   * instead of a paragraph. verification_status-only changes (confirm/
+   * contradict with no change to the recorded value) don't distill — that's
+   * a judgment on the claim, not a correction of what the agent wrote down.
    */
   app.patch("/claims/:id", async (req, reply) => {
     const user = requireManager(req, reply);
@@ -459,8 +466,15 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
     const parsed = claimEditSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
 
-    const before = await one<{ id: string; client_id: string }>(
-      `SELECT c.id, p.client_id FROM claims c JOIN profiles p ON p.id = c.profile_id WHERE c.id = $1`,
+    const before = await one<{
+      id: string; client_id: string; field_path: string; stated_value: string | null;
+      owner_quote: string; sector_id: string | null;
+    }>(
+      `SELECT c.id, p.client_id, c.field_path, c.stated_value, c.owner_quote, cl.sector_id
+         FROM claims c
+         JOIN profiles p ON p.id = c.profile_id
+         JOIN clients cl ON cl.id = p.client_id
+        WHERE c.id = $1`,
       [id],
     );
     if (!before) return reply.code(404).send({ error: "not_found" });
@@ -486,6 +500,26 @@ export async function managerRoutes(app: FastifyInstance): Promise<void> {
       clientId: before.client_id,
       payload: { claim_id: id, fields: Object.keys(parsed.data) },
     });
+
+    const valueChanged = "stated_value" in parsed.data || "owner_quote" in parsed.data;
+    if (valueChanged) {
+      const afterValue = "stated_value" in parsed.data ? (parsed.data.stated_value ?? null) : before.stated_value;
+      const afterQuote = "owner_quote" in parsed.data ? parsed.data.owner_quote! : before.owner_quote;
+      const beforeText = `${before.field_path} = ${before.stated_value ?? "null"} — "${before.owner_quote}"`;
+      const afterText = `${before.field_path} = ${afterValue ?? "null"} — "${afterQuote}"`;
+
+      if (beforeText !== afterText) {
+        const editRow = await one<{ id: string }>(
+          `INSERT INTO section_edits
+             (agent, client_id, section_key, sector_id, before_text, after_text, edit_distance, edited_by)
+           VALUES ('interview',$1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+          [before.client_id, before.field_path, before.sector_id, beforeText, afterText, editDistance(beforeText, afterText), user.id],
+        );
+        if (editRow) {
+          distillEdit(editRow.id).catch((err) => req.log.error({ err, editId: editRow.id }, "distillation failed"));
+        }
+      }
+    }
 
     return { saved: true };
   });

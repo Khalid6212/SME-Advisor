@@ -35,6 +35,27 @@ function parseAudience(raw: unknown): Audience | "full" {
   return raw === "lender" || raw === "internal" ? raw : "full";
 }
 
+/** Comparable text rendering of the market-sizing/competitor fields, used
+ *  to diff a research suggestion against what the advisor actually saved
+ *  (see PATCH /clients/:id/plan-inputs). Same shape either side, since the
+ *  suggestion and the saved fields carry identical field names. */
+function renderMarketInputs(data: {
+  market_size_tam: number | null; market_size_sam: number | null; market_size_som: number | null;
+  market_size_sources: string | null; market_growth_pct: number | null; market_drivers_notes: string | null;
+  competitor_notes: { name: string; strengths: string; weaknesses: string }[];
+}): string {
+  return [
+    `TAM ${data.market_size_tam ?? "—"} / SAM ${data.market_size_sam ?? "—"} / SOM ${data.market_size_som ?? "—"}`,
+    `Growth ${data.market_growth_pct ?? "—"}%/yr — ${data.market_drivers_notes ?? "no drivers noted"}`,
+    `Sources: ${data.market_size_sources ?? "none"}`,
+    `Competitors: ${
+      data.competitor_notes.length === 0
+        ? "none"
+        : data.competitor_notes.map((c) => `${c.name} (${c.strengths}; ${c.weaknesses})`).join("; ")
+    }`,
+  ].join("\n");
+}
+
 const sectionSchema = z.object({
   content: z.string().max(60_000),
   status: z.enum(["drafted", "edited", "approved"]).optional(),
@@ -67,6 +88,21 @@ const competitorNoteSchema = z.object({
   weaknesses: z.string().trim().max(1000),
 });
 
+// Loosely mirrors ResearchSuggestion (api/src/agents/research.ts) — only
+// used to render a before/after comparison for the learning loop, never
+// persisted itself, so it doesn't need to be as strict as planInputsSchema.
+const researchSuggestionSchema = z
+  .object({
+    market_size_tam: z.number().nullable(),
+    market_size_sam: z.number().nullable(),
+    market_size_som: z.number().nullable(),
+    market_size_sources: z.string().nullable(),
+    market_growth_pct: z.number().nullable(),
+    market_drivers_notes: z.string().nullable(),
+    competitor_notes: z.array(z.object({ name: z.string(), strengths: z.string(), weaknesses: z.string() })),
+  })
+  .optional();
+
 const planInputsSchema = z.object({
   revenue_growth_pct: z.number().min(-100).max(1000).nullable().optional(),
   growth_basis: z.string().trim().max(2000).nullable().optional(),
@@ -90,6 +126,10 @@ const planInputsSchema = z.object({
   competitor_notes: z.array(competitorNoteSchema).max(10).optional(),
   exit_strategy_notes: z.string().trim().max(4000).nullable().optional(),
   unit_economics_notes: z.string().trim().max(4000).nullable().optional(),
+  // What the research agent suggested, if the advisor ran it this session —
+  // present only so the save can diff it against what was actually kept,
+  // never persisted to plan_inputs itself. See the learning-loop note below.
+  research_suggestion: researchSuggestionSchema,
 });
 
 export async function planRoutes(app: FastifyInstance): Promise<void> {
@@ -190,6 +230,37 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     );
 
     await audit("plan_inputs.updated", { actorUserId: user.id, clientId: id });
+
+    // Learning-loop signal: what the research agent suggested vs. what the
+    // advisor actually kept, only when research ran this session. Applying
+    // a suggestion verbatim teaches nothing; overriding it is the same
+    // "the agent was wrong, here's the corrected version" signal a
+    // plan-section edit is. Fire-and-forget, same pattern as every other
+    // distillation call — must never hold up the save itself.
+    if (parsed.data.research_suggestion) {
+      const suggested = renderMarketInputs(parsed.data.research_suggestion);
+      const final = renderMarketInputs({
+        market_size_tam: parsed.data.market_size_tam ?? null,
+        market_size_sam: parsed.data.market_size_sam ?? null,
+        market_size_som: parsed.data.market_size_som ?? null,
+        market_size_sources: parsed.data.market_size_sources ?? null,
+        market_growth_pct: parsed.data.market_growth_pct ?? null,
+        market_drivers_notes: parsed.data.market_drivers_notes ?? null,
+        competitor_notes: parsed.data.competitor_notes ?? [],
+      });
+      if (suggested !== final) {
+        const client = await one<{ sector_id: string }>(`SELECT sector_id FROM clients WHERE id = $1`, [id]);
+        const editRow = await one<{ id: string }>(
+          `INSERT INTO section_edits
+             (agent, client_id, section_key, sector_id, before_text, after_text, edit_distance, edited_by)
+           VALUES ('research',$1,'market_research',$2,$3,$4,$5,$6) RETURNING id`,
+          [id, client?.sector_id ?? null, suggested, final, editDistance(suggested, final), user.id],
+        );
+        if (editRow) {
+          distillEdit(editRow.id).catch((err) => req.log.error({ err, editId: editRow.id }, "distillation failed"));
+        }
+      }
+    }
 
     return { saved: true };
   });

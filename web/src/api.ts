@@ -289,6 +289,22 @@ export interface Fact {
   source_document_id: string;
 }
 
+/** GET /clients/:id/facts — the general browse/correct view, richer than
+ *  the plain Fact a finding references. */
+export interface ClientFact {
+  id: string;
+  key: string;
+  period: string | null;
+  value: string;
+  unit: string | null;
+  quote: string;
+  filename: string;
+  source_agent: "ledger" | "extract";
+  created_at: string;
+  edited_by: string | null;
+  edited_at: string | null;
+}
+
 export interface AgentUsageRow {
   agent: string;
   model: string;

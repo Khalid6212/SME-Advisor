@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, type Fact, type Finding } from "../api";
+import { api, type ClientFact, type Fact, type Finding } from "../api";
+
+const SOURCE_LABEL: Record<string, string> = { ledger: "Ledger analysis", extract: "Document extraction" };
 
 const SEVERITY_PILL: Record<string, string> = { critical: "bad", high: "warn", medium: "info", low: "grey" };
 const TYPE_LABEL: Record<string, string> = {
@@ -29,9 +31,35 @@ export function Findings({ clientId }: { clientId: string }) {
   const [facts, setFacts] = useState<Record<string, Fact[]>>({});
   const [dismissing, setDismissing] = useState<string | null>(null);
   const [dismissReason, setDismissReason] = useState("");
+  const [allFacts, setAllFacts] = useState<ClientFact[] | null>(null);
+  const [factsSectionOpen, setFactsSectionOpen] = useState(false);
+  const [editingFact, setEditingFact] = useState<string | null>(null);
+  const [factDraft, setFactDraft] = useState<{ value: string; quote: string }>({ value: "", quote: "" });
+  const [factBusy, setFactBusy] = useState<string | null>(null);
 
   const load = () => api.get<Finding[]>(`/clients/${clientId}/findings`).then(setFindings);
   useEffect(() => { setFindings(null); void load(); }, [clientId]);
+
+  const loadAllFacts = async () => {
+    if (allFacts) return;
+    setAllFacts(await api.get<ClientFact[]>(`/clients/${clientId}/facts`));
+  };
+
+  const startEditFact = (f: ClientFact) => {
+    setEditingFact(f.id);
+    setFactDraft({ value: f.value, quote: f.quote });
+  };
+
+  const saveFact = async (factId: string) => {
+    setFactBusy(factId);
+    try {
+      await api.patch(`/facts/${factId}`, factDraft);
+      setEditingFact(null);
+      setAllFacts(await api.get<ClientFact[]>(`/clients/${clientId}/facts`));
+    } finally {
+      setFactBusy(null);
+    }
+  };
 
   const toggleFacts = async (findingId: string) => {
     if (factsOpen === findingId) return setFactsOpen(null);
@@ -156,6 +184,81 @@ export function Findings({ clientId }: { clientId: string }) {
           ))}
         </details>
       )}
+
+      <details style={{ marginTop: 16 }} onToggle={(e) => { if (e.currentTarget.open) { setFactsSectionOpen(true); void loadAllFacts(); } }}>
+        <summary className="muted" style={{ cursor: "pointer" }}>
+          All extracted &amp; computed facts
+        </summary>
+        {factsSectionOpen && (
+          !allFacts ? (
+            <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>Loading…</p>
+          ) : allFacts.length === 0 ? (
+            <div className="card muted" style={{ marginTop: 10 }}>Nothing extracted or computed yet.</div>
+          ) : (
+            <div className="card" style={{ padding: 4, marginTop: 10, overflowX: "auto" }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Key</th>
+                    <th>Value</th>
+                    <th>Quote</th>
+                    <th>Source</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allFacts.map((f) => (
+                    <tr key={f.id}>
+                      <td className="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                        {f.key}{f.period ? ` · ${f.period}` : ""}
+                      </td>
+                      {editingFact === f.id ? (
+                        <>
+                          <td style={{ minWidth: 140 }}>
+                            <input
+                              value={factDraft.value}
+                              onChange={(e) => setFactDraft((prev) => ({ ...prev, value: e.target.value }))}
+                            />
+                          </td>
+                          <td style={{ minWidth: 220 }}>
+                            <input
+                              value={factDraft.quote}
+                              onChange={(e) => setFactDraft((prev) => ({ ...prev, quote: e.target.value }))}
+                            />
+                          </td>
+                          <td className="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                            {SOURCE_LABEL[f.source_agent] ?? f.source_agent}
+                          </td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            <button
+                              className="primary" onClick={() => saveFact(f.id)}
+                              disabled={factBusy === f.id || !factDraft.value.trim() || !factDraft.quote.trim()}
+                            >
+                              {factBusy === f.id ? "Saving…" : "Save"}
+                            </button>
+                            <button onClick={() => setEditingFact(null)} disabled={factBusy === f.id}>Cancel</button>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td>{f.value}{f.unit ? ` ${f.unit}` : ""}{f.edited_at && <span className="pill grey" style={{ marginLeft: 6 }}>edited</span>}</td>
+                          <td className="dim" style={{ fontStyle: "italic" }}>"{f.quote}"</td>
+                          <td className="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                            {SOURCE_LABEL[f.source_agent] ?? f.source_agent} · {f.filename}
+                          </td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            <button onClick={() => startEditFact(f)}>Correct</button>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+      </details>
     </div>
   );
 }
