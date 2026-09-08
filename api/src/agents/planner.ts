@@ -207,6 +207,13 @@ export async function runPhaseAgent(
     messages,
     maxTurns: phase.sectionKeys.length + 6, // one call per section, plus assumptions, gaps, options, and submit
     model: MODEL,
+    // Deciding what's groundable vs. a gap, keeping this phase consistent
+    // with every earlier one, and holding the register the whole way
+    // through is real synthesis, not a lookup — worth reasoning about
+    // before committing to draft_section rather than generating straight
+    // into the tool call.
+    thinking: true,
+    maxTokens: 24000, // headroom for thinking + a full section's prose in the same turn
     onTool: async (name, input) => {
       if (name === "draft_section") {
         if (!phase.sectionKeys.includes(input.section_key)) {

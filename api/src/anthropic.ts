@@ -52,6 +52,14 @@ export interface AgentLoopOptions {
   maxTokens?: number;
   /** Defaults to MODEL. Override for tasks that don't need Opus-level reasoning. */
   model?: string;
+  /** Adaptive extended thinking — the model reasons before committing to a
+   *  tool call rather than generating straight into one. Opt in per call
+   *  rather than defaulting on for every agent: worth the extra latency and
+   *  cost for genuinely hard synthesis (the business planner), not for a
+   *  short read-and-summarise turn. budget_tokens is deliberately not
+   *  exposed here — it's rejected outright on this model family; adaptive
+   *  sizes itself. */
+  thinking?: boolean;
 }
 
 export interface AgentLoopResult {
@@ -109,6 +117,11 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     const res = await anthropic.messages.create({
       model: opts.model ?? MODEL,
       max_tokens: opts.maxTokens ?? 16000,
+      // "adaptive" is real on this model family (see claude-api skill's API
+      // drift notes) but newer than the installed SDK's TS types, which only
+      // know "enabled" | "disabled" — cast locally rather than widen the
+      // whole call.
+      ...(opts.thinking ? { thinking: { type: "adaptive" } as any } : {}),
       system: cacheable(opts.system) as any,
       tools: opts.tools as any,
       messages: withCachedTail(messages) as any,
