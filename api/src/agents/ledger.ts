@@ -18,6 +18,7 @@
 import { type Message, LEDGER_MODEL, runAgentLoop } from "../anthropic.ts";
 import { audit, one, query } from "../db.ts";
 import { storage } from "../storage.ts";
+import { XLSX_MIME, xlsxToText } from "../xlsx-read.ts";
 import { houseRules } from "./house-rules.ts";
 import { reconcileClient } from "./reconcile.ts";
 
@@ -93,6 +94,7 @@ interface DocumentRow {
   id: string;
   storage_key: string;
   filename: string;
+  mime_type: string;
   client_id: string;
 }
 
@@ -107,7 +109,7 @@ async function recordStatus(documentId: string, status: string, summary?: string
 
 export async function analyzeLedger(documentId: string): Promise<void> {
   const doc = await one<DocumentRow>(
-    `SELECT id, storage_key, filename, client_id FROM documents WHERE id = $1`,
+    `SELECT id, storage_key, filename, mime_type, client_id FROM documents WHERE id = $1`,
     [documentId],
   );
   if (!doc) return;
@@ -120,12 +122,27 @@ export async function analyzeLedger(documentId: string): Promise<void> {
     return;
   }
 
+  // An .xlsx export reads through the same code-execution agent as a CSV —
+  // converted to text first, since the model reads text either way, not a
+  // binary workbook.
+  let rawText: string;
+  if (doc.mime_type === XLSX_MIME) {
+    try {
+      rawText = await xlsxToText(bytes);
+    } catch {
+      await recordStatus(documentId, "failed");
+      return;
+    }
+  } else {
+    rawText = bytes.toString("utf8");
+  }
+
   // A real ledger can run to tens of thousands of rows — this caps context
   // cost, not correctness: truncation is disclosed to the model so it can
   // say so in its summary rather than silently analyzing a partial file as
   // if it were complete.
   const MAX_CHARS = 150_000;
-  const text = bytes.toString("utf8");
+  const text = rawText;
   const truncated = text.length > MAX_CHARS;
 
   const messages: Message[] = [

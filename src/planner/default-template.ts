@@ -5,10 +5,18 @@
  * business plan for a traditional SME (D-plan-depth) — company overview,
  * market sizing, competitive landscape, unit economics, traction, and exit
  * strategy alongside the sections that already existed. Audience-specific
- * documents (a lender pack, an internal operating plan) are *views* over
+ * documents (a marketing plan, an internal operating plan) are *views* over
  * this — `sectionsForAudience` filters and orders the same drafted
- * sections — not separate drafts. A figure cannot say one thing to the
- * bank and another to the owner if there is only ever one draft of it.
+ * sections — not separate drafts. A figure cannot say one thing to a
+ * prospect and another to the owner if there is only ever one draft of it.
+ *
+ * D20 replaced the lender-pack view with a marketing-plan view: financing
+ * content (the ask, the projections, the risk register) stays in the full
+ * and internal views, and the marketing view is the customer/partner-facing
+ * subset — the company, the market, the offer, and how it sells — not a
+ * lending document at all. `sales_and_marketing` carries the forward-looking
+ * marketing and sales strategy on its own, separated from `growth_strategy`,
+ * which covers everything else the funding enables.
  *
  * `draftable_from_profile: false` means the profile alone cannot ground
  * this section — it needs the advisor's planning input (plan_inputs) or an
@@ -26,14 +34,14 @@
 
 import type { PlanTemplate } from "./types.ts";
 
-const BOTH = ["lender", "internal"] as const;
+const BOTH = ["marketing", "internal"] as const;
 
 export const businessPlanTemplate: PlanTemplate = {
   key: "sme-business-plan",
-  version: "0.3.0-draft",
+  version: "0.4.0-draft",
   name: { en: "Business plan", ar: "خطة العمل" },
   purpose:
-    "A single business plan serving two readers from the same facts: a credit officer assessing repayment capacity, and an owner deciding what to do next. Never invent a figure or a claim to serve one reader that the other's version would need to contradict.",
+    "A single business plan serving two readers from the same facts: a prospect or partner deciding whether this business is worth choosing, and an owner deciding what to do next — including whether and how it gets financed. Never invent a figure or a claim to serve one reader that the other's version would need to contradict.",
 
   sections: [
     {
@@ -94,7 +102,7 @@ export const businessPlanTemplate: PlanTemplate = {
       draws_on: ["revenue_and_customers", "financial_health"],
       draftable_from_profile: false,
       required: false,
-      audiences: [...BOTH],
+      audiences: ["internal"],
     },
     {
       key: "market_analysis",
@@ -118,12 +126,12 @@ export const businessPlanTemplate: PlanTemplate = {
     },
     {
       key: "sales_and_marketing",
-      title: { en: "Sales and marketing", ar: "المبيعات والتسويق" },
+      title: { en: "Marketing and sales strategy", ar: "استراتيجية التسويق والمبيعات" },
       guidance:
-        "How customers actually find and choose this business today — the acquisition channels recorded at interview, in the owner's own terms, not a formal marketing plan invented for this document. Add the advisor's positioning judgment where it goes beyond the channel list: is the current mix defensible, and against whom.",
-      draws_on: ["market_position.acquisition_channels", "market_position.differentiation"],
+        "The dedicated marketing and sales strategy — not just a list of today's channels. Start from how customers actually find and choose this business now (the acquisition channels recorded at interview, in the owner's own terms), then use the advisor's positioning judgment to say where that goes next: which segments to prioritise, what the message is and why it wins against the alternative, which channels to grow or drop and why, and how the sales process actually converts a prospect to a paying customer. Where the advisor supplied a marketing budget, campaign plan, or channel targets, present them as given — do not invent figures the advisor did not supply; a strategy with no forward-looking input beyond the current channel list is still worth presenting honestly as 'the current approach' rather than padded into a forward plan that was never given. Growth moves that are not about winning or keeping customers — a new location, a new service line, headcount, capacity — belong in the growth strategy section, not here.",
+      draws_on: ["market_position.acquisition_channels", "market_position.differentiation", "positioning_notes"],
       draftable_from_profile: true,
-      required: false,
+      required: true,
       audiences: [...BOTH],
     },
     {
@@ -134,7 +142,7 @@ export const businessPlanTemplate: PlanTemplate = {
       draws_on: ["operations", "sector_detail.derived_metrics"],
       draftable_from_profile: true,
       required: true,
-      audiences: [...BOTH],
+      audiences: ["internal"],
     },
     {
       key: "regulatory_licensing_compliance",
@@ -144,7 +152,7 @@ export const businessPlanTemplate: PlanTemplate = {
       draws_on: ["business_identity.legal_form", "business_identity.year_registered", "financial_health.compliance", "operations.licences_held"],
       draftable_from_profile: true,
       required: true,
-      audiences: [...BOTH],
+      audiences: ["internal"],
     },
     {
       key: "management_and_organisation",
@@ -154,7 +162,7 @@ export const businessPlanTemplate: PlanTemplate = {
       draws_on: ["business_identity.ownership", "operations.management_team"],
       draftable_from_profile: true,
       required: true,
-      audiences: [...BOTH],
+      audiences: ["internal"],
     },
     {
       key: "traction_and_milestones",
@@ -174,7 +182,7 @@ export const businessPlanTemplate: PlanTemplate = {
       draws_on: ["financial_health", "revenue_and_customers.revenue_history"],
       draftable_from_profile: true,
       required: true,
-      audiences: [...BOTH],
+      audiences: ["internal"],
     },
     {
       key: "financial_projections",
@@ -184,7 +192,7 @@ export const businessPlanTemplate: PlanTemplate = {
       draws_on: ["financial_health"],
       draftable_from_profile: false,
       required: true,
-      audiences: [...BOTH],
+      audiences: ["internal"],
     },
     {
       key: "funding_request",
@@ -194,7 +202,7 @@ export const businessPlanTemplate: PlanTemplate = {
       draws_on: ["funding_need"],
       draftable_from_profile: true,
       required: true,
-      audiences: ["lender"],
+      audiences: ["internal"],
     },
     {
       key: "risks_and_mitigations",
@@ -204,7 +212,7 @@ export const businessPlanTemplate: PlanTemplate = {
       draws_on: ["market_position.key_risks", "revenue_and_customers.top_customer_share_pct"],
       draftable_from_profile: true,
       required: true,
-      audiences: [...BOTH],
+      audiences: ["internal"],
     },
     {
       key: "exit_strategy",
@@ -214,17 +222,17 @@ export const businessPlanTemplate: PlanTemplate = {
       draws_on: ["funding_need.instruments_considered"],
       draftable_from_profile: false,
       required: false,
-      audiences: [...BOTH],
+      audiences: ["internal"],
     },
     {
       key: "growth_strategy",
       title: { en: "Growth strategy", ar: "خطة النمو" },
       guidance:
-        "What the business intends to do next and how the funding enables it. Needs the advisor's planning input — a discovery interview does not capture strategy, and inventing one from a funding request is exactly the guessing this document exists to avoid.",
+        "What the business intends to do next, beyond marketing and sales, and how the funding enables it — new locations, new service lines, capacity, hiring. Marketing and sales tactics belong entirely in the dedicated marketing and sales strategy section; do not restate them here, even briefly. Needs the advisor's planning input — a discovery interview does not capture strategy, and inventing one from a funding request is exactly the guessing this document exists to avoid.",
       draws_on: ["funding_need"],
       draftable_from_profile: false,
       required: true,
-      audiences: [...BOTH],
+      audiences: ["internal"],
     },
     {
       key: "numbers_to_watch",

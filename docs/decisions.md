@@ -411,3 +411,36 @@ fluently — nobody traces the damage back to a rule learned six weeks earlier.
   the breakpoint after them. Rules change only on approval, so the prefix stays
   byte-identical between approvals. Rules above the core would invalidate every
   client's cache on every approval.
+
+---
+
+## D20 — Marketing plan replaces the lender pack
+
+**Decision.** The `lender` audience view is retired. `AUDIENCE` is now
+`marketing` | `internal`: a customer/partner-facing marketing plan (company,
+market, offer, and the dedicated marketing and sales strategy section), and
+an internal operating plan that carries everything else, including the
+financial statements and the funding request. The full, unfiltered plan
+still carries every section, same as before.
+
+**Why.** D18's two tracks were framed entirely around financing. That's no
+longer the only reason a client wants a document out of this system — a
+prospect or a partner is a different reader than a credit officer, and a
+lender-branded pack is the wrong artifact to hand either of them. Financing
+content did not disappear; it moved into the internal view, which a manager
+can still hand to a bank when that's the job at hand.
+
+**Consequences.** `sales_and_marketing` (title: "Marketing and sales
+strategy") is now a required, forward-looking section in its own right,
+separated cleanly from `growth_strategy` — see D-plan-depth's original
+section split. `financial_projections`, `financial_position`,
+`funding_request`, `risks_and_mitigations`, `exit_strategy`,
+`business_model_and_unit_economics`, `operations`,
+`regulatory_licensing_compliance`, and `management_and_organisation` are all
+`internal`-only now; none of them belong in customer/partner-facing
+material. The markdown and docx exports skip the computed financial exhibits
+and the assumptions table entirely when the requested view excludes
+`financial_projections` — a marketing plan carries no P&L. Historical
+`section_edits`/`house_rules` rows scoped to the old `lender` audience value
+are left as-is rather than migrated; they simply stop matching new activity,
+same as any other scope value drift.

@@ -26,7 +26,7 @@ When torn between preference and client_specific, choose client_specific. One ed
 
 Write it as an instruction the drafting agent can follow without seeing this edit. "State repayment capacity explicitly in the funding request section" is usable. "Be more specific" is not.
 
-Scope it as narrowly as the evidence supports. An edit to a lender pack's risk section is evidence about lender packs' risk sections — not about everything the agent writes. Widening later is easy; a rule wrongly applied to every client is discovered by a reader.
+Scope it as narrowly as the evidence supports. An edit to the marketing plan's competitive-landscape section is evidence about that section in the marketing plan — not about everything the agent writes. Widening later is easy; a rule wrongly applied to every client is discovered by a reader.
 
 Set confidence honestly. \`strong\` means the manager stated it outright or the same change has appeared repeatedly. \`weak\` means you are guessing at intent from a diff — which is most of the time.
 

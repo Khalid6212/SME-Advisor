@@ -9,11 +9,11 @@ two document sets from it.
 
 **Two aims, two tracks, one profile:**
 
-| | Get finance | Plan the business |
+| | Reach customers and partners | Plan the business |
 |---|---|---|
-| Reader | Credit officer | The owner |
-| Asks | Can this be repaid? | What do I fix first? |
-| Output | Lender pack | Operating plan |
+| Reader | Prospects and partners | The owner |
+| Asks | Why choose this business? | What do I fix first, and can it be financed? |
+| Output | Marketing plan | Operating plan (incl. financials and the funding ask) |
 
 The manager sits between the agents and anything that leaves the building —
 reviewing, editing, customising, and producing. Their edits feed back: captured,

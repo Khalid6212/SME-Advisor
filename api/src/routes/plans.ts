@@ -3,7 +3,7 @@
  * deliver. The client only ever sees gap questions, as ordinary information
  * requests.
  *
- * One canonical plan per client; audience-specific documents (lender pack,
+ * One canonical plan per client; audience-specific documents (marketing plan,
  * internal operating plan) are read/export-time views over it, not separate
  * drafts — see sectionsForAudience in src/planner/types.ts.
  */
@@ -26,13 +26,13 @@ import { researchMarket } from "../agents/research.ts";
 import { RESEARCH_MODEL } from "../anthropic.ts";
 
 const AUDIENCE_LABEL: Record<Audience | "full", string> = {
-  lender: "Lender pack",
+  marketing: "Marketing plan",
   internal: "Operating plan",
   full: "Full business plan",
 };
 
 function parseAudience(raw: unknown): Audience | "full" {
-  return raw === "lender" || raw === "internal" ? raw : "full";
+  return raw === "marketing" || raw === "internal" ? raw : "full";
 }
 
 /** Comparable text rendering of the market-sizing/competitor fields, used
@@ -696,7 +696,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
 
   // ─── export, gated on approval ───────────────────────────────────────────
 
-  /** Markdown export. `?audience=lender|internal` filters to that view; omit for the full plan. */
+  /** Markdown export. `?audience=marketing|internal` filters to that view; omit for the full plan. */
   app.get("/plans/:planId/export", async (req, reply) => {
     const user = requireManager(req, reply);
     if (!user) return;
@@ -718,15 +718,25 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     );
     const sections = allSections.filter((s) => keys.has(s.key));
 
-    const assumptions = await query<{ label: string; value: string; basis: string }>(
-      `SELECT label, value, basis FROM plan_assumptions WHERE plan_id = $1`,
-      [planId],
-    );
-    const financials = await query<{ year_offset: number; line_item: string; value: string; scenario: string }>(
-      `SELECT year_offset, line_item, value, scenario FROM plan_financials
-        WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`,
-      [planId],
-    );
+    // The marketing view is customer/partner-facing, not a lending document —
+    // the computed statements and forward assumptions have no place in it,
+    // same reasoning as excluding financial_projections/funding_request from
+    // that view's section list above.
+    const includeFinancials = keys.has("financial_projections");
+
+    const assumptions = includeFinancials
+      ? await query<{ label: string; value: string; basis: string }>(
+          `SELECT label, value, basis FROM plan_assumptions WHERE plan_id = $1`,
+          [planId],
+        )
+      : [];
+    const financials = includeFinancials
+      ? await query<{ year_offset: number; line_item: string; value: string; scenario: string }>(
+          `SELECT year_offset, line_item, value, scenario FROM plan_financials
+            WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`,
+          [planId],
+        )
+      : [];
 
     const body = [
       `# ${plan.client_name} — ${AUDIENCE_LABEL[audience]}`,
@@ -776,15 +786,24 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     );
     const sections = allSections.filter((s) => keys.has(s.key));
 
-    const assumptions = await query<{ label: string; value: string; basis: string }>(
-      `SELECT label, value, basis FROM plan_assumptions WHERE plan_id = $1`,
-      [planId],
-    );
-    const financials = await query<{ year_offset: number; line_item: string; value: string; scenario: string }>(
-      `SELECT year_offset, line_item, value, scenario FROM plan_financials
-        WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`,
-      [planId],
-    );
+    // See the markdown export above — the marketing view excludes the
+    // computed statements and forward assumptions, same as it excludes the
+    // financial_projections/funding_request sections themselves.
+    const includeFinancials = keys.has("financial_projections");
+
+    const assumptions = includeFinancials
+      ? await query<{ label: string; value: string; basis: string }>(
+          `SELECT label, value, basis FROM plan_assumptions WHERE plan_id = $1`,
+          [planId],
+        )
+      : [];
+    const financials = includeFinancials
+      ? await query<{ year_offset: number; line_item: string; value: string; scenario: string }>(
+          `SELECT year_offset, line_item, value, scenario FROM plan_financials
+            WHERE plan_id = $1 ORDER BY scenario, line_item, year_offset`,
+          [planId],
+        )
+      : [];
 
     const buffer = await buildPlanDocx({
       firm: firmIdentity(),

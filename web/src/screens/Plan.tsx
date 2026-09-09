@@ -45,7 +45,7 @@ const CONFIDENCE: Record<string, string> = {
  *  directly — no lookup table needed here. */
 
 const AUDIENCE_LABEL: Record<string, string> = {
-  full: "Full plan", lender: "Lender pack", internal: "Operating plan",
+  full: "Full plan", marketing: "Marketing plan", internal: "Operating plan",
 };
 
 const LINE_ITEM_LABEL: Record<string, string> = {
@@ -207,7 +207,7 @@ export function Plan({ clientId }: { clientId: string }) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [plans, setPlans] = useState<{ id: string; version: number; status: string }[]>([]);
   const [view, setView] = useState<PlanView | null>(null);
-  const [audience, setAudience] = useState<"full" | "lender" | "internal">("full");
+  const [audience, setAudience] = useState<"full" | "marketing" | "internal">("full");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -441,7 +441,7 @@ export function Plan({ clientId }: { clientId: string }) {
         </div>
         <p className="muted" style={{ fontSize: 12, margin: "10px 0 0" }}>
           One plan, from the profile, the planning input above, and any verified documents —
-          drafted one stage at a time below, each reviewed before the next can start. Lender and
+          drafted one stage at a time below, each reviewed before the next can start. Marketing and
           operating views are the same draft, filtered.
         </p>
         {error && <p style={{ color: "var(--bad)", marginBottom: 0 }}>{error}</p>}
@@ -456,7 +456,7 @@ export function Plan({ clientId }: { clientId: string }) {
               </span>
               {view.plan.readiness && <span className="pill info">{view.plan.readiness.replace(/_/g, " ")}</span>}
               <div style={{ flex: 1 }} />
-              {(["full", "lender", "internal"] as const).map((a) => (
+              {(["full", "marketing", "internal"] as const).map((a) => (
                 <button
                   key={a} onClick={() => setAudience(a)}
                   style={audience === a ? { borderColor: "var(--info)", color: "var(--info)" } : undefined}

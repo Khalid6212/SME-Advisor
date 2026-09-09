@@ -156,7 +156,7 @@ export const INVENTORY: DataElement[] = [
     label: "Generated documents",
     subject: "business",
     category: "derived",
-    purpose: "Deliver the lender pack and operating plan.",
+    purpose: "Deliver the marketing plan and operating plan.",
     lawful_basis: "contract",
     retention_months: 84,
     retention_trigger: "client_closed",

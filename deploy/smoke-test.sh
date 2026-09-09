@@ -153,7 +153,7 @@ MD_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$BASE/plans/$PLAN_
 check "markdown export available after approval (got $MD_STATUS)" $?
 
 DOCX_FILE=$(mktemp)
-curl -sf -b "$JAR" "$BASE/plans/$PLAN_ID/export.docx?audience=lender" -o "$DOCX_FILE"
+curl -sf -b "$JAR" "$BASE/plans/$PLAN_ID/export.docx?audience=marketing" -o "$DOCX_FILE"
 DOCX_BYTES=$(wc -c < "$DOCX_FILE")
 [ "$DOCX_BYTES" -ge 5000 ]
 check "Word export produced a real document ($DOCX_BYTES bytes)" $?

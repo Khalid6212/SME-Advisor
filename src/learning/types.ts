@@ -38,7 +38,7 @@ export type RuleAgent = (typeof RULE_AGENT)[number];
  */
 export interface RuleScope {
   agents: RuleAgent[];
-  /** 'lender' | 'internal' — an edit to a lender pack rarely applies to both. */
+  /** 'marketing' | 'internal' — an edit to the marketing plan rarely applies to both. */
   audiences: string[];
   /** Sector pack ids. */
   sectors: string[];

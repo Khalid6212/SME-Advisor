@@ -5,14 +5,17 @@
  * planning input, and whatever documents have been verified so far — in six
  * business-advisory phases (src/planner/phases.ts), each drafted by its own
  * agent identity and gated on manager approval before the next phase can
- * draft. Audience-specific documents (a lender pack, an internal operating
+ * draft. Audience-specific documents (a marketing plan, an internal operating
  * plan) are views over the finished draft, not separate generations — see
  * sectionsForAudience in src/planner/types.ts.
  */
 
 import { PLANNER_SYSTEM, buildPhaseBrief, buildPhaseTools } from "../../../src/planner/agent.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
-import { computeBalanceSheet, computeCashFlowStatement, computeProjections, computeSensitivity } from "../../../src/planner/projections.ts";
+import {
+  buildProjectionBase, computeBalanceSheet, computeCashFlowStatement, computeProjections, computeSensitivity,
+  type ProjectionFact,
+} from "../../../src/planner/projections.ts";
 import type { PlanInputs } from "../../../src/planner/types.ts";
 import { PLAN_PHASES, phaseByKey, sectionsBeforePhase, type PhaseSpec } from "../../../src/planner/phases.ts";
 import type { RuleAgent } from "../../../src/learning/types.ts";
@@ -26,12 +29,18 @@ export const TEMPLATES = { [businessPlanTemplate.key]: businessPlanTemplate };
  *  every phase would bloat cost for context nothing else draws on. Pure and
  *  DB-free except for its caller persisting `financials` — shared between
  *  the real draftPhase below and the eval runner (api/src/eval/run.ts), so
- *  an eval fixture exercises the exact same arithmetic production does. */
+ *  an eval fixture exercises the exact same arithmetic production does.
+ *  `facts` (the normalized, document-verified layer — see D-reconcile)
+ *  defaults to `[]` so a caller that predates this, including every existing
+ *  eval fixture, is unaffected unless it opts in; where present, it can
+ *  override the profile-reported base year field-by-field — see
+ *  buildProjectionBase. */
 export function computeFinancialsBlock(
   profileData: any,
   planInputs: PlanInputs,
+  facts: ProjectionFact[] = [],
 ): { financials: ReturnType<typeof computeProjections>; block: string } {
-  const projectionBase = {
+  const profileBase = {
     annualRevenue: profileData?.revenue_and_customers?.annual_revenue ?? null,
     grossMarginPct: profileData?.financial_health?.gross_margin_pct ?? null,
     monthlyOperatingCost: profileData?.financial_health?.monthly_operating_cost ?? null,
@@ -41,13 +50,20 @@ export function computeFinancialsBlock(
     payableDays: profileData?.financial_health?.payable_days ?? null,
     inventoryDays: profileData?.financial_health?.inventory_days ?? null,
   };
+  const projectionBase = buildProjectionBase(profileBase, facts);
   const baseProjections = computeProjections(projectionBase, planInputs);
   const sensitivity = computeSensitivity(projectionBase, planInputs);
   const cashFlowStatement = computeCashFlowStatement(projectionBase, planInputs, baseProjections);
   const balanceSheet = computeBalanceSheet(projectionBase, planInputs, baseProjections, cashFlowStatement);
   const financials = [...baseProjections, ...sensitivity, ...cashFlowStatement, ...balanceSheet];
 
+  const sourceNote =
+    projectionBase.annualRevenueSource === "document" || projectionBase.cashOnHandSource === "document"
+      ? "\nBASE YEAR NOTE: the figures below marked as document-sourced (see each line's own \"basis\") replaced the interview's owner-reported estimate with the most recent uploaded financial statement's figure — say so plainly if you narrate the base year, the same way you would flag any other discrepancy between a document and an owner's claim."
+      : "";
+
   const block = [
+    sourceNote,
     "",
     baseProjections.length > 0
       ? `COMPUTED INCOME STATEMENT (base case, includes an illustrative Zakat line) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
@@ -417,7 +433,16 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
   // every phase would bloat cost for context nothing else draws on.
   let financialsBlock = "";
   if (phase.key === "financial") {
-    const { financials, block } = computeFinancialsBlock(profile.data, planInputs);
+    // Same superseded/deleted guard as documentFacts above — a document the
+    // client re-uploaded to correct must not still hand its old figure to
+    // the base-year lookup alongside (or instead of) the correction.
+    const clientFacts = await query<ProjectionFact>(
+      `SELECT f.key, f.period, f.value
+         FROM facts f JOIN documents d ON d.id = f.source_document_id
+        WHERE f.client_id = $1 AND d.deleted_at IS NULL AND d.superseded_at IS NULL`,
+      [plan.client_id],
+    );
+    const { financials, block } = computeFinancialsBlock(profile.data, planInputs, clientFacts);
     financialsBlock = block;
 
     // Persisted here, not at plan creation — the numbers only exist once

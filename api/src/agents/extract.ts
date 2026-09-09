@@ -21,18 +21,22 @@
  * A sales-ledger export (document_type = 'sales_export') is dispatched to
  * ledger.ts's code-execution agent instead of the single-pass reading below
  * — see that file's header comment for why a transaction-level CSV needs a
- * fundamentally different kind of agent.
+ * fundamentally different kind of agent. An .xlsx sales export is dispatched
+ * the same way — the ledger agent reads it as text via xlsxToText, same as
+ * this file does for a general spreadsheet upload.
  */
 
 import { type ContentBlock, EXTRACT_MODEL, type Message, runAgentLoop } from "../anthropic.ts";
 import { audit, one, query } from "../db.ts";
 import { storage } from "../storage.ts";
+import { XLSX_MIME, xlsxToText } from "../xlsx-read.ts";
 import { reconcileClient } from "./reconcile.ts";
 import { analyzeLedger } from "./ledger.ts";
 
 const SUPPORTED_DOCUMENT = new Set(["application/pdf"]);
 const SUPPORTED_IMAGE = new Set(["image/jpeg", "image/png"]);
 const TEXT_TYPES = new Set(["text/csv"]);
+const SPREADSHEET_TYPES = new Set([XLSX_MIME]);
 
 const EXTRACT_SYSTEM = `You read a single document uploaded by a small business owner as supporting evidence for a financing application, and report what it actually shows.
 
@@ -139,12 +143,14 @@ export async function extractDocument(documentId: string): Promise<void> {
   // A sales-ledger export is a data job, not a reading job — routed to a
   // dedicated code-execution agent instead of this single-pass reader. See
   // ledger.ts's header comment for why that distinction matters in practice.
-  if (node?.document_type === "sales_export" && doc.mime_type === "text/csv") {
+  // CSV and .xlsx both qualify — ledger.ts reads either.
+  if (node?.document_type === "sales_export" && (doc.mime_type === "text/csv" || SPREADSHEET_TYPES.has(doc.mime_type))) {
     return analyzeLedger(documentId);
   }
 
   const isText = TEXT_TYPES.has(doc.mime_type);
-  if (!isText && !SUPPORTED_DOCUMENT.has(doc.mime_type) && !SUPPORTED_IMAGE.has(doc.mime_type)) {
+  const isSpreadsheet = SPREADSHEET_TYPES.has(doc.mime_type);
+  if (!isText && !isSpreadsheet && !SUPPORTED_DOCUMENT.has(doc.mime_type) && !SUPPORTED_IMAGE.has(doc.mime_type)) {
     await recordStatus(documentId, "unsupported");
     return;
   }
@@ -177,6 +183,18 @@ export async function extractDocument(documentId: string): Promise<void> {
     // Caps what goes to the model — this step characterises the document, it
     // does not need to reproduce a large export in full.
     content.push({ type: "text", text: bytes.toString("utf8").slice(0, 20_000) });
+  } else if (isSpreadsheet) {
+    // A workbook renders far denser than a page of prose per character, so
+    // this gets more headroom than plain text — still a cap, not a promise
+    // to reproduce every row of a large multi-sheet file.
+    let text: string;
+    try {
+      text = await xlsxToText(bytes);
+    } catch {
+      await recordStatus(documentId, "failed");
+      return;
+    }
+    content.push({ type: "text", text: text.slice(0, 40_000) });
   } else {
     const block = buildFileBlock(doc.mime_type, bytes.toString("base64"));
     if (!block) {
@@ -205,7 +223,12 @@ export async function extractDocument(documentId: string): Promise<void> {
       messages,
       model: EXTRACT_MODEL,
       maxTurns: 2,
-      maxTokens: 2000,
+      // A dense multi-year spreadsheet reports far more distinct facts than
+      // a single PDF page — 2000 was sized for the latter and left no
+      // headroom for the former. Highest observed output before this change
+      // was ~1300 of the old 2000 cap; this just gives real headroom rather
+      // than reacting to an actual truncation seen in production.
+      maxTokens: 4000,
       onTool: async (name, input) => {
         if (name === "record_extraction") {
           extraction = input;

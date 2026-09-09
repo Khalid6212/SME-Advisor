@@ -2,9 +2,9 @@
  * Business plan structure.
  *
  * The plan is drafted by an agent from the profile, edited by a manager, and
- * delivered to lenders. That last part sets the whole design: a plan is an
- * external document carrying the client's name, so an unsupported sentence in
- * it is a liability, not a rough edge.
+ * delivered to lenders, customers, and partners. That last part sets the whole
+ * design: a plan is an external document carrying the client's name, so an
+ * unsupported sentence in it is a liability, not a rough edge.
  *
  * Hence provenance on every factual statement and gaps rather than filler.
  */
@@ -176,12 +176,13 @@ export const SECTION_STATUS = ["empty", "drafted", "edited", "approved"] as cons
 export type SectionStatus = (typeof SECTION_STATUS)[number];
 
 /**
- * Who a section is written for. The plan is drafted once — a lender wants
- * repayment capacity and risk mitigation, an owner wants to know what to do
- * on Monday, and most sections serve both. `audiences` marks which output
- * views include a given section; it does not fork the draft.
+ * Who a section is written for. The plan is drafted once — a prospect or
+ * partner wants to know why this business over the alternative, an owner
+ * wants the full internal picture including the numbers and the ask, and
+ * some sections serve both. `audiences` marks which output views include a
+ * given section; it does not fork the draft.
  */
-export const AUDIENCE = ["lender", "internal"] as const;
+export const AUDIENCE = ["marketing", "internal"] as const;
 export type Audience = (typeof AUDIENCE)[number];
 
 export interface PlanSectionSpec {
@@ -199,8 +200,8 @@ export interface PlanSectionSpec {
 }
 
 /**
- * The one canonical business plan. Audience-specific documents (a lender
- * pack, an internal operating plan) are views over this — a section filter
+ * The one canonical business plan. Audience-specific documents (a marketing
+ * plan, an internal operating plan) are views over this — a section filter
  * and reorder at export time — not separate drafts, so a figure cannot say
  * one thing in one document and another in the other.
  */

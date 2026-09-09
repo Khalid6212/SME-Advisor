@@ -86,6 +86,115 @@ export interface ProjectionBase {
   receivableDays: number | null;
   payableDays: number | null;
   inventoryDays: number | null;
+  /** Where the base-year revenue and cash figures actually came from — the
+   *  normalized `facts` table (a document Claude actually read and
+   *  verified) or the profile (the owner's own interview estimate,
+   *  unverified). Defaults to "profile" when unset, so a caller built before
+   *  this existed (an eval fixture, say) behaves exactly as it did. See
+   *  buildProjectionBase, the only place that sets these to "document". */
+  annualRevenueSource?: "document" | "profile";
+  cashOnHandSource?: "document" | "profile";
+}
+
+/** One row from the normalized `facts` table (src/planner/types.ts) — only
+ *  the fields buildProjectionBase actually needs. */
+export interface ProjectionFact {
+  key: string;
+  period: string | null;
+  value: string;
+}
+
+// The extraction and ledger agents' own system prompts (api/src/agents/
+// extract.ts, ledger.ts) suggest these exact dotted keys and instruct
+// reusing them verbatim across documents — the canonical vocabulary this
+// list anchors to, not a guess at what a model might have coined.
+const REVENUE_KEYS = ["pl.revenue"];
+const CASH_KEYS = ["bs.cash", "bs.cash_on_hand"];
+const RECEIVABLE_DAYS_KEYS = ["bs.receivable_days"];
+const PAYABLE_DAYS_KEYS = ["bs.payable_days"];
+const INVENTORY_DAYS_KEYS = ["bs.inventory_days"];
+const GROSS_MARGIN_KEYS = ["pl.gross_margin_pct"];
+
+/** FY2025 / 2026-07 → a sortable rank, latest period wins. Anything that
+ *  doesn't parse (including null, a point-in-time fact) ranks lowest — a
+ *  point-in-time balance figure like cash-on-hand still needs a rank to
+ *  compare against another point-in-time fact with a different source
+ *  document, so ties fall back to array order (last document extracted
+ *  wins), which is an acceptable, disclosed simplification, not a promise of
+ *  perfect recency. */
+function periodRank(period: string | null): number {
+  if (!period) return -1;
+  const fy = period.match(/^FY(\d{4})$/);
+  if (fy) return Number(fy[1]) * 100 + 12;
+  const ym = period.match(/^(\d{4})-(\d{2})$/);
+  if (ym) return Number(ym[1]) * 100 + Number(ym[2]);
+  return -1;
+}
+
+/** A fact's `value` is free text ("the value as shown") — never trust it as
+ *  a number without checking. A figure that fails to parse cleanly must fall
+ *  back to the profile rather than risk a garbled number flowing into a
+ *  bank-facing projection, which is a worse outcome than just not having a
+ *  document-sourced figure at all. */
+function parseFactNumber(v: string): number | null {
+  const n = Number(v.replace(/[,\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function latestFact(facts: ProjectionFact[], keys: string[]): ProjectionFact | null {
+  let best: ProjectionFact | null = null;
+  for (const f of facts) {
+    if (!keys.includes(f.key)) continue;
+    if (!best || periodRank(f.period) >= periodRank(best.period)) best = f;
+  }
+  return best;
+}
+
+/**
+ * Prefers a document-verified figure — the normalized facts table populated
+ * by extract.ts and ledger.ts from an actually-uploaded document — over the
+ * interview's owner-reported estimate, for the historical base year only.
+ * Year 0 describes the business as it already is, not a forward assumption,
+ * so "what a document says" is strictly better grounding than "what the
+ * owner estimated in a discovery interview" whenever both exist. Falls back
+ * field-by-field to the profile-derived base when no matching fact is
+ * present (or none parses as a clean number) — a client with no uploaded
+ * financials still gets exactly the projection they got before this
+ * existed. `facts` defaults to `[]` so every existing caller, including the
+ * eval runner's fixtures, is unaffected unless it opts in.
+ */
+export function buildProjectionBase(profileBase: ProjectionBase, facts: ProjectionFact[] = []): ProjectionBase {
+  if (facts.length === 0) return profileBase;
+
+  const revenueFact = latestFact(facts, REVENUE_KEYS);
+  const revenueValue = revenueFact ? parseFactNumber(revenueFact.value) : null;
+
+  const cashFact = latestFact(facts, CASH_KEYS);
+  const cashValue = cashFact ? parseFactNumber(cashFact.value) : null;
+
+  const receivableFact = latestFact(facts, RECEIVABLE_DAYS_KEYS);
+  const receivableValue = receivableFact ? parseFactNumber(receivableFact.value) : null;
+
+  const payableFact = latestFact(facts, PAYABLE_DAYS_KEYS);
+  const payableValue = payableFact ? parseFactNumber(payableFact.value) : null;
+
+  const inventoryFact = latestFact(facts, INVENTORY_DAYS_KEYS);
+  const inventoryValue = inventoryFact ? parseFactNumber(inventoryFact.value) : null;
+
+  const marginFact = latestFact(facts, GROSS_MARGIN_KEYS);
+  const marginValue = marginFact ? parseFactNumber(marginFact.value) : null;
+
+  return {
+    ...profileBase,
+    annualRevenue: revenueValue ?? profileBase.annualRevenue,
+    annualRevenueSource: revenueValue != null ? "document" : "profile",
+    cashOnHand: cashValue ?? profileBase.cashOnHand,
+    cashOnHandSource: cashValue != null ? "document" : "profile",
+    receivableDays: receivableValue ?? profileBase.receivableDays,
+    payableDays: payableValue ?? profileBase.payableDays,
+    inventoryDays: inventoryValue ?? profileBase.inventoryDays,
+    grossMarginPct: marginValue ?? profileBase.grossMarginPct,
+  };
 }
 
 /**
@@ -124,7 +233,9 @@ export function computeProjections(base: ProjectionBase, inputs: PlanInputs): Fi
       scenario: "base",
       basis:
         year === 0
-          ? "As reported in the interview."
+          ? base.annualRevenueSource === "document"
+            ? "From the most recent uploaded financial statement — verified, not the owner's interview estimate."
+            : "As reported in the interview, unverified."
           : `Base-year revenue grown at ${(growth * 100).toFixed(1)}%/yr — ${inputs.growth_basis ?? "advisor estimate"}.`,
     });
 
@@ -371,7 +482,7 @@ export function computeCashFlowStatement(
     runningCash = cashClosing;
 
     lines.push(
-      { year_offset: year, line_item: "cash_opening", value: cashOpening, scenario: "base", basis: year === 1 ? "Current cash balance, as reported." : "Prior year's closing cash." },
+      { year_offset: year, line_item: "cash_opening", value: cashOpening, scenario: "base", basis: year === 1 ? (base.cashOnHandSource === "document" ? "From the most recent uploaded financial statement — verified." : "Current cash balance, as reported in the interview, unverified.") : "Prior year's closing cash." },
       { year_offset: year, line_item: "cf_net_income", value: round(netIncome), scenario: "base", basis: "From the income statement." },
       { year_offset: year, line_item: "cf_depreciation", value: round(depreciation), scenario: "base", basis: "Added back — a non-cash charge." },
       { year_offset: year, line_item: "cf_working_capital_change", value: wcChange, scenario: "base", basis: "− Δ receivables − Δ inventory + Δ payables, from the working-capital assumptions." },
@@ -436,7 +547,7 @@ export function computeBalanceSheet(
 
     const yearLabel = year === 0 ? "the base year" : `year ${year}`;
     lines.push(
-      { year_offset: year, line_item: "bs_cash", value: cash, scenario: "base", basis: year === 0 ? "Current cash balance, as reported." : "Closing cash, from the cash flow statement." },
+      { year_offset: year, line_item: "bs_cash", value: cash, scenario: "base", basis: year === 0 ? (base.cashOnHandSource === "document" ? "From the most recent uploaded financial statement — verified." : "Current cash balance, as reported in the interview, unverified.") : "Closing cash, from the cash flow statement." },
       { year_offset: year, line_item: "bs_receivables", value: wcYear.ar, scenario: "base", basis: "Revenue × receivable days ÷ 365, as reported." },
       { year_offset: year, line_item: "bs_inventory", value: wcYear.inventory, scenario: "base", basis: base.inventoryDays != null ? "COGS × inventory days ÷ 365, as reported." : "No inventory days reported — treated as a service business." },
       { year_offset: year, line_item: "bs_total_current_assets", value: totalCurrentAssets, scenario: "base", basis: "Cash + receivables + inventory." },

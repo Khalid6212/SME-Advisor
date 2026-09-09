@@ -11,7 +11,7 @@ const FEATURES = [
   },
   {
     title: "An investor-ready plan",
-    body: "Your adviser turns your answers into a full business plan — for a lender, for your own use, or both — with every figure traced back to where it came from.",
+    body: "Your adviser turns your answers into a full business plan — to reach customers and partners, to run the business, or both — with every figure traced back to where it came from.",
   },
 ];
 
