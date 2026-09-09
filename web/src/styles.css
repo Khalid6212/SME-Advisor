@@ -308,6 +308,23 @@ h2 { font-size: 18px; margin: 28px 0 10px; letter-spacing: -0.1px; }
 .diff2 > div.after { border-left: 2px solid var(--good); }
 @media (max-width: 640px) { .diff2 { grid-template-columns: 1fr; } }
 
+/* Dense data table — figures right-aligned and tabular, the label column
+ * left-aligned in the body sans so it still reads as prose. Used for
+ * Admin's team/usage tables and the House Rules performance tables. */
+.ft { width: 100%; border-collapse: collapse; }
+.ft th {
+  text-align: end; font-family: var(--sans); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.6px; color: var(--faint); font-weight: 600; padding: 7px 10px; white-space: nowrap;
+}
+.ft th:first-child { text-align: start; }
+.ft td {
+  padding: 9px 10px; border-top: 1px solid var(--line-soft); text-align: end;
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px;
+}
+.ft td:first-child { text-align: start; font-family: var(--sans); font-size: 13px; color: var(--text); }
+.ft tr:hover td { background: color-mix(in srgb, var(--text) 2%, transparent); }
+@media (max-width: 1200px) { .ft { display: block; overflow-x: auto; min-width: 0; } }
+
 /* Financial exhibits — monospace, tabular, right-aligned figures; the label
  * column stays in the body sans so it reads as prose, not data. */
 table.fin { font-family: var(--mono); font-size: 12.5px; }

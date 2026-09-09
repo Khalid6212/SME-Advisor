@@ -117,33 +117,33 @@ function AgentPerformancePanel() {
       ) : perf.agents.length === 0 ? (
         <div className="card muted">No approved phases or edits recorded yet.</div>
       ) : (
-        <div style={{ overflowX: "auto", marginBottom: 24 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <div className="card" style={{ padding: 4, marginBottom: 24, overflowX: "auto" }}>
+          <table className="ft">
             <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--line)" }}>
-                <th style={{ padding: "6px 8px" }}>Agent</th>
-                <th style={{ padding: "6px 8px" }}>Avg edit distance</th>
-                <th style={{ padding: "6px 8px" }}>Avg rating</th>
-                <th style={{ padding: "6px 8px" }}>Approved w/o edit</th>
-                <th style={{ padding: "6px 8px" }}>Latest eval scores</th>
+              <tr>
+                <th>Agent</th>
+                <th>Avg edit distance</th>
+                <th>Avg rating</th>
+                <th>Approved w/o edit</th>
+                <th>Latest eval scores</th>
               </tr>
             </thead>
             <tbody>
               {perf.agents.map((a) => (
-                <tr key={a.agent} style={{ borderBottom: "1px solid var(--line)" }}>
-                  <td style={{ padding: "6px 8px" }}>{agentLabel(a.agent)}</td>
-                  <td style={{ padding: "6px 8px" }}>
+                <tr key={a.agent}>
+                  <td>{agentLabel(a.agent)}</td>
+                  <td>
                     {a.avg_edit_distance !== null ? `${a.avg_edit_distance} (n=${a.edit_count})` : "—"}
                   </td>
-                  <td style={{ padding: "6px 8px" }}>
+                  <td>
                     {a.avg_rating !== null ? `${a.avg_rating}/5 (n=${a.rating_count})` : "—"}
                   </td>
-                  <td style={{ padding: "6px 8px" }}>
+                  <td>
                     {a.approved_phases > 0
                       ? `${a.approved_without_edit}/${a.approved_phases} (${Math.round((a.approved_without_edit / a.approved_phases) * 100)}%)`
                       : "—"}
                   </td>
-                  <td style={{ padding: "6px 8px" }}>
+                  <td style={{ fontSize: 11 }}>
                     {a.latest_eval
                       ? `grounding ${a.latest_eval.grounding} · depth ${a.latest_eval.depth} · register ${a.latest_eval.register} · consistency ${a.latest_eval.internal_consistency}`
                       : "—"}
@@ -161,27 +161,27 @@ function AgentPerformancePanel() {
       ) : runs.length === 0 ? (
         <div className="card muted">No eval runs yet. Use "Run eval suite" above to run the fixtures for the first time.</div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <div className="card" style={{ padding: 4, overflowX: "auto" }}>
+          <table className="ft">
             <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--line)" }}>
-                <th style={{ padding: "6px 8px" }}>Run</th>
-                <th style={{ padding: "6px 8px" }}>Model</th>
-                <th style={{ padding: "6px 8px" }}>Fixtures</th>
-                <th style={{ padding: "6px 8px" }}>Deterministic pass</th>
-                <th style={{ padding: "6px 8px" }}>Triggered by</th>
-                <th style={{ padding: "6px 8px" }}>Note</th>
+              <tr>
+                <th>Run</th>
+                <th>Model</th>
+                <th>Fixtures</th>
+                <th>Deterministic pass</th>
+                <th>Triggered by</th>
+                <th>Note</th>
               </tr>
             </thead>
             <tbody>
               {runs.map((r) => (
-                <tr key={r.id} style={{ borderBottom: "1px solid var(--line)" }}>
-                  <td style={{ padding: "6px 8px" }}>{new Date(r.run_at).toLocaleString()}</td>
-                  <td style={{ padding: "6px 8px" }}>{r.model}</td>
-                  <td style={{ padding: "6px 8px" }}>{r.fixture_count}</td>
-                  <td style={{ padding: "6px 8px" }}>{r.deterministic_passed}/{r.fixture_count}</td>
-                  <td style={{ padding: "6px 8px" }}>{r.triggered_by_email ?? "CLI"}</td>
-                  <td style={{ padding: "6px 8px" }}>{r.note ?? "—"}</td>
+                <tr key={r.id}>
+                  <td className="num" style={{ fontSize: 12.5 }}>{new Date(r.run_at).toLocaleString()}</td>
+                  <td className="muted">{r.model}</td>
+                  <td>{r.fixture_count}</td>
+                  <td>{r.deterministic_passed}/{r.fixture_count}</td>
+                  <td className="muted" style={{ fontFamily: "var(--sans)", fontSize: 12.5 }}>{r.triggered_by_email ?? "CLI"}</td>
+                  <td className="muted" style={{ fontFamily: "var(--sans)", fontSize: 12 }}>{r.note ?? "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -270,83 +270,86 @@ export function HouseRules() {
         </div>
       ) : (
         rules.map((r) => (
-          <div key={r.id} className="card">
-            <div className="row">
-              {r.confidence && (
-                <span className={`pill ${CONFIDENCE_PILL[r.confidence] ?? "grey"}`}>{r.confidence}</span>
-              )}
-              {r.kind && <span className="pill grey">{r.kind.replace(/_/g, " ")}</span>}
-              <span className="muted" style={{ fontSize: 12 }}>
-                seen {r.occurrences} time{r.occurrences === 1 ? "" : "s"}
-              </span>
-              <div style={{ flex: 1 }} />
-              {status === "candidate" ? (
-                <>
-                  <button onClick={() => act(r, "reject")} disabled={busy === r.id}>Reject</button>
-                  <button className="primary" onClick={() => act(r, "approve")} disabled={busy === r.id}>
-                    {busy === r.id ? "…" : "Approve"}
-                  </button>
-                </>
-              ) : (
-                <button
-                  onClick={() => act(r, "retire")} disabled={busy === r.id}
-                  style={{ borderColor: "var(--bad)", color: "var(--bad)" }}
-                >
-                  {busy === r.id ? "…" : "Retire"}
-                </button>
-              )}
-            </div>
-
-            <p style={{ margin: "10px 0 4px" }}>{r.text}</p>
-            {r.rationale && <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>{r.rationale}</p>}
-            <ScopeTags rule={r} />
-
-            <div style={{ marginTop: 8 }}>
-              <a href="#" onClick={(e) => { e.preventDefault(); void toggleSources(r.id); }}>
-                {sourcesOpen === r.id ? "Hide source edits" : "View source edits"}
-              </a>
-            </div>
-
-            {sourcesOpen === r.id && (
-              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
-                {!sources[r.id] ? (
-                  <p className="muted" style={{ fontSize: 12 }}>Loading…</p>
+          <div key={r.id} className="card" style={{ display: "flex", gap: 14 }}>
+            <div className={`stripe ${r.confidence ?? ""}`} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="row">
+                {r.confidence && (
+                  <span className={`pill ${CONFIDENCE_PILL[r.confidence] ?? "grey"}`}>{r.confidence}</span>
+                )}
+                {r.kind && <span className="pill grey">{r.kind.replace(/_/g, " ")}</span>}
+                <span className="muted" style={{ fontSize: 12 }}>
+                  seen {r.occurrences} time{r.occurrences === 1 ? "" : "s"}
+                </span>
+                <div style={{ flex: 1 }} />
+                {status === "candidate" ? (
+                  <>
+                    <button onClick={() => act(r, "reject")} disabled={busy === r.id}>Reject</button>
+                    <button className="primary" onClick={() => act(r, "approve")} disabled={busy === r.id}>
+                      {busy === r.id ? "…" : "Approve"}
+                    </button>
+                  </>
                 ) : (
-                  sources[r.id]!.map((s) =>
-                    s.kind === "edit" ? (
-                      <div key={s.id} style={{ marginBottom: 12, fontSize: 12 }}>
-                        <div className="muted">{s.section_key} · {new Date(s.created_at).toLocaleDateString()}</div>
-                        {s.manager_note && <p className="dim" style={{ margin: "4px 0", fontStyle: "italic" }}>“{s.manager_note}”</p>}
-                        <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
-                          <div style={{ flex: 1 }}>
-                            <div className="muted">Before</div>
-                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.before_text}</p>
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <div className="muted">After</div>
-                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.after_text}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div key={s.id} style={{ marginBottom: 12, fontSize: 12 }}>
-                        <div className="muted">Dismissed finding · {new Date(s.created_at).toLocaleDateString()}</div>
-                        <div className="row" style={{ alignItems: "flex-start", gap: 12, marginTop: 4 }}>
-                          <div style={{ flex: 1 }}>
-                            <div className="muted">Agent flagged</div>
-                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.statement} — {s.detail}</p>
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <div className="muted">Manager's reason for dismissing</div>
-                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}>{s.dismissed_reason}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ),
-                  )
+                  <button
+                    onClick={() => act(r, "retire")} disabled={busy === r.id}
+                    style={{ borderColor: "var(--bad)", color: "var(--bad)" }}
+                  >
+                    {busy === r.id ? "…" : "Retire"}
+                  </button>
                 )}
               </div>
-            )}
+
+              <p style={{ margin: "10px 0 4px" }}>{r.text}</p>
+              {r.rationale && <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>{r.rationale}</p>}
+              <ScopeTags rule={r} />
+
+              <div style={{ marginTop: 8 }}>
+                <a href="#" onClick={(e) => { e.preventDefault(); void toggleSources(r.id); }}>
+                  {sourcesOpen === r.id ? "Hide source edits" : "View source edits"}
+                </a>
+              </div>
+
+              {sourcesOpen === r.id && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                  {!sources[r.id] ? (
+                    <p className="muted" style={{ fontSize: 12 }}>Loading…</p>
+                  ) : (
+                    sources[r.id]!.map((s) =>
+                      s.kind === "edit" ? (
+                        <div key={s.id} style={{ marginBottom: 14, fontSize: 12 }}>
+                          <div className="muted">{s.section_key} · {new Date(s.created_at).toLocaleDateString()}</div>
+                          {s.manager_note && <p className="dim" style={{ margin: "4px 0", fontStyle: "italic" }}>“{s.manager_note}”</p>}
+                          <div className="diff2">
+                            <div className="before">
+                              <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>Before</div>
+                              <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0", fontSize: 12.5 }}>{s.before_text}</p>
+                            </div>
+                            <div className="after">
+                              <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>After</div>
+                              <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0", fontSize: 12.5 }}>{s.after_text}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div key={s.id} style={{ marginBottom: 14, fontSize: 12 }}>
+                          <div className="muted">Dismissed finding · {new Date(s.created_at).toLocaleDateString()}</div>
+                          <div className="diff2">
+                            <div className="before">
+                              <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>Agent flagged</div>
+                              <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0", fontSize: 12.5 }}>{s.statement} — {s.detail}</p>
+                            </div>
+                            <div className="after">
+                              <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>Manager's reason</div>
+                              <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0", fontSize: 12.5 }}>{s.dismissed_reason}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ),
+                    )
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         ))
       )}

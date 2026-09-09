@@ -53,7 +53,7 @@ function AgentUsagePanel() {
           </span>
         </div>
       </div>
-      <table>
+      <table className="ft">
         <thead>
           <tr>
             <th>Agent</th><th>Model</th><th>Calls</th><th>Input</th><th>Output</th>
@@ -145,7 +145,7 @@ export function Admin({ currentUserId }: { currentUserId: string }) {
         <p className="muted">Loading…</p>
       ) : (
         <div className="card" style={{ padding: 4 }}>
-          <table>
+          <table className="ft">
             <thead>
               <tr>
                 <th>Email</th><th>Role</th><th>Status</th><th>Password set</th>
@@ -155,7 +155,7 @@ export function Admin({ currentUserId }: { currentUserId: string }) {
             <tbody>
               {rows.map((u) => (
                 <tr key={u.id}>
-                  <td>{u.email}</td>
+                  <td className="num">{u.email}</td>
                   <td><span className={`pill ${ROLE_PILL[u.role] ?? "grey"}`}>{u.role}</span></td>
                   <td>
                     <span className={`pill ${u.status === "active" ? "good" : "bad"}`}>
@@ -167,7 +167,7 @@ export function Admin({ currentUserId }: { currentUserId: string }) {
                     {u.last_seen_at ? new Date(u.last_seen_at).toLocaleDateString() : "never"}
                   </td>
                   <td>
-                    <div className="row" style={{ gap: 8 }}>
+                    <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
                       {u.id !== currentUserId && (
                         <button
                           disabled={busy === u.id}
