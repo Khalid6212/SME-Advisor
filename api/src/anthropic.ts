@@ -38,8 +38,18 @@ export interface ToolResult {
 }
 
 export interface AgentLoopOptions {
-  /** Rendered once per turn. Stable prefix first — see cacheable() below. */
-  system: string;
+  /**
+   * Rendered once per turn. A plain string gets one cache breakpoint at the
+   * end (the original behavior — still what every non-planner agent passes).
+   * An array gives each block its own breakpoint, most-stable-first: pass
+   * a byte-identical-everywhere instructions block as element 0 and whatever
+   * varies per call (a per-phase brief, per-client rules) after it, so the
+   * stable block can be read from cache by a *different* call that shares
+   * only that prefix — see cacheable() below. Order matters; there is no
+   * benefit to splitting if the pieces don't actually differ in how often
+   * they change.
+   */
+  system: string | string[];
   tools: unknown[];
   messages: Message[];
   /**
@@ -70,19 +80,25 @@ export interface AgentLoopResult {
 }
 
 /**
- * The system block carries one cache breakpoint. Everything client-specific
- * lives in `messages`, below it, so the prefix stays byte-identical across every
- * client — verify with usage.cacheRead, which should be non-zero from the second
- * turn of any conversation.
+ * One breakpoint per block. A single string (every agent except the phase
+ * planner) behaves exactly as before — the whole thing cached as one unit,
+ * verify with usage.cacheRead, which should be non-zero from the second turn
+ * of any conversation. An array (the phase planner) marks each block
+ * separately, so a stable block shared across otherwise-different calls
+ * (e.g. the same instructions text used by every phase and every client) can
+ * be read from cache by any of them, not only repeated turns of the one call
+ * that first wrote it. Anthropic caps cache breakpoints per request; this
+ * plus withCachedTail's one breakpoint on the message side must stay under
+ * that limit, so don't split system into more blocks than actually differ in
+ * how often they change.
  */
-function cacheable(system: string) {
-  return [
-    {
-      type: "text" as const,
-      text: system,
-      cache_control: { type: "ephemeral" as const },
-    },
-  ];
+function cacheable(system: string | string[]) {
+  const blocks = Array.isArray(system) ? system : [system];
+  return blocks.map((text) => ({
+    type: "text" as const,
+    text,
+    cache_control: { type: "ephemeral" as const },
+  }));
 }
 
 /**

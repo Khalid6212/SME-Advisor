@@ -156,6 +156,11 @@ export interface Finding {
   statement: string;
   detail: string;
   supporting_fact_ids: string[];
+  /** Set only for a `contradiction` the reconciliation agent tied to a
+   *  specific interview claim — see reconcile.ts. Null for a fact-vs-fact
+   *  anomaly (the deterministic pattern engine never sets this) or a
+   *  contradiction that doesn't concern any one claim. */
+  contradicted_claim_id: string | null;
   raised_by: "reconciliation_agent" | "pattern_engine";
   status: "open" | "acknowledged" | "resolved" | "dismissed";
   dismissed_reason: string | null;
@@ -170,7 +175,7 @@ export interface Finding {
 export type NewFinding = Pick<
   Finding,
   "type" | "severity" | "statement" | "detail" | "supporting_fact_ids" | "raised_by"
->;
+> & { contradicted_claim_id?: string | null };
 
 export const SECTION_STATUS = ["empty", "drafted", "edited", "approved"] as const;
 export type SectionStatus = (typeof SECTION_STATUS)[number];

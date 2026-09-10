@@ -12,7 +12,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireManager } from "../auth.ts";
 import { audit, one, query } from "../db.ts";
-import { buildPlanDocx, firmIdentity } from "../docx.ts";
+import { buildPlanDocx, exhibitLine, firmIdentity } from "../docx.ts";
 import { buildFinancialsXlsx } from "../xlsx.ts";
 import { informationRequestMail, sendMail } from "../mailer.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
@@ -741,7 +741,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const body = [
       `# ${plan.client_name} — ${AUDIENCE_LABEL[audience]}`,
       "",
-      ...sections.flatMap((s) => [`## ${s.title_en}`, "", s.content || "_Not yet drafted._", ""]),
+      ...sections.flatMap((s, i) => [`## ${i + 1}. ${s.title_en}`, "", renderSectionMarkdown(s.content), ""]),
       ...financialExhibitsMarkdown(financials),
       ...(assumptions.length
         ? [
@@ -911,6 +911,39 @@ function fmtFinancial(item: string, v: string | undefined): string {
   if (item === "dscr") return `${n.toFixed(2)}x`;
   const abs = Math.abs(n).toLocaleString("en-US");
   return n < 0 ? `(${abs})` : abs;
+}
+
+/**
+ * A bare newline collapses inside a markdown paragraph — a run of "label:
+ * value" lines (the exact format PLANNER_SYSTEM asks for in place of a
+ * broken markdown table) would otherwise run together into one sentence.
+ * Detects the same runs docx.ts's exhibitLine does and renders them as a
+ * real markdown table instead; a lone line stays plain text, same reasoning
+ * as the docx side — one line is as likely an ordinary sentence with a
+ * colon in it as a real exhibit.
+ */
+function renderSectionMarkdown(content: string): string {
+  const lines = (content || "_Not yet drafted._").split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const runStart = i;
+    const run: { label: string; value: string }[] = [];
+    while (i < lines.length) {
+      const parsed = exhibitLine(lines[i]!);
+      if (!parsed) break;
+      run.push(parsed);
+      i++;
+    }
+    if (run.length >= 2) {
+      out.push("| | |", "|---|---|", ...run.map((r) => `| **${r.label}** | ${r.value} |`), "");
+      continue;
+    }
+    i = runStart;
+    out.push(lines[i]!);
+    i++;
+  }
+  return out.join("\n");
 }
 
 function tableMarkdown(rows: FinRow[], order: string[], yearLabel: (y: number) => string): string[] {

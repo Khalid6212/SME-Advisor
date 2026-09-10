@@ -8,6 +8,7 @@
 
 import {
   AlignmentType,
+  BorderStyle,
   Document,
   type FileChild,
   Footer,
@@ -16,6 +17,7 @@ import {
   Packer,
   PageNumber,
   Paragraph,
+  ShadingType,
   Table,
   TableCell,
   TableOfContents,
@@ -27,6 +29,33 @@ import { config } from "./config.ts";
 
 const MUTED = "666666";
 const FAINT = "999999";
+/** The one accent used throughout — headings, the executive-summary callout
+ *  border, section numbers. Deliberately a single restrained color, not a
+ *  palette: a business plan is not the place to introduce a brand identity
+ *  the firm doesn't already have (see FirmIdentity — no logo/color field
+ *  exists there today). A muted slate reads as considered rather than
+ *  decorative next to the plain, factual prose. */
+const ACCENT = "2B3A55";
+const CALLOUT_FILL = "F3F4F6";
+const HEADING_FONT = "Georgia";
+const BODY_FONT = "Calibri";
+const NO_BORDER = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" } as const;
+const NO_TABLE_BORDERS = {
+  top: NO_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER,
+  insideHorizontal: NO_BORDER, insideVertical: NO_BORDER,
+};
+
+/** One deliberate type pairing — a serif for headings and the cover title,
+ *  a clean sans for body prose — instead of whatever Word's own default
+ *  template happens to carry. Shared by both documents this file builds. */
+const DOCUMENT_STYLES = {
+  default: {
+    document: { run: { font: BODY_FONT, size: 22 } },
+    title: { run: { font: HEADING_FONT, bold: true, size: 56, color: ACCENT } },
+    heading1: { run: { font: HEADING_FONT, bold: true, size: 30, color: ACCENT }, paragraph: { spacing: { before: 320, after: 140 } } },
+    heading2: { run: { font: HEADING_FONT, bold: true, size: 24, color: ACCENT } },
+  },
+} as const;
 
 export interface FirmIdentity {
   name: string;
@@ -54,9 +83,111 @@ function heading(text: string, level: (typeof HeadingLevel)[keyof typeof Heading
   return new Paragraph({ text, heading: level, spacing: { before: 240, after: 120 } });
 }
 
-function paragraphs(text: string): Paragraph[] {
+/** The executive summary is the one section a reader always reads in full —
+ *  a light shaded, borderless callout (a single-cell table, the standard
+ *  docx technique for a continuous highlight block regardless of how many
+ *  paragraphs it holds) gives it the visual weight that earns, without
+ *  adding or softening a single word of the plain, grounded prose inside. */
+function calloutBox(body: (Paragraph | Table)[]): Table {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: NO_TABLE_BORDERS,
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            shading: { type: ShadingType.CLEAR, fill: CALLOUT_FILL },
+            margins: { top: 160, bottom: 160, left: 200, right: 200 },
+            children: body,
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+const LABEL_VALUE_LINE = /^([^:\n]{1,60}):\s*(.+)$/;
+
+/** A candidate "label: value" line — short label, non-empty value. Excludes
+ *  an ordinary sentence that happens to contain a colon (e.g. "the split is
+ *  roughly even: about half stays local") by requiring the part before the
+ *  colon to read as a short label, not a clause — at most six words. Exported
+ *  for the markdown export (routes/plans.ts), which has the same underlying
+ *  issue: a bare newline collapses inside a markdown paragraph, so these
+ *  lines run together into one sentence unless rendered as a real list. */
+export function exhibitLine(line: string): { label: string; value: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const m = LABEL_VALUE_LINE.exec(trimmed);
+  if (!m) return null;
+  const [, label, value] = m;
+  if (label!.trim().split(/\s+/).length > 6) return null;
+  return { label: label!.trim(), value: value!.trim() };
+}
+
+/** A borderless, lightly shaded two-column table — reads as a clean exhibit
+ *  list (a use-of-funds breakdown, say) rather than plain paragraph text
+ *  with inline colons, which is what the same content looks like when
+ *  rendered as prose. */
+function exhibitTable(rows: { label: string; value: string }[]): Table {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: NO_TABLE_BORDERS,
+    rows: rows.map(
+      (r) =>
+        new TableRow({
+          children: [
+            new TableCell({
+              width: { size: 38, type: WidthType.PERCENTAGE },
+              margins: { top: 30, bottom: 30, left: 0, right: 120 },
+              children: [new Paragraph({ children: [new TextRun({ text: r.label, bold: true, color: MUTED, font: BODY_FONT })] })],
+            }),
+            new TableCell({
+              margins: { top: 30, bottom: 30, left: 0, right: 0 },
+              children: [new Paragraph({ children: [new TextRun({ text: r.value, font: BODY_FONT })] })],
+            }),
+          ],
+        }),
+    ),
+  });
+}
+
+/**
+ * Renders a section's content, detecting runs of two or more consecutive
+ * "label: value" lines — the exact format PLANNER_SYSTEM instructs the model
+ * to use for a numeric breakdown instead of a markdown table — and rendering
+ * those runs as a clean exhibit list instead of plain paragraph text. A
+ * single such line on its own still renders as an ordinary paragraph: one
+ * line is as likely to be a normal sentence with a colon in it as a real
+ * exhibit, and two or more in a row is what actually distinguishes the two.
+ * Purely a rendering choice over content the model already produces in the
+ * documented convention — nothing here changes what the model is asked to
+ * write, or adds anything it didn't say.
+ */
+function renderSectionBody(text: string): (Paragraph | Table)[] {
   const lines = (text || "Not yet drafted.").split("\n");
-  return lines.map((line) => new Paragraph({ children: [new TextRun(line)], spacing: { after: 120 } }));
+  const out: (Paragraph | Table)[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const runStart = i;
+    const run: { label: string; value: string }[] = [];
+    while (i < lines.length) {
+      const parsed = exhibitLine(lines[i]!);
+      if (!parsed) break;
+      run.push(parsed);
+      i++;
+    }
+    if (run.length >= 2) {
+      out.push(exhibitTable(run));
+      continue;
+    }
+    // Not a run — emit the one line at runStart as ordinary prose and move
+    // on one line at a time (i may have advanced 0 or 1 lines above).
+    i = runStart;
+    out.push(new Paragraph({ children: [new TextRun({ text: lines[i]!, font: BODY_FONT })], spacing: { after: 120 } }));
+    i++;
+  }
+  return out;
 }
 
 function disclaimer(text: string) {
@@ -288,7 +419,7 @@ export async function buildPlanDocx(opts: {
   clientName: string;
   audienceLabel: string;
   approvedAt: Date | null;
-  sections: { title_en: string; content: string }[];
+  sections: { key: string; title_en: string; content: string }[];
   financials: FinRow[];
   assumptions: { label: string; value: string; basis: string }[];
 }): Promise<Buffer> {
@@ -311,9 +442,15 @@ export async function buildPlanDocx(opts: {
     }),
   ];
 
-  for (const s of opts.sections) {
-    children.push(heading(s.title_en, HeadingLevel.HEADING_1), ...paragraphs(s.content));
-  }
+  opts.sections.forEach((s, i) => {
+    const body = renderSectionBody(s.content);
+    children.push(heading(`${i + 1}. ${s.title_en}`, HeadingLevel.HEADING_1));
+    if (s.key === "executive_summary") {
+      children.push(calloutBox(body));
+    } else {
+      children.push(...body);
+    }
+  });
 
   // Positive inclusion per exhibit, not "everything else" — four disjoint
   // line-item vocabularies now share this table, and an exclusion filter
@@ -372,6 +509,7 @@ export async function buildPlanDocx(opts: {
   );
 
   const doc = new Document({
+    styles: DOCUMENT_STYLES,
     sections: [
       { ...headerFooter(opts.firm, `${opts.clientName} — ${opts.audienceLabel}`), children },
     ],
@@ -442,6 +580,7 @@ export async function buildInterviewDocx(opts: {
   );
 
   const doc = new Document({
+    styles: DOCUMENT_STYLES,
     sections: [{ ...headerFooter(opts.firm, `${opts.clientName} — Interview summary`), children }],
   });
   return Buffer.from(await Packer.toBuffer(doc));

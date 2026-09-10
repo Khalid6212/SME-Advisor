@@ -114,11 +114,23 @@ export interface PhaseContext {
 
 /** Pure: no DB, no network. Builds exactly what draftPhase sends the model —
  *  shared with the eval runner so a fixture is never testing a simplified
- *  stand-in for what actually runs in production. */
-export function buildPhaseMessages(phase: PhaseSpec, ctx: PhaseContext): { system: string; messages: Message[] } {
-  const system = [PLANNER_SYSTEM, buildPhaseBrief(phase, businessPlanTemplate, ctx.earlierSections), ctx.rules]
+ *  stand-in for what actually runs in production.
+ *
+ *  `system` is returned as two cache blocks, not one joined string:
+ *  PLANNER_SYSTEM is byte-identical across every phase and every client, so
+ *  keeping it as its own breakpoint lets it be read from cache starting with
+ *  the very first turn of the *second* phase drafted (of any client, not
+ *  just this one) — the phase brief and per-client rules, which do differ
+ *  every call, go in the second, variable block instead of being joined
+ *  into the same one. Before this, the two were concatenated into a single
+ *  string, so any difference in the variable part invalidated the whole
+ *  thing and rewrote PLANNER_SYSTEM to cache fresh (at a markup) on every
+ *  single phase, for every client — never actually a hit. */
+export function buildPhaseMessages(phase: PhaseSpec, ctx: PhaseContext): { system: string[]; messages: Message[] } {
+  const variable = [buildPhaseBrief(phase, businessPlanTemplate, ctx.earlierSections), ctx.rules]
     .filter(Boolean)
     .join("\n\n");
+  const system = [PLANNER_SYSTEM, variable];
 
   const messages: Message[] = [
     {
@@ -178,7 +190,7 @@ export interface PhaseAgentOutcome {
  */
 export async function runPhaseAgent(
   phase: PhaseSpec,
-  system: string,
+  system: string | string[],
   messages: Message[],
 ): Promise<PhaseAgentOutcome> {
   const drafted: any[] = [];

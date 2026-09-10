@@ -26,7 +26,7 @@ You are given every fact extracted from the client's uploaded documents, and eve
 
 ## What counts as a finding
 
-A contradiction: two sources give different values for the same underlying thing — the owner's claim differs from a document, or two documents differ from each other. State both sides with their source, plainly, the way a credit officer would want to see it — do not soften it or split the difference.
+A contradiction: two sources give different values for the same underlying thing — the owner's claim differs from a document, or two documents differ from each other. State both sides with their source, plainly, the way a credit officer would want to see it — do not soften it or split the difference. Where the contradiction is between a document and one specific claim from the list below, name that claim's id — this is what lets the claim's own status update automatically instead of just sitting in a findings inbox.
 
 Missing evidence: something material is asserted (a market size, a growth rate, a competitive claim) with no document or credible basis behind it in what you were given — flag it as a gap, not a certainty.
 
@@ -58,8 +58,12 @@ const RECORD_FINDING_TOOL = {
         items: { type: "string" },
         description: "IDs of the supporting facts, from the list you were given. Empty if the issue is claim-only.",
       },
+      contradicted_claim_id: {
+        type: ["string", "null"],
+        description: "The id of the one claim this contradicts, from the claims list you were given — only for finding_type 'contradiction' where a single specific claim is the other side. Null for a fact-vs-fact contradiction, missing_evidence, or a contradiction not tied to one claim.",
+      },
     },
-    required: ["finding_type", "severity", "statement", "detail", "fact_ids"],
+    required: ["finding_type", "severity", "statement", "detail", "fact_ids", "contradicted_claim_id"],
     additionalProperties: false,
   },
 } as const;
@@ -71,6 +75,7 @@ const SUBMIT_TOOL = {
 } as const;
 
 interface ClaimRow {
+  id: string;
   claim_key: string;
   field_path: string;
   stated_value: string | null;
@@ -92,7 +97,7 @@ function buildUserMessage(facts: Fact[], claims: ClaimRow[], alreadyFlagged: str
   parts.push(
     claims.length > 0
       ? `## Claims from the owner interview\n\n${claims
-          .map((c) => `- ${c.field_path} = ${c.stated_value ?? "null"} (${c.verification_status}) — "${c.owner_quote}"`)
+          .map((c) => `- id ${c.id}: ${c.field_path} = ${c.stated_value ?? "null"} (${c.verification_status}) — "${c.owner_quote}"`)
           .join("\n")}`
       : "## Claims from the owner interview\n\nNone recorded.",
   );
@@ -136,6 +141,7 @@ async function runReconciliationAgent(
           statement: input.statement,
           detail: input.detail,
           supporting_fact_ids: input.fact_ids ?? [],
+          contradicted_claim_id: input.contradicted_claim_id ?? null,
           raised_by: "reconciliation_agent",
         });
         return { content: "Recorded." };
@@ -156,7 +162,14 @@ async function runReconciliationAgent(
 /** Skips a finding that overlaps an existing, non-dismissed finding of the
  *  same type — the model is already instructed not to repeat itself, but a
  *  cheap SQL check is worth having as a second line of defense against the
- *  same issue getting re-raised every time an unrelated document arrives. */
+ *  same issue getting re-raised every time an unrelated document arrives.
+ *
+ *  A contradiction tied to a specific claim also flips that claim's own
+ *  `verification_status` to 'contradicted' — the same signal extract.ts's
+ *  claim_checks already produce, and the one PLANNER_SYSTEM's "prefer the
+ *  document" instruction actually keys off. This runs regardless of the
+ *  duplicate-finding check above: the finding row is a UI/inbox concern, but
+ *  the claim's own status should reflect reality even on a repeat run. */
 async function insertNewFindings(clientId: string, findings: NewFinding[]): Promise<void> {
   if (findings.length === 0) return;
 
@@ -166,15 +179,23 @@ async function insertNewFindings(clientId: string, findings: NewFinding[]): Prom
   );
 
   for (const f of findings) {
+    if (f.type === "contradiction" && f.contradicted_claim_id) {
+      await query(
+        `UPDATE claims SET verification_status = 'contradicted'
+          WHERE id = $1 AND verification_status != 'contradicted'`,
+        [f.contradicted_claim_id],
+      );
+    }
+
     const isDuplicate = existing.some(
       (e) => e.type === f.type && e.supporting_fact_ids.some((id) => f.supporting_fact_ids.includes(id)),
     );
     if (isDuplicate) continue;
 
     await query(
-      `INSERT INTO findings (client_id, type, severity, statement, detail, supporting_fact_ids, raised_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [clientId, f.type, f.severity, f.statement, f.detail, f.supporting_fact_ids, f.raised_by],
+      `INSERT INTO findings (client_id, type, severity, statement, detail, supporting_fact_ids, raised_by, contradicted_claim_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [clientId, f.type, f.severity, f.statement, f.detail, f.supporting_fact_ids, f.raised_by, f.contradicted_claim_id ?? null],
     );
   }
 }
@@ -192,7 +213,7 @@ export async function reconcileClient(clientId: string): Promise<void> {
   );
   const claims = profile
     ? await query<ClaimRow>(
-        `SELECT claim_key, field_path, stated_value, owner_quote, verification_status
+        `SELECT id, claim_key, field_path, stated_value, owner_quote, verification_status
            FROM claims WHERE profile_id = $1 AND invalidated_at IS NULL`,
         [profile.id],
       )
