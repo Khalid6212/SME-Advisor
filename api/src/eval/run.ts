@@ -76,6 +76,7 @@ export async function runEvalSuite(triggeredBy: string | null, note?: string): P
       earlierSections: [], // fixtures are single-phase — nothing "earlier" to simulate
       rules: "", // see file header: house rules excluded on purpose
       financialsBlock,
+      historicalTrendsBlock: "", // fixtures don't seed the normalized facts table — nothing to trend
     });
 
     const outcome = await runPhaseAgent(phase, system, messages);

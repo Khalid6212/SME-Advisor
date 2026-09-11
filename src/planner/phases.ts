@@ -1,12 +1,26 @@
 /**
  * Business-advisory stages the plan is drafted in.
  *
- * A real advisor drafts foundation, then strategy, then operations, then the
- * numbers, then the ask — and writes the executive summary *last*, from the
- * finished parts, even though it is read *first* in the delivered document.
- * PLANNER_SYSTEM already states this principle for a single agent; phasing
- * is what actually enforces it, since the summary phase cannot run until
- * every phase before it has been drafted and approved.
+ * Sequenced to match how a rigorous advisor actually reasons, not how the
+ * delivered document reads: understand the business and its market first,
+ * then its financial and historical reality (rigorous analysis of what
+ * actually happened, not narrative), then its operations and the resources
+ * it has to work with — and only once all of that is grounded, decide the
+ * forward-looking strategy, marketing direction, and funding ask those facts
+ * can actually support. The executive summary is written *last*, from the
+ * finished parts, even though it is read *first* in the delivered document —
+ * PLANNER_SYSTEM states this principle for a single agent; phasing is what
+ * enforces the same discipline one level up, for strategy against financial
+ * and operational reality, since a phase cannot run until every phase before
+ * it has been drafted and approved, and `buildPhaseBrief` hands every later
+ * phase the full drafted text of everything earlier.
+ *
+ * (D-plan-sequence: this order previously ran foundation → strategy →
+ * operations → financial → ask — a document-reading order, not an
+ * analytical one. Strategy was being drafted before the financial phase had
+ * even computed the numbers, so growth ambition had no grounding in
+ * demonstrated capacity; the numbers were then narrated to avoid
+ * contradicting a strategy that was never actually bounded by them.)
  *
  * Phase order and document order are deliberately decoupled: this file only
  * governs drafting sequence. Where a section actually lands in the
@@ -47,26 +61,30 @@ export const PLAN_PHASES: PhaseSpec[] = [
     ],
   },
   {
-    key: "strategy",
-    agent: "phase.strategy",
-    title: { en: "Business & growth strategy", ar: "الاستراتيجية والنمو" },
-    sectionKeys: ["business_model_and_unit_economics", "sales_and_marketing", "growth_strategy", "exit_strategy"],
-    presentsOptions: true,
-  },
-  {
-    key: "operations",
-    agent: "phase.operations",
-    title: { en: "Operations & organisation", ar: "التشغيل والهيكل التنظيمي" },
-    sectionKeys: [
-      "operations", "regulatory_licensing_compliance",
-      "management_and_organisation", "traction_and_milestones",
-    ],
-  },
-  {
     key: "financial",
     agent: "phase.financial",
     title: { en: "Financial plan", ar: "الخطة المالية" },
     sectionKeys: ["financial_position", "financial_projections"],
+  },
+  {
+    key: "operations",
+    agent: "phase.operations",
+    title: { en: "Operations, organisation & resources", ar: "التشغيل والهيكل التنظيمي والموارد" },
+    // business_model_and_unit_economics lives here, not in strategy — "what
+    // a unit costs to add" is a resource/capacity question, the thing that
+    // needs answering before growth strategy is drafted, not alongside it.
+    sectionKeys: [
+      "operations", "regulatory_licensing_compliance",
+      "management_and_organisation", "traction_and_milestones",
+      "business_model_and_unit_economics",
+    ],
+  },
+  {
+    key: "strategy",
+    agent: "phase.strategy",
+    title: { en: "Growth & marketing strategy", ar: "استراتيجية النمو والتسويق" },
+    sectionKeys: ["sales_and_marketing", "growth_strategy", "exit_strategy"],
+    presentsOptions: true,
   },
   {
     key: "investment_case",

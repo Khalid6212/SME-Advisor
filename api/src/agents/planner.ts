@@ -17,6 +17,7 @@ import {
   type ProjectionFact,
 } from "../../../src/planner/projections.ts";
 import type { PlanInputs } from "../../../src/planner/types.ts";
+import { computeHistoricalTrends, renderHistoricalTrendsBlock } from "../../../src/planner/history.ts";
 import { PLAN_PHASES, phaseByKey, sectionsBeforePhase, type PhaseSpec } from "../../../src/planner/phases.ts";
 import type { RuleAgent } from "../../../src/learning/types.ts";
 import { MODEL, runAgentLoop, type Message } from "../anthropic.ts";
@@ -108,8 +109,14 @@ export interface PhaseContext {
   openFindings: { statement: string; detail: string }[];
   earlierSections: { key: string; title_en: string; content: string }[];
   rules: string;
-  /** "" for every phase except "financial" — see computeFinancialsBlock. */
+  /** "" before the financial phase has run; populated for the financial
+   *  phase itself and every phase after it (see draftPhase) — computed
+   *  fresh each time from the same pure function, not carried over, but
+   *  persisted to plan_financials only once, by the financial phase. */
   financialsBlock: string;
+  /** "" before the financial phase has run, or when there simply isn't
+   *  enough multi-period document evidence to trend — see history.ts. */
+  historicalTrendsBlock: string;
 }
 
 /** Pure: no DB, no network. Builds exactly what draftPhase sends the model —
@@ -158,6 +165,7 @@ export function buildPhaseMessages(phase: PhaseSpec, ctx: PhaseContext): { syste
         ctx.openFindings.length > 0
           ? `UNRESOLVED FINDINGS — contradictions or gaps reconciliation has flagged and a manager has not yet resolved. Reflect these honestly rather than picking a side silently:\n${JSON.stringify(ctx.openFindings, null, 2)}`
           : "UNRESOLVED FINDINGS: none open.",
+        ctx.historicalTrendsBlock,
         ctx.financialsBlock,
       ].join("\n"),
     },
@@ -441,13 +449,22 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     [plan.client_id],
   );
 
-  // Only the financial phase needs the computed statements — sending them to
-  // every phase would bloat cost for context nothing else draws on.
+  // The financial phase needs the computed statements to narrate; every
+  // phase from there on needs them too, now that strategy is drafted *after*
+  // financial — a growth strategy grounded in "capacity already established"
+  // (see PLANNER_SYSTEM) has to actually see that capacity. Phases before
+  // financial get neither block: sending them to every phase would bloat
+  // cost for context nothing there draws on, and a phase run before the
+  // financial phase exists has nothing to show anyway.
   let financialsBlock = "";
-  if (phase.key === "financial") {
+  let historicalTrendsBlock = "";
+  const phaseIndex = PLAN_PHASES.findIndex((p) => p.key === phase.key);
+  const financialPhaseIndex = PLAN_PHASES.findIndex((p) => p.key === "financial");
+  if (phaseIndex >= financialPhaseIndex) {
     // Same superseded/deleted guard as documentFacts above — a document the
     // client re-uploaded to correct must not still hand its old figure to
-    // the base-year lookup alongside (or instead of) the correction.
+    // the base-year lookup, or the historical trend, alongside (or instead
+    // of) the correction.
     const clientFacts = await query<ProjectionFact>(
       `SELECT f.key, f.period, f.value
          FROM facts f JOIN documents d ON d.id = f.source_document_id
@@ -456,20 +473,24 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     );
     const { financials, block } = computeFinancialsBlock(profile.data, planInputs, clientFacts);
     financialsBlock = block;
+    historicalTrendsBlock = renderHistoricalTrendsBlock(computeHistoricalTrends(clientFacts));
 
-    // Persisted here, not at plan creation — the numbers only exist once
-    // this phase actually runs, and a redraft recomputes fresh rather than
-    // leaving a stale set from a prior run.
-    await tx(async (c) => {
-      await c.query(`DELETE FROM plan_financials WHERE plan_id = $1`, [planId]);
-      for (const p of financials) {
-        await c.query(
-          `INSERT INTO plan_financials (plan_id, year_offset, line_item, value, basis, scenario)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [planId, p.year_offset, p.line_item, p.value, p.basis, p.scenario],
-        );
-      }
-    });
+    // Persisted only once, by the financial phase itself — a later phase
+    // recomputes the same pure function fresh for its own context, but must
+    // never re-write plan_financials, which the financial phase's own
+    // approval gate and any redraft-cascade already own.
+    if (phase.key === "financial") {
+      await tx(async (c) => {
+        await c.query(`DELETE FROM plan_financials WHERE plan_id = $1`, [planId]);
+        for (const p of financials) {
+          await c.query(
+            `INSERT INTO plan_financials (plan_id, year_offset, line_item, value, basis, scenario)
+             VALUES ($1,$2,$3,$4,$5,$6)`,
+            [planId, p.year_offset, p.line_item, p.value, p.basis, p.scenario],
+          );
+        }
+      });
+    }
   }
 
   const openFindings = await query<{ statement: string; detail: string }>(
@@ -507,6 +528,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     earlierSections,
     rules,
     financialsBlock,
+    historicalTrendsBlock,
   });
 
   const outcome = await runPhaseAgent(phase, system, messages);

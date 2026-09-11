@@ -122,7 +122,10 @@ const GROSS_MARGIN_KEYS = ["pl.gross_margin_pct"];
  *  document, so ties fall back to array order (last document extracted
  *  wins), which is an acceptable, disclosed simplification, not a promise of
  *  perfect recency. */
-function periodRank(period: string | null): number {
+// Exported for history.ts, which needs the same period ordering and numeric
+// parsing to build a trend across every period a key was reported in —
+// buildProjectionBase only needs the single latest one.
+export function periodRank(period: string | null): number {
   if (!period) return -1;
   const fy = period.match(/^FY(\d{4})$/);
   if (fy) return Number(fy[1]) * 100 + 12;
@@ -136,7 +139,7 @@ function periodRank(period: string | null): number {
  *  back to the profile rather than risk a garbled number flowing into a
  *  bank-facing projection, which is a worse outcome than just not having a
  *  document-sourced figure at all. */
-function parseFactNumber(v: string): number | null {
+export function parseFactNumber(v: string): number | null {
   const n = Number(v.replace(/[,\s]/g, ""));
   return Number.isFinite(n) ? n : null;
 }
