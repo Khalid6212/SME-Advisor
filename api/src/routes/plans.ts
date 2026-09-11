@@ -11,7 +11,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireManager } from "../auth.ts";
-import { audit, one, query } from "../db.ts";
+import { audit, one, query, tx } from "../db.ts";
 import { buildPlanDocx, exhibitLine, firmIdentity } from "../docx.ts";
 import { buildFinancialsXlsx } from "../xlsx.ts";
 import { informationRequestMail, sendMail } from "../mailer.ts";
@@ -414,6 +414,46 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       req.log.error({ err, clientId: id }, "plan creation failed");
       return reply.code(502).send({ error: "plan_creation_failed" });
     }
+  });
+
+  /**
+   * Deletes one plan version entirely — permanent, no undo, confirmed
+   * client-side before this is ever called (see ConfirmDialog in Plan.tsx).
+   * plan_sections, plan_phases, plan_financials, plan_assumptions, and
+   * plan_gaps all cascade (ON DELETE CASCADE from plans — see
+   * db/migrations/001_init.sql, 004_business_plan.sql, 010_plan_phases.sql).
+   * section_edits keeps its row with plan_id set to null instead (ON DELETE
+   * SET NULL) — the learning loop's edit history survives a plan being
+   * deleted, the same way it survives a client being deleted (see
+   * DELETE /clients/:id in manager.ts). No restriction on which version or
+   * status can be deleted — including the current, undelivered one — since
+   * the confirmation step is exactly what makes that a deliberate choice.
+   */
+  app.delete("/plans/:planId", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { planId } = req.params as { planId: string };
+
+    const plan = await one<{ id: string; client_id: string; version: number; status: string }>(
+      `SELECT id, client_id, version, status FROM plans WHERE id = $1`,
+      [planId],
+    );
+    if (!plan) return reply.code(404).send({ error: "not_found" });
+
+    await tx(async (c) => {
+      // Written before the row goes, not after — same reasoning as
+      // client.deleted: capture identifying detail in the payload since the
+      // row itself won't be queryable afterward.
+      await audit("plan.deleted", {
+        actorUserId: user.id,
+        clientId: plan.client_id,
+        payload: { plan_id: plan.id, version: plan.version, status: plan.status },
+        client: c,
+      });
+      await c.query(`DELETE FROM plans WHERE id = $1`, [plan.id]);
+    });
+
+    return { deleted: true };
   });
 
   /** Drafts one phase. Slow — tens of seconds for a multi-section phase. */

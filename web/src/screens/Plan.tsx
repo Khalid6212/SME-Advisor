@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type FinancialLine, type PlanPhase } from "../api";
 import { PlanInputs } from "./PlanInputs";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 interface Template {
   key: string; name: { en: string }; purpose: string;
@@ -206,6 +207,7 @@ function FinancialsExhibits({ rows }: { rows: FinancialLine[] }) {
 export function Plan({ clientId }: { clientId: string }) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [plans, setPlans] = useState<{ id: string; version: number; status: string }[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; version: number } | null>(null);
   const [view, setView] = useState<PlanView | null>(null);
   const [audience, setAudience] = useState<"full" | "marketing" | "internal">("full");
   const [busy, setBusy] = useState<string | null>(null);
@@ -238,6 +240,21 @@ export function Plan({ clientId }: { clientId: string }) {
   }, [clientId]);
 
   const openPlan = async (id: string) => setView(await api.get<PlanView>(`/plans/${id}`));
+
+  const deletePlan = async () => {
+    if (!deleteTarget) return;
+    setBusy(`delete-${deleteTarget.id}`);
+    setError(null);
+    try {
+      await api.del(`/plans/${deleteTarget.id}`);
+      if (view?.plan.id === deleteTarget.id) setView(null);
+      setDeleteTarget(null);
+      await loadList();
+    } catch {
+      setError("Couldn't delete this plan. Try again.");
+    }
+    setBusy(null);
+  };
 
   // Defaults to whichever phase actually needs attention (the first
   // unlocked, not-yet-approved one) so opening a plan lands somewhere
@@ -434,9 +451,19 @@ export function Plan({ clientId }: { clientId: string }) {
           ))}
           <div style={{ flex: 1 }} />
           {plans.map((p) => (
-            <button key={p.id} onClick={() => openPlan(p.id)}>
-              v{p.version} · {p.status === "delivered" ? "approved" : p.status.replace(/_/g, " ")}
-            </button>
+            <div key={p.id} className="row" style={{ gap: 2 }}>
+              <button onClick={() => openPlan(p.id)}>
+                v{p.version} · {p.status === "delivered" ? "approved" : p.status.replace(/_/g, " ")}
+              </button>
+              <button
+                title={`Delete plan v${p.version}`}
+                aria-label={`Delete plan v${p.version}`}
+                style={{ borderColor: "var(--bad)", color: "var(--bad)", fontSize: 11.5, padding: "3px 8px" }}
+                onClick={() => setDeleteTarget({ id: p.id, version: p.version })}
+              >
+                Delete
+              </button>
+            </div>
           ))}
         </div>
         <p className="muted" style={{ fontSize: 12, margin: "10px 0 0" }}>
@@ -445,6 +472,16 @@ export function Plan({ clientId }: { clientId: string }) {
           operating views are the same draft, filtered.
         </p>
         {error && <p style={{ color: "var(--bad)", marginBottom: 0 }}>{error}</p>}
+        <ConfirmDialog
+          open={!!deleteTarget}
+          danger
+          title={`Delete plan v${deleteTarget?.version}?`}
+          message="This permanently removes this plan version — its drafted sections, financials, assumptions, and gaps — and cannot be undone. Other versions of this client's plan are not affected."
+          confirmLabel="Delete permanently"
+          busy={busy === `delete-${deleteTarget?.id}`}
+          onConfirm={deletePlan}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </div>
 
       {!view ? null : (
