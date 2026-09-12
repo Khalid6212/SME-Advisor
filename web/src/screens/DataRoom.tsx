@@ -446,7 +446,9 @@ export function DataRoom({ clientId, manager }: { clientId: string; manager: boo
               <div dir="rtl" className="muted" style={{ fontSize: 12 }}>{n.title_ar}</div>
 
               {n.description_en && (
-                <p className="dim" style={{ fontSize: 12.5, margin: 0, textWrap: "pretty" as any }}>{n.description_en}</p>
+                <p className="dim" style={{ fontSize: 12.5, margin: 0, textWrap: "pretty" as any }}>
+                  <strong className="dim">Why: </strong>{n.description_en}
+                </p>
               )}
 
               {reasons.map((r, i) => (

@@ -29,9 +29,19 @@
    * platform that produces financial documents, not another dashboard sans.
    * Monospace carries every number and every provenance/confidence tag,
    * everywhere, so data always reads as data. Both are system stacks —
-   * no webfont to fail to load. */
-  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Noto Serif", serif;
-  --sans: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+   * no webfont to fail to load.
+   *
+   * Arabic-capable fonts are folded directly into these same stacks, not a
+   * separate variable applied per element — a big share of this app's real
+   * content (interview answers, drafted plan sections, data-room titles) is
+   * Arabic, mixed freely with Latin numbers and English UI chrome on the
+   * same line. The browser already picks the right glyphs per character
+   * from whichever stack it's rendering (see the dir="auto" bubbles in
+   * Interview.tsx), so one stack that lists both scripts works everywhere
+   * automatically; a second, conditionally-applied variable would only
+   * cover whatever specific elements someone remembered to wire it into. */
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Noto Serif", "Noto Naskh Arabic", serif;
+  --sans: -apple-system, "Segoe UI", Inter, "SF Arabic", "Noto Naskh Arabic", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
 }
 
@@ -347,6 +357,15 @@ table.fin tr.total td { font-weight: 700; color: var(--text); border-top: 1px so
 .bubble { padding: 12px 16px; border-radius: 18px; max-width: 78%; white-space: pre-wrap; }
 .bubble.assistant { background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
 .bubble.user { background: var(--accent); color: #eef3ff; align-self: flex-end; border-bottom-right-radius: 4px; }
+
+/* Typing indicator — three dots in an assistant-styled bubble, replacing a
+ * static "Thinking…" label with the same waiting affordance a real chat
+ * gives you. */
+@keyframes blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.9; } }
+.typing-dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--faint);
+  display: inline-block; animation: blink 1.2s infinite;
+}
 
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;

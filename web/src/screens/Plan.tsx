@@ -45,6 +45,58 @@ const CONFIDENCE: Record<string, string> = {
  *  Rendered via the .tier class (styles.css), which maps tier name to color
  *  directly — no lookup table needed here. */
 
+const TIER_ORDER = ["measured", "stated", "estimated", "unverified"] as const;
+const TIER_COLOR: Record<string, string> = {
+  measured: "var(--gold)", stated: "var(--info)", estimated: "var(--warn)", unverified: "var(--bad)",
+};
+const TIER_LABEL: Record<string, string> = {
+  measured: "Measured", stated: "Stated", estimated: "Estimated", unverified: "Unverified",
+};
+
+/** How much of the plan's evidence, across every statement drafted so far,
+ *  actually rests on something verified versus the owner's own word — the
+ *  same five-tier read the .tier pills already give per-statement (see
+ *  confidenceTier in src/planner/confidence.ts), aggregated across the
+ *  whole plan. "audited" folds into "measured" here, matching the .tier
+ *  CSS's own color grouping — the reader cares about "confirmed by a
+ *  document" vs. "stated" vs. "estimated", not the finer distinction. */
+function EvidenceMix({ sections }: { sections: Section[] }) {
+  const counts: Record<string, number> = {};
+  for (const s of sections) {
+    for (const p of s.provenance) {
+      const key = p.confidence_tier === "audited" ? "measured" : p.confidence_tier;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+  }
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (total === 0) return null;
+  const present = TIER_ORDER.filter((t) => counts[t]);
+
+  return (
+    <div style={{ background: "var(--panel-sunken)", border: "1px solid var(--line-soft)", borderRadius: 14, padding: 14, marginTop: 12 }}>
+      <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>
+        Evidence mix
+      </div>
+      <div style={{ display: "flex", height: 6, borderRadius: 3, overflow: "hidden", background: "var(--line)", marginBottom: 10 }}>
+        {present.map((t) => (
+          <div key={t} style={{ width: `${(counts[t]! / total) * 100}%`, background: TIER_COLOR[t] }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        {present.map((t) => (
+          <div key={t} className="muted" style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: TIER_COLOR[t], flex: "none" }} />
+            {TIER_LABEL[t]}
+            <span style={{ fontFamily: "var(--mono)", marginInlineStart: "auto" }}>
+              {Math.round((counts[t]! / total) * 100)}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const AUDIENCE_LABEL: Record<string, string> = {
   full: "Full plan", marketing: "Marketing plan", internal: "Operating plan",
 };
@@ -574,6 +626,7 @@ export function Plan({ clientId }: { clientId: string }) {
                   {view.assumptions.length > 0 && <span className="num" style={{ fontSize: 11, color: "var(--faint)" }}>{view.assumptions.length}</span>}
                 </button>
               </div>
+              <EvidenceMix sections={view.sections} />
             </div>
 
             <div className="mainc">

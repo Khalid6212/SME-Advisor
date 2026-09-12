@@ -201,8 +201,23 @@ function InviteClient({ isAdmin, onInvited }: { isAdmin: boolean; onInvited: () 
   );
 }
 
+/** A client "needs you" when something sits waiting on a manager decision —
+ *  a review, an open finding, an open request nobody's acted on. Everything
+ *  else (interviewing, delivered, abandoned with nothing outstanding) can
+ *  wait. Purely a client-side filter over what /clients already returns —
+ *  the full list is one click away, never hidden for good. */
+function needsAttention(c: ClientRow): boolean {
+  return (
+    c.status === "review_pending" ||
+    c.status === "in_review" ||
+    Number(c.open_findings ?? 0) > 0 ||
+    Number(c.open_requests ?? 0) > 0
+  );
+}
+
 function Pipeline({ isAdmin, onOpen }: { isAdmin: boolean; onOpen: (c: ClientRow) => void }) {
   const [rows, setRows] = useState<ClientRow[] | null>(null);
+  const [filter, setFilter] = useState<"needs_you" | "all">("needs_you");
   const load = () => api.get<ClientRow[]>("/clients").then(setRows);
   useEffect(() => { void load(); }, []);
 
@@ -210,6 +225,7 @@ function Pipeline({ isAdmin, onOpen }: { isAdmin: boolean; onOpen: (c: ClientRow
   const awaitingReview = rows?.filter((c) => c.status === "review_pending" || c.status === "in_review").length ?? 0;
   const openFindings = rows?.reduce((sum, c) => sum + Number(c.open_findings ?? 0), 0) ?? 0;
   const criticalFindings = rows?.reduce((sum, c) => sum + Number(c.critical_findings ?? 0), 0) ?? 0;
+  const visible = filter === "needs_you" ? (rows ?? []).filter(needsAttention) : (rows ?? []);
 
   return (
     <div>
@@ -222,10 +238,29 @@ function Pipeline({ isAdmin, onOpen }: { isAdmin: boolean; onOpen: (c: ClientRow
           <div className="stat"><div className={`stat-n${criticalFindings > 0 ? " bad" : ""}`}>{criticalFindings}</div><div className="stat-label">Critical, unresolved</div></div>
         </div>
       )}
+      {rows && rows.length > 0 && (
+        <div className="row" style={{ gap: 6, marginBottom: 12 }}>
+          <button
+            className={filter === "needs_you" ? "" : undefined}
+            style={filter === "needs_you" ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+            onClick={() => setFilter("needs_you")}
+          >
+            Needs you first
+          </button>
+          <button
+            style={filter === "all" ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+            onClick={() => setFilter("all")}
+          >
+            All clients
+          </button>
+        </div>
+      )}
       {!rows ? (
         <p className="muted">Loading…</p>
       ) : rows.length === 0 ? (
         <div className="card muted">No clients yet.</div>
+      ) : visible.length === 0 ? (
+        <div className="card muted">Nothing needs you right now — every client is either in progress with no open items, or delivered.</div>
       ) : (
         <div className="card" style={{ padding: 4 }}>
           <table>
@@ -236,7 +271,7 @@ function Pipeline({ isAdmin, onOpen }: { isAdmin: boolean; onOpen: (c: ClientRow
               </tr>
             </thead>
             <tbody>
-              {rows.map((c) => {
+              {visible.map((c) => {
                 const critical = Number(c.critical_findings ?? 0);
                 const open = Number(c.open_findings ?? 0);
                 return (

@@ -130,7 +130,13 @@ export function Interview({ clientId }: { clientId: string }) {
             )}
           </div>
         ))}
-        {busy && <div className="bubble assistant muted">Thinking…</div>}
+        {busy && (
+          <div className="bubble assistant" style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            <span className="typing-dot" />
+            <span className="typing-dot" style={{ animationDelay: "0.2s" }} />
+            <span className="typing-dot" style={{ animationDelay: "0.4s" }} />
+          </div>
+        )}
         {error && <div className="card" style={{ color: "var(--bad)" }}>{error}</div>}
 
         {view.status === "complete" && (
@@ -174,6 +180,13 @@ export function Interview({ clientId }: { clientId: string }) {
       <p className="muted" style={{ fontSize: 12 }}>
         Approximate numbers are fine — “around 400,000 a month” works.
       </p>
+      {view.status !== "complete" && (
+        <div className="card" style={{ background: "var(--panel-sunken)", borderColor: "var(--line-soft)", fontSize: 12.5 }}>
+          <span className="muted">
+            You can stop at any point — your answers are saved as you go, and you'll come back to the same question.
+          </span>
+        </div>
+      )}
     </div>
   );
 }

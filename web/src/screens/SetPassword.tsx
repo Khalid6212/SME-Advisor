@@ -1,6 +1,25 @@
 import { useState } from "react";
 import { api } from "../api";
 
+/** A rough, dependency-free strength read — not a real entropy estimate,
+ *  just enough signal to nudge past "10 characters of the same thing"
+ *  toward something with actual variety. Score 0–4: length past the 10-char
+ *  minimum, extra length, mixed case, and a digit or symbol each count once. */
+function passwordStrength(pw: string): { score: number; label: string } {
+  if (pw.length === 0) return { score: 0, label: "" };
+  let score = 0;
+  if (pw.length >= 10) score++;
+  if (pw.length >= 14) score++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+  if (/[0-9]/.test(pw) || /[^A-Za-z0-9]/.test(pw)) score++;
+  const label =
+    pw.length < 10 ? `${10 - pw.length} more character${10 - pw.length === 1 ? "" : "s"} needed`
+    : score >= 4 ? `${pw.length} characters. Strong enough.`
+    : score >= 2 ? `${pw.length} characters. Could be stronger — try mixing in a number or a symbol.`
+    : `${pw.length} characters. Consider mixing upper and lower case, or adding a number.`;
+  return { score, label };
+}
+
 /**
  * Reached two ways: a just-verified magic link with no password yet, or an
  * advisor-generated temporary password that must be replaced before anything
@@ -54,8 +73,27 @@ export function SetPassword({
         <input
           type="password" required autoFocus value={password}
           onChange={(e) => setPassword(e.target.value)}
-          style={{ margin: "6px 0 14px" }}
+          style={{ margin: "6px 0 8px" }}
         />
+        {password.length > 0 && (() => {
+          const { score, label } = passwordStrength(password);
+          return (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+                {[0, 1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    style={{
+                      flex: 1, height: 3, borderRadius: 2,
+                      background: i < score ? (score >= 4 ? "var(--good)" : "var(--warn)") : "var(--line)",
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="muted" style={{ fontSize: 12 }}>{label}</div>
+            </div>
+          );
+        })()}
         <label className="muted" style={{ fontSize: 12 }}>Confirm password</label>
         <input
           type="password" required value={confirm}
