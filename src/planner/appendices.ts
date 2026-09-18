@@ -14,6 +14,7 @@
  * documents cannot disagree about what the evidence was.
  */
 
+import { driverValueAt, type RevenueDriver } from "./drivers.ts";
 import { SOURCE_TYPE_LABEL, type SourceRecord } from "./sources.ts";
 
 export interface AppendixTable {
@@ -103,6 +104,11 @@ export interface AppendixInput {
   findings: FindingRow[];
   gaps: GapRow[];
   financials: FinancialRow[];
+  /** The declared revenue build, where there is one — the drivers lead
+   *  Appendix E, since they are what actually produces the revenue line
+   *  everything below it is derived from. */
+  drivers: RevenueDriver[];
+  revenueFormula: string | null;
   /** Display label per line item, shared with the statement exhibits so a
    *  driver row and a statement row name the same thing identically. */
   lineItemLabel: Record<string, string>;
@@ -240,17 +246,38 @@ function forecastDrivers(input: AppendixInput): AppendixTable | null {
   );
   if (present.length === 0) return null;
 
+  // The declared drivers lead, where there are any: they are what produces
+  // the revenue line, and a reader working backwards from a forecast wants
+  // "seventy percent room utilisation rising to seventy-eight" before they
+  // want the P&L rows that fall out of it.
+  const driverRows: string[][] = input.revenueFormula && input.drivers.length > 0
+    ? input.drivers.map((d) => [
+        `${d.label}${d.unit ? ` (${d.unit})` : ""}`,
+        ...years.map((y) => {
+          const v = driverValueAt(d, y);
+          // Drivers are counts, rates and prices on wildly different scales —
+          // a utilisation of 0.7 and a room count of 6 cannot share the
+          // whole-number formatting the currency lines use.
+          return Number.isInteger(v) ? v.toLocaleString("en-US") : v.toFixed(2);
+        }),
+        cell(d.source_code),
+        `${d.growth_pct ? `${d.growth_pct}%/yr` : "held flat"} — ${d.basis}`,
+      ])
+    : [];
+
   return {
     key: "E",
     title: "Forecast driver schedule",
-    note: "Each projected line, the calculation that produces it, and what that calculation assumes.",
+    note: input.revenueFormula && input.drivers.length > 0
+      ? `Revenue is built as: ${input.revenueFormula}. The drivers below produce it; the lines beneath them follow from it.`
+      : "Each projected line, the calculation that produces it, and what that calculation assumes.",
     headers: [
       "Line",
       ...years.map((y) => (y === 0 ? "Base year" : `Year ${y}`)),
       "Calculation",
       "Driver",
     ],
-    rows: present.map((item) => {
+    rows: [...driverRows, ...present.map((item) => {
       // The driver text is the same across years for every line the engine
       // produces; year 0 is the exception (it states its provenance, not a
       // formula), so prefer a projected year's basis where one exists.
@@ -264,7 +291,7 @@ function forecastDrivers(input: AppendixInput): AppendixTable | null {
         cell(representative?.calc_code),
         cell(representative?.basis),
       ];
-    }),
+    })],
   };
 }
 

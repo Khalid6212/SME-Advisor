@@ -14,8 +14,11 @@
 import type {
   AssumptionRow, CalculationRow, FactRow, FindingRow, GapRow, FinancialRow,
 } from "../../src/planner/appendices.ts";
+import type { RevenueDriver } from "../../src/planner/drivers.ts";
 import type { SourceRecord } from "../../src/planner/sources.ts";
 import { query } from "./db.ts";
+import { listDrivers } from "./drivers.ts";
+import { one } from "./db.ts";
 import { listCitableSources } from "./sources.ts";
 
 export interface AppendixData {
@@ -26,6 +29,8 @@ export interface AppendixData {
   findings: FindingRow[];
   gaps: GapRow[];
   financials: FinancialRow[];
+  drivers: RevenueDriver[];
+  revenueFormula: string | null;
 }
 
 /**
@@ -37,7 +42,7 @@ export interface AppendixData {
  * a document going to a bank.
  */
 export async function loadAppendixData(planId: string, clientId: string): Promise<AppendixData> {
-  const [sources, assumptions, calculations, facts, findings, gaps, financials] = await Promise.all([
+  const [sources, assumptions, calculations, facts, findings, gaps, financials, drivers, build] = await Promise.all([
     listCitableSources(clientId),
 
     query<AssumptionRow>(
@@ -88,7 +93,18 @@ export async function loadAppendixData(planId: string, clientId: string): Promis
          FROM plan_financials WHERE plan_id = $1 ORDER BY year_offset, line_item`,
       [planId],
     ),
+
+    listDrivers(clientId),
+
+    one<{ revenue_formula: string | null }>(
+      `SELECT revenue_formula FROM plan_inputs WHERE client_id = $1`,
+      [clientId],
+    ),
   ]);
 
-  return { sources, assumptions, calculations, facts, findings, gaps, financials };
+  return {
+    sources, assumptions, calculations, facts, findings, gaps, financials,
+    drivers,
+    revenueFormula: build?.revenue_formula ?? null,
+  };
 }

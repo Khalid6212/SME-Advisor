@@ -13,6 +13,9 @@
 import { PLANNER_SYSTEM, buildPhaseBrief, buildPhaseTools } from "../../../src/planner/agent.ts";
 import { CalcRegistry, renderCalcRegister, type Calculation } from "../../../src/planner/calc.ts";
 import { renderSourceRegister, type SourceRecord } from "../../../src/planner/sources.ts";
+import {
+  computeDriverRevenue, renderDriverBuild, type RevenueDriver,
+} from "../../../src/planner/drivers.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import {
   buildProjectionBase, computeBalanceSheet, computeCashFlowStatement, computeProjections, computeSensitivity,
@@ -25,6 +28,7 @@ import type { RuleAgent } from "../../../src/learning/types.ts";
 import { MODEL, runAgentLoop, type Message } from "../anthropic.ts";
 import { audit, one, query, tx } from "../db.ts";
 import { listCitableSources } from "../sources.ts";
+import { listDrivers } from "../drivers.ts";
 import { houseRules } from "./house-rules.ts";
 
 export const TEMPLATES = { [businessPlanTemplate.key]: businessPlanTemplate };
@@ -43,6 +47,10 @@ export function computeFinancialsBlock(
   profileData: any,
   planInputs: PlanInputs,
   facts: ProjectionFact[] = [],
+  /** The declared revenue build, where the advisor has described one.
+   *  Defaults to none, so every existing caller — the eval fixtures
+   *  included — keeps the blended-growth-rate behaviour unchanged. */
+  revenueBuild: { formula: string | null; drivers: RevenueDriver[] } = { formula: null, drivers: [] },
 ): { financials: ReturnType<typeof computeProjections>; calculations: Calculation[]; block: string } {
   const profileBase = {
     annualRevenue: profileData?.revenue_and_customers?.annual_revenue ?? null,
@@ -54,7 +62,11 @@ export function computeFinancialsBlock(
     payableDays: profileData?.financial_health?.payable_days ?? null,
     inventoryDays: profileData?.financial_health?.inventory_days ?? null,
   };
-  const projectionBase = buildProjectionBase(profileBase, facts);
+  const projectionBase = {
+    ...buildProjectionBase(profileBase, facts),
+    revenueFormula: revenueBuild.formula,
+    drivers: revenueBuild.drivers,
+  };
 
   // One registry across all four statements, so a code allocated by the
   // income statement is the same code the cash flow statement and balance
@@ -69,6 +81,18 @@ export function computeFinancialsBlock(
   const financials = [...baseProjections, ...sensitivity, ...cashFlowStatement, ...balanceSheet];
   const calculations = calc.list();
 
+  // Rendered only when the build actually evaluates. A formula that does not
+  // evaluate has already fallen back to the growth rate inside
+  // computeProjections; showing the agent a build the numbers do not come
+  // from would be worse than showing it nothing.
+  let driverBuildBlock = "";
+  if (revenueBuild.formula && revenueBuild.drivers.length > 0) {
+    const built = computeDriverRevenue(revenueBuild.formula, revenueBuild.drivers, planInputs.projection_years);
+    driverBuildBlock = built.ok
+      ? renderDriverBuild(revenueBuild.formula, revenueBuild.drivers, built.years)
+      : `REVENUE BUILD: declared but not usable — ${built.error.message} Revenue below falls back to the growth rate. Say the build is incomplete rather than describing drivers the numbers do not come from.`;
+  }
+
   const sourceNote =
     projectionBase.annualRevenueSource === "document" || projectionBase.cashOnHandSource === "document"
       ? "\nBASE YEAR NOTE: the figures below marked as document-sourced (see each line's own \"basis\") replaced the interview's owner-reported estimate with the most recent uploaded financial statement's figure — say so plainly if you narrate the base year, the same way you would flag any other discrepancy between a document and an owner's claim."
@@ -81,6 +105,8 @@ export function computeFinancialsBlock(
     // cites CALC-004 rather than re-deriving or paraphrasing a formula,
     // which is shorter output as well as a traceable one.
     renderCalcRegister(calculations),
+    "",
+    driverBuildBlock,
     "",
     baseProjections.length > 0
       ? `COMPUTED INCOME STATEMENT (base case, includes an illustrative Zakat line) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
@@ -506,7 +532,18 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
         WHERE f.client_id = $1 AND d.deleted_at IS NULL AND d.superseded_at IS NULL`,
       [plan.client_id],
     );
-    const { financials, calculations, block } = computeFinancialsBlock(profile.data, planInputs, clientFacts);
+    const [drivers, buildRow] = await Promise.all([
+      listDrivers(plan.client_id),
+      one<{ revenue_formula: string | null }>(
+        `SELECT revenue_formula FROM plan_inputs WHERE client_id = $1`,
+        [plan.client_id],
+      ),
+    ]);
+
+    const { financials, calculations, block } = computeFinancialsBlock(
+      profile.data, planInputs, clientFacts,
+      { formula: buildRow?.revenue_formula ?? null, drivers },
+    );
     financialsBlock = block;
     historicalTrendsBlock = renderHistoricalTrendsBlock(computeHistoricalTrends(clientFacts));
 

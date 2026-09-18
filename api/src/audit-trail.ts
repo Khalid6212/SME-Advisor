@@ -10,6 +10,7 @@
 
 import { runAuditTrail, type AuditResult } from "../../src/planner/audit.ts";
 import { loadAppendixData } from "./appendices.ts";
+import { listDrivers } from "./drivers.ts";
 import { one, query } from "./db.ts";
 
 export async function auditPlan(planId: string, clientId: string): Promise<AuditResult> {
@@ -42,6 +43,25 @@ export async function auditPlan(planId: string, clientId: string): Promise<Audit
     `SELECT * FROM plan_inputs WHERE client_id = $1`,
     [clientId],
   );
+  const drivers = await listDrivers(clientId);
+
+  // What the build has to reproduce. Prefer a document-extracted figure over
+  // the interview's estimate, same precedence the projection engine itself
+  // applies — checking a build against an unverified number the owner
+  // recalled in conversation would be the weaker of the two tests.
+  const revenueFact = data.facts
+    .filter((f) => f.key === "pl.revenue")
+    .sort((a, b) => (a.period ?? "").localeCompare(b.period ?? ""))
+    .at(-1);
+  const factRevenue = revenueFact ? Number(String(revenueFact.value).replace(/[,\s]/g, "")) : NaN;
+  const profileRevenue = Number(
+    (profile?.data as any)?.revenue_and_customers?.annual_revenue ?? NaN,
+  );
+  const reportedBaseRevenue = Number.isFinite(factRevenue)
+    ? factRevenue
+    : Number.isFinite(profileRevenue)
+      ? profileRevenue
+      : null;
 
   return runAuditTrail({
     sections: sections.map((s) => ({
@@ -63,5 +83,9 @@ export async function auditPlan(planId: string, clientId: string): Promise<Audit
       planInputs?.market_size_tam != null ||
       planInputs?.market_size_sam != null ||
       planInputs?.market_size_som != null,
+    revenueFormula: (planInputs?.revenue_formula as string | null) ?? null,
+    drivers,
+    projectionYears: Number(planInputs?.projection_years ?? 3),
+    reportedBaseRevenue,
   });
 }

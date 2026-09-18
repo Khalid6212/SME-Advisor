@@ -28,6 +28,10 @@
  */
 
 import { CalcRegistry, pct, sar } from "./calc.ts";
+import {
+  computeDriverRevenue, registerDriverCalculations,
+  type DriverRevenueYear, type RevenueDriver,
+} from "./drivers.ts";
 import type { FinancialLine, PlanInputs } from "./types.ts";
 
 export const LINE_ITEMS = [
@@ -107,6 +111,17 @@ export interface ProjectionBase {
     "annualRevenue" | "cashOnHand" | "grossMarginPct" | "receivableDays" | "payableDays" | "inventoryDays",
     string | null
   >>;
+  /**
+   * The declared revenue build (see drivers.ts), where the advisor has
+   * described one. When present it replaces the blended growth rate as the
+   * source of every year's revenue — including the base year, which the
+   * build then has to reproduce for the forecast to mean anything.
+   *
+   * Absent is the ordinary case and changes nothing: revenue falls back to
+   * the base year grown at `revenue_growth_pct`, exactly as before.
+   */
+  revenueFormula?: string | null;
+  drivers?: RevenueDriver[];
 }
 
 /** One row from the normalized `facts` table (src/planner/types.ts) — only
@@ -250,6 +265,30 @@ function baseInput(
 }
 
 /**
+ * Evaluates the declared revenue build and registers its calculations, or
+ * returns null when there isn't one (or it doesn't work).
+ *
+ * Registering happens here rather than at the call site so the driver
+ * calculations land in the register *before* revenue does, which is the order
+ * a reader walks them: revenue cites the build, the build cites each driver.
+ */
+function buildDriverRevenue(
+  base: ProjectionBase,
+  inputs: PlanInputs,
+  calc: CalcRegistry,
+): { years: DriverRevenueYear[]; calcCode: string } | null {
+  const formula = base.revenueFormula?.trim();
+  const drivers = base.drivers ?? [];
+  if (!formula || drivers.length === 0) return null;
+
+  const result = computeDriverRevenue(formula, drivers, inputs.projection_years);
+  if (!result.ok) return null;
+
+  const calcCode = registerDriverCalculations(formula, drivers, calc);
+  return { years: result.years, calcCode };
+}
+
+/**
  * Returns [] rather than zero-filled rows when the base figures the profile
  * needed are missing — an empty projection is a gap to flag, not a table
  * full of misleading zeros. Financing and depreciation lines degrade the
@@ -262,10 +301,17 @@ export function computeProjections(
   inputs: PlanInputs,
   calc: CalcRegistry = new CalcRegistry(),
 ): FinancialLine[] {
-  if (base.annualRevenue == null || inputs.revenue_growth_pct == null) return [];
+  // The declared build, where there is one and it evaluates. A formula that
+  // fails to evaluate falls back to the growth rate rather than returning no
+  // projection at all: the advisor's half-finished driver tree should not
+  // take the whole financial phase down with it, and the audit check reports
+  // the broken formula by name so it does not pass unnoticed either.
+  const build = buildDriverRevenue(base, inputs, calc);
+
+  if (build === null && (base.annualRevenue == null || inputs.revenue_growth_pct == null)) return [];
 
   const lines: FinancialLine[] = [];
-  const growth = inputs.revenue_growth_pct / 100;
+  const growth = (inputs.revenue_growth_pct ?? 0) / 100;
   const margin = base.grossMarginPct != null ? base.grossMarginPct / 100 : null;
   const annualOpex = base.monthlyOperatingCost != null ? base.monthlyOperatingCost * 12 : null;
 
@@ -280,38 +326,48 @@ export function computeProjections(
   const annualPrincipal = canFinance ? base.loanAmount! / inputs.loan_term_years! : 0;
   const annualDepreciation = canDepreciate ? base.loanAmount! / inputs.asset_useful_life_years! : 0;
 
-  // Registered once, outside the year loop's own emissions, because the
-  // base-year revenue row is not the growth formula — it is the starting
-  // point the growth formula reads.
-  const baseRevenueCalc = calc.register("revenue_base", {
-    metric: "Base-year revenue",
-    formula: "Revenue₀ = the most recent full-year revenue on record",
-    inputs: [baseInput(base, "annualRevenue", "Base-year revenue", sar(base.annualRevenue))],
-    result_note: "Income statement, revenue, year 0.",
-  });
+  // Two ways revenue can be produced, and the register says plainly which
+  // one was used. Registered once, outside the year loop, because the
+  // base-year row is not the growth formula — it is what the growth formula
+  // reads from. The build has no such split: year 0 is the drivers at their
+  // declared values, which is the same calculation as every other year.
+  const baseRevenueCalc = build
+    ? null
+    : calc.register("revenue_base", {
+        metric: "Base-year revenue",
+        formula: "Revenue₀ = the most recent full-year revenue on record",
+        inputs: [baseInput(base, "annualRevenue", "Base-year revenue", sar(base.annualRevenue!))],
+        result_note: "Income statement, revenue, year 0.",
+      });
 
-  const revenueCalc = calc.register("revenue", {
-    metric: "Projected revenue",
-    formula: "Revenueₙ = Revenue₀ × (1 + g)ⁿ",
-    inputs: [
-      baseInput(base, "annualRevenue", "Revenue₀ (base-year revenue)", sar(base.annualRevenue)),
-      { label: "g (annual revenue growth)", value: pct(inputs.revenue_growth_pct), ref: "plan_inputs.revenue_growth_pct" },
-      { label: "Basis for g", value: inputs.growth_basis ?? "advisor estimate, no basis recorded", ref: "plan_inputs.growth_basis" },
-      { label: "n", value: `1 to ${inputs.projection_years} (projection years)`, ref: "plan_inputs.projection_years" },
-    ],
-    result_note: "Income statement, revenue, years 1 onward.",
-  });
+  const revenueCalc = build
+    ? build.calcCode
+    : calc.register("revenue", {
+        metric: "Projected revenue",
+        formula: "Revenueₙ = Revenue₀ × (1 + g)ⁿ",
+        inputs: [
+          baseInput(base, "annualRevenue", "Revenue₀ (base-year revenue)", sar(base.annualRevenue!)),
+          { label: "g (annual revenue growth)", value: pct(inputs.revenue_growth_pct!), ref: "plan_inputs.revenue_growth_pct" },
+          { label: "Basis for g", value: inputs.growth_basis ?? "advisor estimate, no basis recorded", ref: "plan_inputs.growth_basis" },
+          { label: "n", value: `1 to ${inputs.projection_years} (projection years)`, ref: "plan_inputs.projection_years" },
+        ],
+        result_note: "Income statement, revenue, years 1 onward.",
+      });
 
   for (let year = 0; year <= inputs.projection_years; year++) {
-    const revenue = round(base.annualRevenue * Math.pow(1 + growth, year));
+    const revenue = build
+      ? build.years[year]!.revenue
+      : round(base.annualRevenue! * Math.pow(1 + growth, year));
+
     lines.push({
       year_offset: year,
       line_item: "revenue",
       value: revenue,
       scenario: "base",
-      calc_code: year === 0 ? baseRevenueCalc : revenueCalc,
-      basis:
-        year === 0
+      calc_code: build ? build.calcCode : year === 0 ? baseRevenueCalc : revenueCalc,
+      basis: build
+        ? "Built from the declared drivers, re-evaluated at each year's values — see the revenue build, not a growth rate applied to a base."
+        : year === 0
           ? base.annualRevenueSource === "document"
             ? "From the most recent uploaded financial statement — verified, not the owner's interview estimate."
             : "As reported in the interview, unverified."
@@ -559,14 +615,33 @@ export function computeSensitivity(
   inputs: PlanInputs,
   calc: CalcRegistry = new CalcRegistry(),
 ): FinancialLine[] {
-  if (
-    base.annualRevenue == null || inputs.revenue_growth_pct == null ||
-    base.grossMarginPct == null || base.monthlyOperatingCost == null
-  ) {
+  if (base.grossMarginPct == null || base.monthlyOperatingCost == null) return [];
+
+  const targetYear = inputs.projection_years;
+
+  // Where a driver build exists, the sensitivity flexes *it* rather than a
+  // growth rate the plan no longer uses. The band is applied to the growth
+  // the build itself implies (its year-0 to year-N CAGR), so bull and bear
+  // stay the same ±8 points either side of the actual plan — just measured
+  // against what the drivers produce instead of against a number somebody
+  // typed. Flexing one driver instead would be a different and much stronger
+  // claim about which driver is uncertain, and nothing here knows that.
+  const build = buildDriverRevenue(base, inputs, calc);
+  let baseRevenue: number;
+  let growthPct: number;
+
+  if (build && targetYear > 0) {
+    baseRevenue = build.years[0]!.revenue;
+    const endRevenue = build.years[targetYear]!.revenue;
+    if (baseRevenue <= 0) return [];
+    growthPct = (Math.pow(endRevenue / baseRevenue, 1 / targetYear) - 1) * 100;
+  } else if (base.annualRevenue != null && inputs.revenue_growth_pct != null) {
+    baseRevenue = base.annualRevenue;
+    growthPct = inputs.revenue_growth_pct;
+  } else {
     return [];
   }
 
-  const targetYear = inputs.projection_years;
   const margin = base.grossMarginPct / 100;
   const annualOpex = base.monthlyOperatingCost * 12;
   const lines: FinancialLine[] = [];
@@ -575,8 +650,12 @@ export function computeSensitivity(
     metric: "Sensitivity revenue (bull / bear)",
     formula: "Revenue = Revenue₀ × (1 + g ± 8pp)^N, for the final projection year N only",
     inputs: [
-      baseInput(base, "annualRevenue", "Revenue₀ (base-year revenue)", sar(base.annualRevenue)),
-      { label: "g (base-case growth)", value: pct(inputs.revenue_growth_pct), ref: "plan_inputs.revenue_growth_pct" },
+      build
+        ? { label: "Revenue₀ (base year, from the driver build)", value: sar(baseRevenue), ref: build.calcCode }
+        : baseInput(base, "annualRevenue", "Revenue₀ (base-year revenue)", sar(baseRevenue)),
+      build
+        ? { label: "g (growth the driver build implies)", value: pct(growthPct), ref: build.calcCode }
+        : { label: "g (base-case growth)", value: pct(growthPct), ref: "plan_inputs.revenue_growth_pct" },
       {
         label: "Band",
         value: `±${SENSITIVITY_VARIANCE_POINTS} percentage points — a fixed, disclosed sensitivity band, not a separately researched scenario`,
@@ -591,7 +670,7 @@ export function computeSensitivity(
     formula: "EBITDA = Revenue × Gross margin − Operating cost",
     inputs: [
       { label: "Revenue", value: "per sensitivity revenue", ref: sensRevenueCalc },
-      baseInput(base, "grossMarginPct", "Gross margin (held at the base-case level)", pct(base.grossMarginPct)),
+      baseInput(base, "grossMarginPct", "Gross margin (held at the base-case level)", pct(base.grossMarginPct!)),
       {
         label: "Operating cost",
         value: `${sar(annualOpex)} — held flat, so this flexes revenue only, not the cost base`,
@@ -602,8 +681,8 @@ export function computeSensitivity(
   });
 
   for (const [scenario, delta] of [["bull", SENSITIVITY_VARIANCE_POINTS], ["bear", -SENSITIVITY_VARIANCE_POINTS]] as const) {
-    const growth = (inputs.revenue_growth_pct + delta) / 100;
-    const revenue = round(base.annualRevenue * Math.pow(1 + growth, targetYear));
+    const growth = (growthPct + delta) / 100;
+    const revenue = round(baseRevenue * Math.pow(1 + growth, targetYear));
     const ebitda = round(revenue * margin - annualOpex);
     lines.push(
       {

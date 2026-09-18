@@ -19,6 +19,7 @@
  * Pure: no database, no network. api/src/routes/plans.ts loads the rows.
  */
 
+import { baseYearVariance, checkDrivers, computeDriverRevenue, type RevenueDriver } from "./drivers.ts";
 import { CALC_CODE_PATTERN, SOURCE_CODE_PATTERN } from "./sources.ts";
 
 export const AUDIT_SEVERITY = ["error", "warning", "note"] as const;
@@ -61,6 +62,13 @@ export interface AuditInput {
   /** True when the advisor recorded market sizing, which needs an external
    *  source behind it or it is a number with nothing under it. */
   hasMarketSizing: boolean;
+  /** The declared revenue build, where there is one. */
+  revenueFormula: string | null;
+  drivers: RevenueDriver[];
+  projectionYears: number;
+  /** Base-year revenue already on record, from a document or the profile —
+   *  what the build has to reproduce to be describing this business. */
+  reportedBaseRevenue: number | null;
 }
 
 /**
@@ -418,6 +426,139 @@ function checkReadiness(input: AuditInput): AuditIssue[] {
   return issues;
 }
 
+// ─── the declared revenue build ─────────────────────────────────────────────
+
+/**
+ * Checks the driver tree, where one exists.
+ *
+ * The base-year reconciliation is the most useful thing in this file. A
+ * driver build is a claim about how the business works *today*, and it is
+ * testable: combine the drivers at their declared values and you should get
+ * roughly the revenue the business actually earns. If you do not, the
+ * drivers do not describe this business — and because every projected year
+ * is the same formula at shifted values, that error is inherited by the
+ * whole forecast rather than washing out. A plan whose year-0 build misses
+ * actual revenue by a third is not a forecast with a rough edge; it is a
+ * forecast of a different company.
+ */
+function checkRevenueBuild(input: AuditInput): AuditIssue[] {
+  const issues: AuditIssue[] = [];
+  const formula = input.revenueFormula?.trim();
+
+  if (!formula || input.drivers.length === 0) {
+    // Not having a driver build is not a fault — it is the ordinary path,
+    // and a blended growth rate with a stated basis is a legitimate, if
+    // weaker, way to forecast. Noted rather than warned so the absence is
+    // visible without implying the plan is broken.
+    if (input.financials.some((f) => f.year_offset > 0)) {
+      issues.push({
+        severity: "note",
+        code: "no_revenue_build",
+        where: "Revenue",
+        detail:
+          "Revenue is projected from a single growth rate rather than a driver build. A reader can disagree with the rate but cannot interrogate it.",
+      });
+    }
+    return issues;
+  }
+
+  const { unknown, unused } = checkDrivers(formula, input.drivers);
+
+  if (unknown.length > 0) {
+    issues.push({
+      severity: "error",
+      code: "formula_unknown_driver",
+      where: "Revenue build",
+      detail: `The formula names ${unknown.map((k) => `"${k}"`).join(", ")}, which ${unknown.length === 1 ? "is not a declared driver" : "are not declared drivers"}. Revenue has silently fallen back to the growth rate.`,
+    });
+  }
+
+  if (unused.length > 0) {
+    issues.push({
+      severity: "note",
+      code: "driver_unused",
+      where: "Revenue build",
+      detail: `${unused.map((k) => `"${k}"`).join(", ")} ${unused.length === 1 ? "is declared but never used" : "are declared but never used"} in the formula — usually a leftover from an edit.`,
+    });
+  }
+
+  const built = computeDriverRevenue(formula, input.drivers, input.projectionYears);
+  if (!built.ok) {
+    // An unknown driver is *why* the formula does not evaluate, and the
+    // check above already named it. Reporting both would make one fault
+    // read as two, and the second is the vaguer of the pair.
+    if (unknown.length === 0) {
+      issues.push({
+        severity: "error",
+        code: "formula_invalid",
+        where: "Revenue build",
+        detail: `${built.error.message} Revenue has fallen back to the growth rate, so the plan does not use the build it describes.`,
+      });
+    }
+    return issues;
+  }
+
+  const variance = baseYearVariance(built.years[0]!.revenue, input.reportedBaseRevenue);
+  if (variance) {
+    const off = Math.abs(variance.variancePct);
+    // 5% is ordinary rounding across five or six drivers. 15% is a build
+    // that does not describe the business.
+    if (off > 15) {
+      issues.push({
+        severity: "error",
+        code: "build_misses_base_year",
+        where: "Revenue build",
+        detail:
+          `The drivers produce ${Math.round(variance.built).toLocaleString()} for the base year, but revenue on record is ` +
+          `${Math.round(variance.reported).toLocaleString()} — out by ${off.toFixed(1)}%. Every projected year carries this error, ` +
+          "since they are the same formula at shifted values. Fix a driver or the formula before this goes out.",
+      });
+    } else if (off > 5) {
+      issues.push({
+        severity: "warning",
+        code: "build_base_year_variance",
+        where: "Revenue build",
+        detail:
+          `The drivers produce ${Math.round(variance.built).toLocaleString()} for the base year against ${Math.round(variance.reported).toLocaleString()} on record ` +
+          `(${off.toFixed(1)}% out). Within rounding for a multi-driver build, but worth a look.`,
+      });
+    }
+  }
+
+  const knownSources = new Set(input.sourceCodes);
+  for (const d of input.drivers) {
+    // A driver citing a source that does not exist is the same fault as a
+    // section citing one — it just hides better, because the citation sits
+    // in a register row rather than in prose somebody reads.
+    if (d.source_code?.trim() && !knownSources.has(d.source_code.trim())) {
+      issues.push({
+        severity: "error",
+        code: "driver_citation_unresolved",
+        where: `Driver: ${d.label}`,
+        detail: `Cites ${d.source_code}, which is not on the source register. Either the code is wrong or the source was removed after the driver was recorded.`,
+      });
+    }
+    if (!d.basis?.trim()) {
+      issues.push({
+        severity: "warning",
+        code: "driver_no_basis",
+        where: `Driver: ${d.label}`,
+        detail: "No basis recorded. A driver without one is the same unexplained number, only smaller.",
+      });
+    }
+    if (d.growth_pct && !d.historical_benchmark?.trim()) {
+      issues.push({
+        severity: "warning",
+        code: "driver_growth_no_benchmark",
+        where: `Driver: ${d.label}`,
+        detail: `Assumed to move ${d.growth_pct}% a year with no historical benchmark to compare against.`,
+      });
+    }
+  }
+
+  return issues;
+}
+
 export interface AuditResult {
   issues: AuditIssue[];
   counts: Record<AuditSeverity, number>;
@@ -434,6 +575,7 @@ export function runAuditTrail(input: AuditInput): AuditResult {
     ...checkCitations(input),
     ...checkStatementsBalance(input),
     ...checkRegisters(input),
+    ...checkRevenueBuild(input),
     ...checkNumbersTraceable(input),
     ...checkReadiness(input),
   ];

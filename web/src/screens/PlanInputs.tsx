@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type CompetitorNote, type PlanInputs as PlanInputsData, type ResearchSuggestion } from "../api";
 import { SourceRegister } from "../components/SourceRegister";
+import { RevenueBuild } from "../components/RevenueBuild";
 
 function fmtSar(n: number | null): string {
   return n === null ? "—" : `SAR ${n.toLocaleString()}`;
@@ -396,6 +397,8 @@ export function PlanInputs({ clientId }: { clientId: string }) {
         </div>
 
         <SourceRegister clientId={clientId} />
+
+        <RevenueBuild clientId={clientId} />
 
         <div>
           <label className="muted" style={{ fontSize: 12 }}>Unit economics</label>
