@@ -24,6 +24,16 @@ You will be tempted to fill a thin section with plausible industry language — 
 
 If you cannot ground a statement, call \`flag_gap\` instead of writing it. If an entire section has nothing to ground it — the input it needs is simply absent, not thin — call \`flag_gap\` for that section and stop there. Do not also call \`draft_section\` for the same key with a paragraph that works around the gap in softer language ("data was not yet available, but the sector appears..."); that is the invented content this rule exists to prevent, just hedged. A section is either drafted or flagged, never both.
 
+## Citing sources and calculations
+
+You are given a SOURCE REGISTER — every document uploaded and every external reference the advisor recorded, each with a code (INT-003, EXT-001). Where a phase draws on the computed statements you are also given a CALCULATION REGISTER (CALC-004), one entry per formula behind the forecast figures.
+
+Put the code in provenance \`ref\` for anything drawn from one. A code is what makes a figure checkable; a filename or a field path is not. Two rules, both absolute: never write a code that is not on the register you were given, and never cite a source for a figure that did not come from it — a wrong citation is worse than none, because it survives review that an obvious gap would not.
+
+Where a number was computed rather than reported, say what drives it rather than restating the arithmetic: "the year-three revenue figure assumes the 12.9% growth rate recorded in the planning input, applied to the FY2025 base [CALC-002]". The register holds the formula; the prose does not need to repeat it.
+
+Nothing on the register is a licence to cite it for something it does not cover. A sales export evidences revenue and patient counts, not market size.
+
 ## Where the profile and the evidence disagree
 
 Some figures below come from an uploaded document that reconciled against what the owner said and confirmed or contradicted it — that shows up as a claim's verification status. Where a document contradicts the owner's figure, use the document's figure and say so plainly in one sentence — do not silently prefer one or paper over the difference. A discrepancy the plan surfaces is a smaller problem than one a credit officer finds later.
@@ -40,9 +50,15 @@ You may be given up to three computed statements — an income statement, a cash
 
 If no income statement was supplied, flag it as a gap rather than building a forecast from a single revenue figure and a growth rate nobody supplied. The cash flow statement and balance sheet may be absent even when the income statement is present — they need working-capital and cash-on-hand inputs the income statement does not — so treat their absence as its own gap, not as evidence something else is wrong.
 
-## Write prose, not markdown
+## Write prose, not markdown — and use exhibits for tables
 
-Section content is rendered as plain paragraphs in the delivered document, not parsed as markdown — a pipe table or a bold marker shows up as literal characters, not formatting. Where a section needs to present figures (a use-of-funds breakdown, for instance), write them as a short list of "label: value" lines, not a markdown table. The computed financial projection table is rendered separately as a real table in the document — refer to it in prose; do not re-typeset it yourself.
+Section content is rendered as plain paragraphs in the delivered document, not parsed as markdown — a pipe table or a bold marker shows up as literal characters, not formatting. Never typeset a table in \`content\`.
+
+Where material is genuinely tabular, pass it as an \`exhibits\` entry on \`draft_section\` instead: a title, column headers, and rows. The document renders it as a real table. This is what a service-level pricing comparison, a capacity schedule, a stage-gate plan, or a positioning matrix should be — the things a plan of this kind is full of, and which read badly as sentences.
+
+Judgment applies. An exhibit earns its place when a reader will compare values across rows or columns; three related numbers in a sentence do not need one. Introduce an exhibit in the prose and say what it shows — the prose must stand on its own, because a reader skimming may not stop at the table. For a short "label: value" breakdown (a use-of-funds split, say) keep the "label: value" lines in \`content\`; that already renders as a clean exhibit and does not need a table.
+
+The computed financial projection table is rendered separately — refer to it in prose, and do not re-typeset it as an exhibit.
 
 ## Verification status
 
@@ -89,7 +105,11 @@ const PROVENANCE_ITEM: JSONSchema = {
     source: { type: "string", enum: [...PROVENANCE_SOURCE] },
     ref: {
       type: "string",
-      description: "Profile field path, claim key, or assumption label, matching `source`.",
+      description:
+        "Where this traces to. Prefer a code from the SOURCE REGISTER (e.g. \"INT-003\", \"EXT-001\") " +
+        "or the CALCULATION REGISTER (e.g. \"CALC-004\") — those are what a reader can actually look up. " +
+        "Otherwise a profile field path, a claim key, or an assumption label, matching `source`. " +
+        "Never invent a code that is not on one of the registers you were given.",
     },
   },
   required: ["statement", "source", "ref"],
@@ -112,6 +132,35 @@ export const DRAFT_SECTION_TOOL = {
         description:
           "`thin` means drafted but under-evidenced — the manager should look before sending.",
       },
+      exhibits: {
+        type: "array",
+        maxItems: 4,
+        description:
+          "Tables belonging to this section, where the material is genuinely tabular — a pricing comparison, " +
+          "a capacity schedule, a stage-gate plan, a positioning matrix. Declare the data; the document renders it. " +
+          "Do not put a table in `content`, and do not use an exhibit for something that reads better as a sentence.",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Names the exhibit, e.g. \"Service-level pricing, September 2026\"." },
+            headers: { type: "array", items: { type: "string" }, maxItems: 8 },
+            rows: {
+              type: "array",
+              maxItems: 40,
+              items: { type: "array", items: { type: "string" } },
+              description: "One cell per header, in the same order.",
+            },
+            source_note: {
+              type: ["string", "null"],
+              description:
+                "Where these figures come from — a source register code (INT-003), a calculation code (CALC-004), " +
+                "or a short note. Null only where the exhibit restates something already sourced in the prose above it.",
+            },
+          },
+          required: ["title", "headers", "rows", "source_note"],
+          additionalProperties: false,
+        },
+      },
     },
     required: ["section_key", "content", "provenance", "confidence"],
   },
@@ -126,13 +175,43 @@ export const RECORD_ASSUMPTION_TOOL = {
     properties: {
       label: { type: "string" },
       value: { type: "string" },
+      unit: {
+        type: ["string", "null"],
+        description: "SAR, %, days, count — or null where the value is not numeric.",
+      },
       basis: {
         type: "string",
         description: "Why this value. 'Owner's estimate' is acceptable; blank is not.",
       },
+      // The question a credit officer asks first about any forecast input is
+      // not "why this number" but "how far is it from what this business has
+      // actually done". Required rather than optional: an assumption that
+      // cannot be placed against history is itself the finding, and saying
+      // so explicitly is the honest answer, not an omission.
+      historical_benchmark: {
+        type: "string",
+        description:
+          "What this metric has actually been, from the historical trends, the profile, or a document — " +
+          "e.g. \"FY2024 7%, FY2025 8%\". Where nothing establishes a historical level, say so plainly " +
+          "(\"no historical figure available\") rather than leaving it blank or repeating the basis.",
+      },
+      confidence: {
+        type: "string",
+        enum: ["high", "medium", "low"],
+        description:
+          "high: grounded in audited statements, signed contracts, or verified records. " +
+          "medium: management accounts, operational reports, reputable external research. " +
+          "low: an estimate, or built on incomplete information. When in doubt, low.",
+      },
+      sensitivity: {
+        type: ["string", "null"],
+        description:
+          "What moves if this assumption is wrong, in one line — e.g. \"2 points lower cuts year-3 EBITDA by roughly SAR 340k\". " +
+          "Null where the effect is not material enough to quantify.",
+      },
       source: { type: "string", enum: ["owner", "manager", "profile_derived"] },
     },
-    required: ["label", "value", "basis", "source"],
+    required: ["label", "value", "basis", "historical_benchmark", "confidence", "source"],
   },
 } as const;
 

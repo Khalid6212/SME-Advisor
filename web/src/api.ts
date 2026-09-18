@@ -11,11 +11,16 @@ const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 export class ApiError extends Error {
   status: number;
   code: string;
+  /** The whole error body. Some rejections carry more than a message — the
+   *  plan-approval gate returns the failed audit trail alongside its 409 so
+   *  the screen can show what actually needs fixing instead of "try again". */
+  body: any;
 
-  constructor(status: number, code: string, message?: string) {
+  constructor(status: number, code: string, message?: string, body?: unknown) {
     super(message ?? code);
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
@@ -34,14 +39,30 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await res.text();
   const body = text ? JSON.parse(text) : undefined;
 
-  if (!res.ok) throw new ApiError(res.status, body?.error ?? "unknown", body?.message);
+  if (!res.ok) throw new ApiError(res.status, body?.error ?? "unknown", body?.message, body);
   return body as T;
+}
+
+/** Mirrors AuditIssue / AuditResult in src/planner/audit.ts. */
+export interface AuditIssue {
+  severity: "error" | "warning" | "note";
+  code: string;
+  where: string;
+  detail: string;
+}
+
+export interface AuditResult {
+  issues: AuditIssue[];
+  counts: { error: number; warning: number; note: number };
+  clean: boolean;
 }
 
 export const api = {
   get: <T,>(p: string) => request<T>(p),
   post: <T,>(p: string, body?: unknown) =>
     request<T>(p, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
+  put: <T,>(p: string, body: unknown) =>
+    request<T>(p, { method: "PUT", body: JSON.stringify(body) }),
   patch: <T,>(p: string, body: unknown) =>
     request<T>(p, { method: "PATCH", body: JSON.stringify(body) }),
   del: <T,>(p: string) => request<T>(p, { method: "DELETE" }),

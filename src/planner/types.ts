@@ -116,6 +116,13 @@ export interface FinancialLine {
   value: number;
   basis: string | null;
   scenario: "base" | "bull" | "bear";
+  /**
+   * Calculation Register code (CALC-nnn) for the formula that produced this
+   * figure — see calc.ts. `basis` is the prose a reader gets in the table;
+   * this is the handle that walks them to the formula and its inputs.
+   * Optional so a row built before the register existed still typechecks.
+   */
+  calc_code?: string | null;
 }
 
 /**
@@ -234,4 +241,84 @@ export function sectionsForAudience(
 ): PlanSectionSpec[] {
   if (audience === "full") return template.sections;
   return template.sections.filter((s) => s.audiences.includes(audience));
+}
+
+/**
+ * A table inside a section.
+ *
+ * The drafting agent declares structure — a title, column headers, rows —
+ * and never formatting. Rendering belongs to the exporters, which is what
+ * lets the same exhibit become a real Word table and a real markdown table
+ * without the agent knowing either format exists.
+ *
+ * This is the narrow exception to PLANNER_SYSTEM's "write prose, not
+ * markdown" rule, and it exists because that rule, while right about
+ * markdown, was also preventing the agent from producing the pricing
+ * comparisons, positioning matrices and capacity schedules a real plan is
+ * full of. The ban on typesetting stands; the ban on tables does not.
+ */
+export interface SectionExhibit {
+  /** Names the exhibit in the document: "Service-level pricing, September 2026". */
+  title: string;
+  headers: string[];
+  /** Each row must have one cell per header — a ragged exhibit is dropped
+   *  rather than rendered misaligned. See normaliseExhibits. */
+  rows: string[][];
+  /** Where the figures come from, shown beneath the table. A source code
+   *  (INT-003) or a calculation code (CALC-004) where one applies. */
+  source_note: string | null;
+}
+
+/** Caps, enforced at the boundary rather than trusted from the model. A
+ *  table wider than this does not fit a portrait page at a legible size,
+ *  and one longer belongs in an appendix. */
+export const EXHIBIT_MAX_COLUMNS = 8;
+export const EXHIBIT_MAX_ROWS = 40;
+export const EXHIBIT_MAX_PER_SECTION = 4;
+
+/**
+ * Accepts what the agent produced and returns only what can actually be
+ * rendered.
+ *
+ * Silently dropping a malformed exhibit is the right trade here: the section
+ * prose stands on its own (the agent is told to introduce an exhibit, not to
+ * depend on it), so a dropped table costs a reader some convenience, while a
+ * ragged one rendered anyway costs them a document that looks broken. Rows
+ * are padded rather than dropped when they are merely short — a missing
+ * trailing cell is a far more common and far more recoverable mistake than a
+ * row with the wrong shape entirely.
+ */
+export function normaliseExhibits(raw: unknown): SectionExhibit[] {
+  if (!Array.isArray(raw)) return [];
+
+  const out: SectionExhibit[] = [];
+  for (const item of raw.slice(0, EXHIBIT_MAX_PER_SECTION)) {
+    if (!item || typeof item !== "object") continue;
+    const e = item as Record<string, unknown>;
+
+    const title = typeof e.title === "string" ? e.title.trim() : "";
+    const headers = Array.isArray(e.headers)
+      ? e.headers.slice(0, EXHIBIT_MAX_COLUMNS).map((h) => String(h ?? "").trim())
+      : [];
+    if (!title || headers.length === 0) continue;
+
+    const rows: string[][] = [];
+    for (const r of Array.isArray(e.rows) ? e.rows.slice(0, EXHIBIT_MAX_ROWS) : []) {
+      if (!Array.isArray(r)) continue;
+      const cells = r.slice(0, headers.length).map((c) => String(c ?? "").trim());
+      // Too long was truncated above; too short is padded. Either way the
+      // row ends up matching the header count exactly.
+      while (cells.length < headers.length) cells.push("");
+      if (cells.some((c) => c !== "")) rows.push(cells);
+    }
+    if (rows.length === 0) continue;
+
+    out.push({
+      title,
+      headers,
+      rows,
+      source_note: typeof e.source_note === "string" && e.source_note.trim() ? e.source_note.trim() : null,
+    });
+  }
+  return out;
 }

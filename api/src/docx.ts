@@ -25,6 +25,18 @@ import {
   TextRun,
   WidthType,
 } from "docx";
+import type { AppendixTable } from "../../src/planner/appendices.ts";
+import type { SectionExhibit } from "../../src/planner/types.ts";
+
+/** A normalized historical statement, flattened for rendering. Built by
+ *  historicalExhibits() in routes/plans.ts, which owns the number formatting
+ *  so the historical and forward tables agree. */
+export interface HistoricalExhibit {
+  title: string;
+  headers: string[];
+  rows: string[][];
+  note: string | null;
+}
 import { config } from "./config.ts";
 
 const MUTED = "666666";
@@ -401,6 +413,24 @@ function sensitivityTable(baseRows: FinRow[], sensitivityRows: FinRow[]): { tabl
   return { table, year };
 }
 
+/**
+ * A generic N-column exhibit, used for the audit appendices.
+ *
+ * Deliberately plain: an appendix is reference material a reader scans for
+ * one row, not a designed exhibit. Column widths are left to Word, which
+ * distributes them by content — the alternative is guessing proportions for
+ * tables whose shape varies by client.
+ */
+function dataTable(headers: string[], rows: string[][]): Table {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({ children: headers.map((h) => tableCell(h, true)) }),
+      ...rows.map((r) => new TableRow({ children: r.map((v) => tableCell(v)) })),
+    ],
+  });
+}
+
 function assumptionsTable(rows: { label: string; value: string; basis: string }[]): Table | null {
   if (rows.length === 0) return null;
 
@@ -419,9 +449,16 @@ export async function buildPlanDocx(opts: {
   clientName: string;
   audienceLabel: string;
   approvedAt: Date | null;
-  sections: { key: string; title_en: string; content: string }[];
+  sections: { key: string; title_en: string; content: string; exhibits?: SectionExhibit[] }[];
   financials: FinRow[];
   assumptions: { label: string; value: string; basis: string }[];
+  /** The audit trail (src/planner/appendices.ts). Empty for a view that
+   *  should not carry one — the caller decides, not this function. */
+  appendices?: AppendixTable[];
+  /** Normalized historical statements, where enough multi-period evidence
+   *  exists to build them. Rendered before the forward statements, which is
+   *  the order they are read in: what happened, then what is projected. */
+  historical?: HistoricalExhibit[] | null;
 }): Promise<Buffer> {
   const meta = [
     `Prepared ${dateLabel(new Date())}`,
@@ -450,6 +487,32 @@ export async function buildPlanDocx(opts: {
     } else {
       children.push(...body);
     }
+
+    // Exhibits follow the prose that introduces them. Numbered within the
+    // section (Exhibit 3.2) rather than across the document, so inserting a
+    // table in an early section does not renumber every one after it.
+    (s.exhibits ?? []).forEach((ex, j) => {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: `Exhibit ${i + 1}.${j + 1} — ${ex.title}`, bold: true, font: BODY_FONT, size: 19 }),
+          ],
+          spacing: { before: 200, after: 80 },
+          keepNext: true, // never let the caption strand at the foot of a page
+        }),
+      );
+      children.push(dataTable(ex.headers, ex.rows));
+      if (ex.source_note) {
+        children.push(
+          new Paragraph({
+            children: [new TextRun({ text: `Source: ${ex.source_note}`, italics: true, color: MUTED, font: BODY_FONT, size: 17 })],
+            spacing: { after: 200 },
+          }),
+        );
+      } else {
+        children.push(new Paragraph({ text: "", spacing: { after: 160 } }));
+      }
+    });
   });
 
   // Positive inclusion per exhibit, not "everything else" — four disjoint
@@ -459,6 +522,20 @@ export async function buildPlanDocx(opts: {
   const sensitivityRows = opts.financials.filter((r) => r.scenario === "bull" || r.scenario === "bear");
   const cashFlowRows = opts.financials.filter((r) => r.scenario === "base" && (CASH_FLOW_ORDER as readonly string[]).includes(r.line_item));
   const balanceSheetRows = opts.financials.filter((r) => r.scenario === "base" && (BALANCE_SHEET_ORDER as readonly string[]).includes(r.line_item));
+
+  for (const h of opts.historical ?? []) {
+    children.push(heading(h.title, HeadingLevel.HEADING_1), dataTable(h.headers, h.rows));
+    if (h.note) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: h.note, italics: true, color: MUTED, font: BODY_FONT, size: 17 })],
+          spacing: { before: 80, after: 200 },
+        }),
+      );
+    } else {
+      children.push(new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
+  }
 
   const finTable = yearsByItemTable(baseRows, LINE_ITEM_ORDER);
   if (finTable) {
@@ -499,6 +576,30 @@ export async function buildPlanDocx(opts: {
   const assumpTable = assumptionsTable(opts.assumptions);
   if (assumpTable) {
     children.push(heading("Assumptions", HeadingLevel.HEADING_1), assumpTable);
+  }
+
+  // The audit trail. Appended after the statements and before the
+  // disclaimer, in letter order, each on its own page — a reviewer works
+  // through these one at a time and a page break is what stops Appendix C
+  // from starting three rows below the end of Appendix B.
+  for (const appendix of opts.appendices ?? []) {
+    children.push(
+      new Paragraph({
+        text: `Appendix ${appendix.key} — ${appendix.title}`,
+        heading: HeadingLevel.HEADING_1,
+        pageBreakBefore: true,
+        spacing: { after: 120 },
+      }),
+    );
+    if (appendix.note) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: appendix.note, italics: true, color: MUTED, font: BODY_FONT })],
+          spacing: { after: 160 },
+        }),
+      );
+    }
+    children.push(dataTable(appendix.headers, appendix.rows));
   }
 
   children.push(

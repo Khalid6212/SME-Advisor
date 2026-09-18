@@ -19,6 +19,20 @@ import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import { type Audience, type Provenance, sectionsForAudience } from "../../../src/planner/types.ts";
 import { type ClaimLookup, buildClaimLookup, confidenceTier } from "../../../src/planner/confidence.ts";
 import { PLAN_PHASES, phaseForSection } from "../../../src/planner/phases.ts";
+import { type AppendixTable, appendixMarkdown, buildAppendices } from "../../../src/planner/appendices.ts";
+import type { SectionExhibit } from "../../../src/planner/types.ts";
+import {
+  hasUsableHistory, normalizeHistoricalStatements, residualIsMaterial,
+  type NormalizedStatements, type StatementLine,
+} from "../../../src/planner/historical.ts";
+import type { HistoricalExhibit } from "../docx.ts";
+import { loadAppendixData } from "../appendices.ts";
+import { auditPlan } from "../audit-trail.ts";
+import { SOURCE_CONFIDENCE, SOURCE_TYPE } from "../../../src/planner/sources.ts";
+import { deleteSource, listSources, registerSource } from "../sources.ts";
+import { listDrivers, replaceDrivers } from "../drivers.ts";
+import { checkDrivers } from "../../../src/planner/drivers.ts";
+import { validateFormula } from "../../../src/planner/formula.ts";
 import { editDistance } from "../../../src/learning/types.ts";
 import { approvePhase, createPlan, draftPhase, TEMPLATES } from "../agents/planner.ts";
 import { distillEdit } from "../agents/distiller.ts";
@@ -72,6 +86,14 @@ const resolveGapSchema = z.object({
   manager_response: z.string().trim().min(1).max(2000),
 });
 
+/** Delivering over a failing audit check takes both an explicit
+ *  acknowledgement and a reason — neither alone, so it cannot happen by a
+ *  client sending a stray flag or by a manager clicking through. */
+const approvePlanSchema = z.object({
+  acknowledge_audit: z.boolean().default(false),
+  audit_override_reason: z.string().trim().max(2000).nullish(),
+});
+
 const approvePhaseSchema = z.object({
   rating: z.number().int().min(1).max(5).nullable().optional(),
   rating_note: z.string().trim().max(2000).nullable().optional(),
@@ -80,6 +102,54 @@ const approvePhaseSchema = z.object({
   // whether it's required depends on DB state the schema can't see.
   chosen_option: z.string().trim().max(200).nullable().optional(),
   decision_rationale: z.string().trim().max(2000).nullable().optional(),
+});
+
+/** An external reference the advisor recorded by hand — a market report, a
+ *  regulator's page, a competitor's published pricing. Internal sources are
+ *  never created this way; they are registered from the documents themselves
+ *  (see api/src/sources.ts), so the register cannot drift from the data room.
+ *
+ *  `title` is the only hard requirement. Publisher, date, locator, URL and
+ *  access date are each optional because a real reference is often missing
+ *  one of them, and refusing the whole record over a missing publication
+ *  date would push the advisor back to citing nothing. */
+const sourceSchema = z.object({
+  source_type: z.enum(SOURCE_TYPE).refine((t) => t !== "company_internal", {
+    message: "Internal sources are registered from uploaded documents, not entered by hand.",
+  }),
+  title: z.string().trim().min(1).max(500),
+  publisher: z.string().trim().max(300).nullish(),
+  published_on: z.string().date().nullish(),
+  period_covered: z.string().trim().max(200).nullish(),
+  locator: z.string().trim().max(300).nullish(),
+  url: z.string().url().max(2000).nullish(),
+  accessed_on: z.string().date().nullish(),
+  confidence: z.enum(SOURCE_CONFIDENCE).default("medium"),
+  notes: z.string().trim().max(2000).nullish(),
+});
+
+/** One declared revenue driver. `key` must be a bare identifier because the
+ *  formula parser resolves it by name; `basis` is required for the same
+ *  reason every assumption needs one — a driver without a stated basis is
+ *  the same black-box number, only in smaller pieces. */
+const driverSchema = z.object({
+  key: z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, {
+    message: "A driver key must start with a letter or underscore and contain only letters, digits and underscores.",
+  }).max(60),
+  label: z.string().trim().min(1).max(200),
+  unit: z.string().trim().max(60).nullish(),
+  base_value: z.number().finite(),
+  growth_pct: z.number().finite().nullish(),
+  basis: z.string().trim().min(1).max(2000),
+  historical_benchmark: z.string().trim().max(2000).nullish(),
+  source_code: z.string().trim().max(20).nullish(),
+  confidence: z.enum(["high", "medium", "low"]).nullish(),
+});
+
+const revenueBuildSchema = z.object({
+  // Null clears the build and returns the client to the blended growth rate.
+  revenue_formula: z.string().trim().max(1000).nullish(),
+  drivers: z.array(driverSchema).max(40),
 });
 
 const competitorNoteSchema = z.object({
@@ -271,6 +341,150 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
    * button only; this spends real money on every call, so it never runs
    * automatically.
    */
+  /** The declared revenue build: the drivers and the formula combining them. */
+  app.get("/clients/:id/revenue-build", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const [drivers, inputs] = await Promise.all([
+      listDrivers(id),
+      one<{ revenue_formula: string | null }>(
+        `SELECT revenue_formula FROM plan_inputs WHERE client_id = $1`,
+        [id],
+      ),
+    ]);
+    const formula = inputs?.revenue_formula ?? null;
+
+    return {
+      revenue_formula: formula,
+      drivers,
+      // Surfaced on read as well as on write, since a driver can be deleted
+      // through a later save that leaves the formula behind.
+      check: formula ? checkDrivers(formula, drivers) : { unknown: [], unused: [] },
+    };
+  });
+
+  /**
+   * Saves the build as a unit — drivers and formula together.
+   *
+   * Validated before it is written: a formula naming a driver that does not
+   * exist would produce no projection at all at draft time, and finding that
+   * out here, with the offending name quoted back, beats finding it out when
+   * the financial phase silently falls back to a growth rate.
+   */
+  app.put("/clients/:id/revenue-build", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const parsed = revenueBuildSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", detail: parsed.error.issues[0]?.message });
+    }
+    const { drivers } = parsed.data;
+    const formula = parsed.data.revenue_formula?.trim() || null;
+
+    const duplicate = drivers.find((d, i) => drivers.findIndex((o) => o.key === d.key) !== i);
+    if (duplicate) {
+      return reply.code(400).send({
+        error: "duplicate_driver_key",
+        message: `Two drivers share the key "${duplicate.key}". A formula could not tell them apart.`,
+      });
+    }
+
+    if (formula) {
+      const invalid = validateFormula(formula, drivers.map((d) => d.key));
+      if (invalid) {
+        return reply.code(400).send({ error: "invalid_formula", message: invalid.message });
+      }
+    }
+
+    // plan_inputs holds the formula and may not exist yet — the advisor can
+    // reasonably describe the revenue build before filling in the rest.
+    await tx(async (c) => {
+      await c.query(
+        `INSERT INTO plan_inputs (client_id, revenue_formula, created_by)
+         VALUES ($1,$2,$3)
+         ON CONFLICT (client_id) DO UPDATE SET revenue_formula = $2, updated_at = now()`,
+        [id, formula, user.id],
+      );
+    });
+    await replaceDrivers(id, drivers, user.id);
+
+    await audit("revenue_build.saved", {
+      actorUserId: user.id, clientId: id,
+      payload: { drivers: drivers.length, has_formula: formula !== null },
+    });
+
+    const saved = await listDrivers(id);
+    return {
+      revenue_formula: formula,
+      drivers: saved,
+      check: formula ? checkDrivers(formula, saved) : { unknown: [], unused: [] },
+    };
+  });
+
+  /**
+   * The Source Register for a client — Appendix A, and the closed set of
+   * things the drafting agent may cite. Internal rows appear here on their
+   * own as documents are uploaded; this endpoint lists everything.
+   */
+  app.get("/clients/:id/sources", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    return { sources: await listSources(id) };
+  });
+
+  /** Records one external reference. The advisor's own research — a URL and
+   *  an access date are judgment, not something to infer from a figure. */
+  app.post("/clients/:id/sources", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const parsed = sourceSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", detail: parsed.error.issues[0]?.message });
+    }
+
+    const client = await one<{ id: string }>(`SELECT id FROM clients WHERE id = $1`, [id]);
+    if (!client) return reply.code(404).send({ error: "not_found" });
+
+    const source = await registerSource(id, parsed.data, user.id);
+    await audit("source.registered", {
+      actorUserId: user.id, clientId: id,
+      payload: { code: source.code, source_type: source.source_type, title: source.title },
+    });
+    return { source };
+  });
+
+  /**
+   * Removes an external reference. Internal sources are deliberately not
+   * removable here — they belong to a document, and a register that no
+   * longer matches the data room is worse than one with a stale row.
+   *
+   * Codes are never reused after a delete (see nextCode), so a citation in
+   * an already-delivered plan can never silently start pointing somewhere
+   * else. It points at nothing, which the audit check reports.
+   */
+  app.delete("/clients/:id/sources/:sourceId", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id, sourceId } = req.params as { id: string; sourceId: string };
+
+    const removed = await deleteSource(id, sourceId);
+    if (!removed) {
+      return reply.code(409).send({
+        error: "not_removable",
+        message: "Not found, or an internal source — those are removed with their document.",
+      });
+    }
+    await audit("source.deleted", { actorUserId: user.id, clientId: id, payload: { source_id: sourceId } });
+    return { deleted: true };
+  });
+
   app.post("/clients/:id/plan-inputs/research", async (req, reply) => {
     const user = requireManager(req, reply);
     if (!user) return;
@@ -346,7 +560,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
 
     const [sectionRows, assumptions, gaps, financials, phaseRows, claimRows] = await Promise.all([
       query<{ key: string; provenance: Provenance[]; [k: string]: unknown }>(
-        `SELECT id, key, position, title_en, title_ar, content, provenance,
+        `SELECT id, key, position, title_en, title_ar, content, provenance, exhibits,
                 confidence, status, updated_at
            FROM plan_sections WHERE plan_id = $1 ORDER BY position`, [planId]),
       query(`SELECT label, value, basis, source FROM plan_assumptions WHERE plan_id = $1`, [planId]),
@@ -514,6 +728,24 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * The pre-delivery audit trail check. Runs on demand so a manager can see
+   * what delivery would block on before attempting it — and runs again
+   * inside the approval itself, since the plan can change in between.
+   *
+   * Costs nothing: joins and regexes, no model call.
+   */
+  app.get("/plans/:planId/audit", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { planId } = req.params as { planId: string };
+
+    const plan = await one<{ client_id: string }>(`SELECT client_id FROM plans WHERE id = $1`, [planId]);
+    if (!plan) return reply.code(404).send({ error: "not_found" });
+
+    return auditPlan(planId, plan.client_id);
+  });
+
+  /**
    * The explicit whole-plan approval gate. Only an approved plan can be
    * exported in finished form — see the export routes below. Requires every
    * phase to already be approved — otherwise "delivered" could mean a
@@ -541,14 +773,58 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
+    /**
+     * The audit trail gate. An `error` means something a reader would catch:
+     * a citation pointing at nothing, a statement that does not balance, a
+     * section carrying figures with no provenance at all.
+     *
+     * Overridable rather than absolute, because the check cannot tell a real
+     * fault from a case it does not understand, and a manager who has looked
+     * and decided is the right authority — but the override is explicit and
+     * lands in the audit log with its reason, so "we shipped it anyway"
+     * stays a recorded decision rather than a silent default. Warnings and
+     * notes never block; they are returned so the manager sees them either
+     * way.
+     */
+    const parsed = approvePlanSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+
+    const auditResult = await auditPlan(planId, plan.client_id);
+    const override = parsed.data.acknowledge_audit;
+    if (!auditResult.clean && !override) {
+      return reply.code(409).send({
+        error: "audit_failed",
+        message: `The audit trail check found ${auditResult.counts.error} issue${auditResult.counts.error === 1 ? "" : "s"} that would not survive review. Fix them, or approve again acknowledging the check with a reason.`,
+        audit: auditResult,
+      });
+    }
+    if (!auditResult.clean && !parsed.data.audit_override_reason?.trim()) {
+      return reply.code(409).send({
+        error: "override_reason_required",
+        message: "Say why these are acceptable before delivering over a failed audit check.",
+        audit: auditResult,
+      });
+    }
+
     await query(
       `UPDATE plans SET status = 'delivered', approved_by = $2, approved_at = now() WHERE id = $1`,
       [planId, user.id],
     );
 
-    await audit("plan.approved", { actorUserId: user.id, clientId: plan.client_id, payload: { plan_id: planId } });
+    await audit("plan.approved", {
+      actorUserId: user.id,
+      clientId: plan.client_id,
+      payload: {
+        plan_id: planId,
+        audit_errors: auditResult.counts.error,
+        audit_warnings: auditResult.counts.warning,
+        // Only set when the manager delivered over a failing check — which
+        // is exactly the decision a later reader of this log needs to find.
+        audit_override_reason: auditResult.clean ? null : parsed.data.audit_override_reason?.trim() ?? null,
+      },
+    });
 
-    return { approved: true };
+    return { approved: true, audit: auditResult };
   });
 
   /**
@@ -743,8 +1019,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const { planId } = req.params as { planId: string };
     const audience = parseAudience((req.query as { audience?: string }).audience);
 
-    const plan = await one<{ client_name: string; status: string }>(
-      `SELECT c.name AS client_name, p.status
+    const plan = await one<{ client_id: string; client_name: string; status: string }>(
+      `SELECT p.client_id, c.name AS client_name, p.status
          FROM plans p JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
       [planId],
     );
@@ -752,8 +1028,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (plan.status !== "delivered") return reply.code(409).send({ error: "not_approved" });
 
     const keys = new Set(sectionsForAudience(businessPlanTemplate, audience).map((s) => s.key));
-    const allSections = await query<{ key: string; title_en: string; content: string }>(
-      `SELECT key, title_en, content FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
+    const allSections = await query<{ key: string; title_en: string; content: string; exhibits: SectionExhibit[] }>(
+      `SELECT key, title_en, content, exhibits FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
       [planId],
     );
     const sections = allSections.filter((s) => keys.has(s.key));
@@ -778,10 +1054,35 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         )
       : [];
 
+    // The audit trail travels with the internal and full views only. The
+    // marketing view goes to prospects and partners: a reconciliation
+    // schedule and a data-gap list are the firm's working papers, not
+    // sales material. Appendix A is the exception and rides along with
+    // every view — citing sources to a customer costs nothing and is the
+    // one appendix that strengthens the document for any reader.
+    const appendices = await buildExportAppendices(planId, plan.client_id, includeFinancials);
+    const historicalForMd = includeFinancials ? await loadHistorical(plan.client_id) : null;
+    const historicalMarkdown = historicalForMd
+      ? historicalExhibits(historicalForMd).flatMap((h) => [
+          `## ${h.title}`,
+          "",
+          `| ${h.headers.join(" | ")} |`,
+          `|${h.headers.map(() => "---").join("|")}|`,
+          ...h.rows.map((r) => `| ${r.join(" | ")} |`),
+          "",
+          ...(h.note ? [`_${h.note}_`, ""] : []),
+        ])
+      : null;
+
     const body = [
       `# ${plan.client_name} — ${AUDIENCE_LABEL[audience]}`,
       "",
-      ...sections.flatMap((s, i) => [`## ${i + 1}. ${s.title_en}`, "", renderSectionMarkdown(s.content), ""]),
+      ...sections.flatMap((s, i) => [
+        `## ${i + 1}. ${s.title_en}`, "",
+        renderSectionMarkdown(s.content), "",
+        ...(s.exhibits ?? []).flatMap((ex, j) => exhibitMarkdown(ex, i + 1, j + 1)),
+      ]),
+      ...(historicalMarkdown ?? []),
       ...financialExhibitsMarkdown(financials),
       ...(assumptions.length
         ? [
@@ -793,6 +1094,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
             "",
           ]
         : []),
+      ...appendices.flatMap(appendixMarkdown),
       "---",
       "",
       "Figures are as reported by the business owner and have not been independently verified, except where a reviewed document is cited in the text above.",
@@ -811,8 +1113,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const { planId } = req.params as { planId: string };
     const audience = parseAudience((req.query as { audience?: string }).audience);
 
-    const plan = await one<{ client_name: string; status: string; approved_at: Date | null }>(
-      `SELECT c.name AS client_name, p.status, p.approved_at
+    const plan = await one<{ client_id: string; client_name: string; status: string; approved_at: Date | null }>(
+      `SELECT p.client_id, c.name AS client_name, p.status, p.approved_at
          FROM plans p JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
       [planId],
     );
@@ -820,8 +1122,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (plan.status !== "delivered") return reply.code(409).send({ error: "not_approved" });
 
     const keys = new Set(sectionsForAudience(businessPlanTemplate, audience).map((s) => s.key));
-    const allSections = await query<{ key: string; title_en: string; content: string }>(
-      `SELECT key, title_en, content FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
+    const allSections = await query<{ key: string; title_en: string; content: string; exhibits: SectionExhibit[] }>(
+      `SELECT key, title_en, content, exhibits FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
       [planId],
     );
     const sections = allSections.filter((s) => keys.has(s.key));
@@ -845,6 +1147,10 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         )
       : [];
 
+    // Same audience rule as the markdown export above.
+    const appendices = await buildExportAppendices(planId, plan.client_id, includeFinancials);
+    const historicalStatements = includeFinancials ? await loadHistorical(plan.client_id) : null;
+
     const buffer = await buildPlanDocx({
       firm: firmIdentity(),
       clientName: plan.client_name,
@@ -853,6 +1159,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       sections,
       financials,
       assumptions,
+      appendices,
+      historical: historicalStatements ? historicalExhibits(historicalStatements) : null,
     });
 
     await audit("plan.exported", { actorUserId: user.id, payload: { plan_id: planId, format: "docx", audience } });
@@ -940,6 +1248,116 @@ const FINANCIAL_LINE_LABEL: Record<string, string> = {
 };
 
 type FinRow = { year_offset: number; line_item: string; value: string; scenario: string };
+
+/** One section exhibit as a markdown table. Cells are escaped so a pipe in
+ *  a quoted value cannot break the table, same as the appendices. */
+function exhibitMarkdown(ex: SectionExhibit, sectionNo: number, index: number): string[] {
+  const esc = (v: string) => v.replace(/\|/g, "\\|").replace(/\n+/g, " ");
+  return [
+    `**Exhibit ${sectionNo}.${index} — ${ex.title}**`,
+    "",
+    `| ${ex.headers.join(" | ")} |`,
+    `|${ex.headers.map(() => "---").join("|")}|`,
+    ...ex.rows.map((r) => `| ${r.map(esc).join(" | ")} |`),
+    "",
+    ...(ex.source_note ? [`_Source: ${ex.source_note}_`, ""] : []),
+  ];
+}
+
+/**
+ * Flattens the normalized historical statements into renderable tables.
+ *
+ * A derived figure is marked on the face of the table, not only in a note —
+ * the distinction between "the document says this" and "we worked this out"
+ * is the point of the whole exercise, and a reader scanning a column will
+ * not go looking for a legend.
+ */
+function historicalExhibits(s: NormalizedStatements): HistoricalExhibit[] {
+  const cell = (line: StatementLine, period: string): string => {
+    const c = line.cells[period];
+    if (!c || c.value == null) return "—";
+    const abs = Math.abs(c.value).toLocaleString("en-US", { maximumFractionDigits: 0 });
+    const shown = c.value < 0 ? `(${abs})` : abs;
+    return c.origin === "calculated" ? `${shown} *` : shown;
+  };
+
+  const table = (title: string, lines: StatementLine[], note: string | null): HistoricalExhibit | null => {
+    const present = lines.filter((l) => s.periods.some((p) => l.cells[p]?.value != null));
+    if (present.length === 0) return null;
+    return {
+      title,
+      headers: ["", ...s.periods],
+      rows: present.map((l) => [l.label, ...s.periods.map((p) => cell(l, p))]),
+      note,
+    };
+  };
+
+  const derivedNote = "* Derived from other reported figures, not stated by any document.";
+
+  const out: HistoricalExhibit[] = [];
+  const is = table("Normalized historical income statement", s.incomeStatement, derivedNote);
+  if (is) out.push(is);
+
+  // The residual rides with the balance sheet it belongs to rather than
+  // sitting in a note elsewhere: a reader looking at a balance sheet that
+  // does not foot should be told so on the same page.
+  const unfooted = s.periods.filter((p) => {
+    const r = s.residuals[p];
+    return r !== undefined &&
+      residualIsMaterial(r, s.balanceSheet.find((l) => l.key === "total_assets")?.cells[p]?.value ?? null);
+  });
+  const bsNote = unfooted.length > 0
+    ? `${derivedNote} Rebuilt from extracted figures, and it does not foot in ` +
+      `${unfooted.map((p) => `${p} (residual ${s.residuals[p]!.toLocaleString("en-US")})`).join(", ")}. ` +
+      "The difference is a gap in the available evidence and has deliberately not been closed with a balancing entry."
+    : derivedNote;
+  const bs = table("Normalized historical balance sheet", s.balanceSheet, bsNote);
+  if (bs) out.push(bs);
+
+  return out;
+}
+
+/** The historical statements for one plan, or null when the evidence is too
+ *  thin to make a comparison. Recomputed from facts rather than stored — see
+ *  computeFinancialsBlock. */
+async function loadHistorical(clientId: string): Promise<NormalizedStatements | null> {
+  const facts = await query<{ key: string; period: string | null; value: string; source_code: string | null }>(
+    `SELECT f.key, f.period, f.value, s.code AS source_code
+       FROM facts f
+       JOIN documents d ON d.id = f.source_document_id
+       LEFT JOIN sources s ON s.document_id = d.id
+      WHERE f.client_id = $1 AND d.deleted_at IS NULL AND d.superseded_at IS NULL`,
+    [clientId],
+  );
+  const normalized = normalizeHistoricalStatements(facts);
+  return hasUsableHistory(normalized) ? normalized : null;
+}
+
+/**
+ * The audit appendices for one export.
+ *
+ * `full` is false for the marketing view, which keeps Appendix A (the source
+ * register — citing sources helps any reader) and drops the rest: the
+ * assumption, calculation, historical-KPI and forecast-driver tables are all
+ * financial apparatus the marketing view deliberately excludes, and the
+ * reconciliation schedule and data-gap list are the firm's own working
+ * papers. Sending either to a prospect would be a disclosure decision made
+ * by accident.
+ */
+async function buildExportAppendices(
+  planId: string,
+  clientId: string,
+  full: boolean,
+): Promise<AppendixTable[]> {
+  const data = await loadAppendixData(planId, clientId);
+  const all = buildAppendices({
+    ...data,
+    lineItemLabel: FINANCIAL_LINE_LABEL,
+    lineItemOrder: FINANCIAL_LINE_ORDER,
+    formatValue: fmtFinancial,
+  });
+  return full ? all : all.filter((t) => t.key === "A");
+}
 
 function fmtFinancial(item: string, v: string | undefined): string {
   if (v == null) return "—";
