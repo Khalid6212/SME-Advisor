@@ -20,6 +20,7 @@ import { type Audience, type Provenance, sectionsForAudience } from "../../../sr
 import { type ClaimLookup, buildClaimLookup, confidenceTier } from "../../../src/planner/confidence.ts";
 import { PLAN_PHASES, phaseForSection } from "../../../src/planner/phases.ts";
 import { type AppendixTable, appendixMarkdown, buildAppendices } from "../../../src/planner/appendices.ts";
+import type { SectionExhibit } from "../../../src/planner/types.ts";
 import { loadAppendixData } from "../appendices.ts";
 import { auditPlan } from "../audit-trail.ts";
 import { SOURCE_CONFIDENCE, SOURCE_TYPE } from "../../../src/planner/sources.ts";
@@ -554,7 +555,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
 
     const [sectionRows, assumptions, gaps, financials, phaseRows, claimRows] = await Promise.all([
       query<{ key: string; provenance: Provenance[]; [k: string]: unknown }>(
-        `SELECT id, key, position, title_en, title_ar, content, provenance,
+        `SELECT id, key, position, title_en, title_ar, content, provenance, exhibits,
                 confidence, status, updated_at
            FROM plan_sections WHERE plan_id = $1 ORDER BY position`, [planId]),
       query(`SELECT label, value, basis, source FROM plan_assumptions WHERE plan_id = $1`, [planId]),
@@ -1022,8 +1023,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (plan.status !== "delivered") return reply.code(409).send({ error: "not_approved" });
 
     const keys = new Set(sectionsForAudience(businessPlanTemplate, audience).map((s) => s.key));
-    const allSections = await query<{ key: string; title_en: string; content: string }>(
-      `SELECT key, title_en, content FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
+    const allSections = await query<{ key: string; title_en: string; content: string; exhibits: SectionExhibit[] }>(
+      `SELECT key, title_en, content, exhibits FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
       [planId],
     );
     const sections = allSections.filter((s) => keys.has(s.key));
@@ -1059,7 +1060,11 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const body = [
       `# ${plan.client_name} — ${AUDIENCE_LABEL[audience]}`,
       "",
-      ...sections.flatMap((s, i) => [`## ${i + 1}. ${s.title_en}`, "", renderSectionMarkdown(s.content), ""]),
+      ...sections.flatMap((s, i) => [
+        `## ${i + 1}. ${s.title_en}`, "",
+        renderSectionMarkdown(s.content), "",
+        ...(s.exhibits ?? []).flatMap((ex, j) => exhibitMarkdown(ex, i + 1, j + 1)),
+      ]),
       ...financialExhibitsMarkdown(financials),
       ...(assumptions.length
         ? [
@@ -1099,8 +1104,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (plan.status !== "delivered") return reply.code(409).send({ error: "not_approved" });
 
     const keys = new Set(sectionsForAudience(businessPlanTemplate, audience).map((s) => s.key));
-    const allSections = await query<{ key: string; title_en: string; content: string }>(
-      `SELECT key, title_en, content FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
+    const allSections = await query<{ key: string; title_en: string; content: string; exhibits: SectionExhibit[] }>(
+      `SELECT key, title_en, content, exhibits FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
       [planId],
     );
     const sections = allSections.filter((s) => keys.has(s.key));
@@ -1223,6 +1228,21 @@ const FINANCIAL_LINE_LABEL: Record<string, string> = {
 };
 
 type FinRow = { year_offset: number; line_item: string; value: string; scenario: string };
+
+/** One section exhibit as a markdown table. Cells are escaped so a pipe in
+ *  a quoted value cannot break the table, same as the appendices. */
+function exhibitMarkdown(ex: SectionExhibit, sectionNo: number, index: number): string[] {
+  const esc = (v: string) => v.replace(/\|/g, "\\|").replace(/\n+/g, " ");
+  return [
+    `**Exhibit ${sectionNo}.${index} — ${ex.title}**`,
+    "",
+    `| ${ex.headers.join(" | ")} |`,
+    `|${ex.headers.map(() => "---").join("|")}|`,
+    ...ex.rows.map((r) => `| ${r.map(esc).join(" | ")} |`),
+    "",
+    ...(ex.source_note ? [`_Source: ${ex.source_note}_`, ""] : []),
+  ];
+}
 
 /**
  * The audit appendices for one export.

@@ -11,6 +11,10 @@ interface Section {
   id: string; key: string; title_en: string; content: string;
   provenance: { statement: string; source: string; ref: string; confidence_tier: string }[];
   confidence: string | null; status: string; audiences: string[];
+  /** Tables the drafting agent declared for this section. Read-only here —
+   *  a manager edits the prose; an exhibit changes by redrafting, since its
+   *  figures come from the same evidence the rest of the section cites. */
+  exhibits?: { title: string; headers: string[]; rows: string[][]; source_note: string | null }[];
 }
 interface Gap {
   id: string; section_key: string; question: string;
@@ -1038,9 +1042,50 @@ export function Plan({ clientId }: { clientId: string }) {
                         </div>
                       </div>
                     ) : (
-                      <p style={{ whiteSpace: "pre-wrap", marginBottom: 0 }} dir="auto">
-                        {s.content || <span className="muted">Not drafted yet.</span>}
-                      </p>
+                      <>
+                        <p style={{ whiteSpace: "pre-wrap", marginBottom: 0 }} dir="auto">
+                          {s.content || <span className="muted">Not drafted yet.</span>}
+                        </p>
+
+                        {s.exhibits?.map((ex, j) => (
+                          <div key={j} style={{ marginTop: 12 }}>
+                            {/* No exhibit number here on purpose: this view is
+                                grouped by phase, so any index would contradict
+                                the numbering the delivered document assigns
+                                from the audience-filtered section order. */}
+                            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                              Exhibit — {ex.title}
+                            </div>
+                            <div style={{ overflowX: "auto" }}>
+                              <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
+                                <thead>
+                                  <tr>
+                                    {ex.headers.map((h, k) => (
+                                      <th key={k} style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid var(--line)", whiteSpace: "nowrap" }}>
+                                        {h}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {ex.rows.map((row, k) => (
+                                    <tr key={k}>
+                                      {row.map((cell, l) => (
+                                        <td key={l} style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)" }} dir="auto">
+                                          {cell}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            {ex.source_note && (
+                              <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Source: {ex.source_note}</div>
+                            )}
+                          </div>
+                        ))}
+                      </>
                     )}
 
                     {s.provenance?.length > 0 && editing !== s.id && (

@@ -50,9 +50,15 @@ You may be given up to three computed statements — an income statement, a cash
 
 If no income statement was supplied, flag it as a gap rather than building a forecast from a single revenue figure and a growth rate nobody supplied. The cash flow statement and balance sheet may be absent even when the income statement is present — they need working-capital and cash-on-hand inputs the income statement does not — so treat their absence as its own gap, not as evidence something else is wrong.
 
-## Write prose, not markdown
+## Write prose, not markdown — and use exhibits for tables
 
-Section content is rendered as plain paragraphs in the delivered document, not parsed as markdown — a pipe table or a bold marker shows up as literal characters, not formatting. Where a section needs to present figures (a use-of-funds breakdown, for instance), write them as a short list of "label: value" lines, not a markdown table. The computed financial projection table is rendered separately as a real table in the document — refer to it in prose; do not re-typeset it yourself.
+Section content is rendered as plain paragraphs in the delivered document, not parsed as markdown — a pipe table or a bold marker shows up as literal characters, not formatting. Never typeset a table in \`content\`.
+
+Where material is genuinely tabular, pass it as an \`exhibits\` entry on \`draft_section\` instead: a title, column headers, and rows. The document renders it as a real table. This is what a service-level pricing comparison, a capacity schedule, a stage-gate plan, or a positioning matrix should be — the things a plan of this kind is full of, and which read badly as sentences.
+
+Judgment applies. An exhibit earns its place when a reader will compare values across rows or columns; three related numbers in a sentence do not need one. Introduce an exhibit in the prose and say what it shows — the prose must stand on its own, because a reader skimming may not stop at the table. For a short "label: value" breakdown (a use-of-funds split, say) keep the "label: value" lines in \`content\`; that already renders as a clean exhibit and does not need a table.
+
+The computed financial projection table is rendered separately — refer to it in prose, and do not re-typeset it as an exhibit.
 
 ## Verification status
 
@@ -125,6 +131,35 @@ export const DRAFT_SECTION_TOOL = {
         enum: ["well_supported", "thin", "blocked"],
         description:
           "`thin` means drafted but under-evidenced — the manager should look before sending.",
+      },
+      exhibits: {
+        type: "array",
+        maxItems: 4,
+        description:
+          "Tables belonging to this section, where the material is genuinely tabular — a pricing comparison, " +
+          "a capacity schedule, a stage-gate plan, a positioning matrix. Declare the data; the document renders it. " +
+          "Do not put a table in `content`, and do not use an exhibit for something that reads better as a sentence.",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Names the exhibit, e.g. \"Service-level pricing, September 2026\"." },
+            headers: { type: "array", items: { type: "string" }, maxItems: 8 },
+            rows: {
+              type: "array",
+              maxItems: 40,
+              items: { type: "array", items: { type: "string" } },
+              description: "One cell per header, in the same order.",
+            },
+            source_note: {
+              type: ["string", "null"],
+              description:
+                "Where these figures come from — a source register code (INT-003), a calculation code (CALC-004), " +
+                "or a short note. Null only where the exhibit restates something already sourced in the prose above it.",
+            },
+          },
+          required: ["title", "headers", "rows", "source_note"],
+          additionalProperties: false,
+        },
       },
     },
     required: ["section_key", "content", "provenance", "confidence"],

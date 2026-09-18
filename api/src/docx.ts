@@ -26,6 +26,7 @@ import {
   WidthType,
 } from "docx";
 import type { AppendixTable } from "../../src/planner/appendices.ts";
+import type { SectionExhibit } from "../../src/planner/types.ts";
 import { config } from "./config.ts";
 
 const MUTED = "666666";
@@ -438,7 +439,7 @@ export async function buildPlanDocx(opts: {
   clientName: string;
   audienceLabel: string;
   approvedAt: Date | null;
-  sections: { key: string; title_en: string; content: string }[];
+  sections: { key: string; title_en: string; content: string; exhibits?: SectionExhibit[] }[];
   financials: FinRow[];
   assumptions: { label: string; value: string; basis: string }[];
   /** The audit trail (src/planner/appendices.ts). Empty for a view that
@@ -472,6 +473,32 @@ export async function buildPlanDocx(opts: {
     } else {
       children.push(...body);
     }
+
+    // Exhibits follow the prose that introduces them. Numbered within the
+    // section (Exhibit 3.2) rather than across the document, so inserting a
+    // table in an early section does not renumber every one after it.
+    (s.exhibits ?? []).forEach((ex, j) => {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: `Exhibit ${i + 1}.${j + 1} — ${ex.title}`, bold: true, font: BODY_FONT, size: 19 }),
+          ],
+          spacing: { before: 200, after: 80 },
+          keepNext: true, // never let the caption strand at the foot of a page
+        }),
+      );
+      children.push(dataTable(ex.headers, ex.rows));
+      if (ex.source_note) {
+        children.push(
+          new Paragraph({
+            children: [new TextRun({ text: `Source: ${ex.source_note}`, italics: true, color: MUTED, font: BODY_FONT, size: 17 })],
+            spacing: { after: 200 },
+          }),
+        );
+      } else {
+        children.push(new Paragraph({ text: "", spacing: { after: 160 } }));
+      }
+    });
   });
 
   // Positive inclusion per exhibit, not "everything else" — four disjoint

@@ -1,0 +1,21 @@
+-- Tables inside a section.
+--
+-- PLANNER_SYSTEM has told the drafting agent "write prose, not markdown"
+-- since the beginning, for a good reason: section content is rendered as
+-- plain paragraphs, so a pipe table arrives in the delivered document as
+-- literal pipe characters. The rule worked, and it cost something real —
+-- an investment-grade plan is full of tables (a service-level pricing
+-- comparison, a positioning matrix, a stage-gate schedule, a capacity
+-- range), and the agent had no way to produce one. It wrote them out as
+-- sentences or left them out.
+--
+-- So the ban stays on markdown and lifts on tables: an exhibit is structured
+-- data on the section, rendered as a real Word table and a real markdown
+-- table by the same code that renders the appendices. The agent declares
+-- headers and rows; it never typesets anything.
+--
+-- Deliberately not a separate table. An exhibit has no identity apart from
+-- the section it belongs to, is always written and read with it, and is
+-- replaced wholesale on every redraft — the same reasons `provenance` is a
+-- jsonb column here rather than a join.
+ALTER TABLE plan_sections ADD COLUMN exhibits jsonb NOT NULL DEFAULT '[]';

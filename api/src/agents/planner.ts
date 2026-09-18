@@ -21,7 +21,7 @@ import {
   buildProjectionBase, computeBalanceSheet, computeCashFlowStatement, computeProjections, computeSensitivity,
   type ProjectionFact,
 } from "../../../src/planner/projections.ts";
-import type { PlanInputs } from "../../../src/planner/types.ts";
+import { normaliseExhibits, type PlanInputs } from "../../../src/planner/types.ts";
 import { computeHistoricalTrends, renderHistoricalTrendsBlock } from "../../../src/planner/history.ts";
 import { PLAN_PHASES, phaseByKey, sectionsBeforePhase, type PhaseSpec } from "../../../src/planner/phases.ts";
 import type { RuleAgent } from "../../../src/learning/types.ts";
@@ -229,7 +229,7 @@ export interface PresentedOptions {
 }
 
 export interface PhaseAgentOutcome {
-  drafted: { section_key: string; content: string; provenance: any[]; confidence: string }[];
+  drafted: { section_key: string; content: string; provenance: any[]; confidence: string; exhibits?: unknown }[];
   gaps: { section_key: string; question: string; why_it_matters: string; blocking: boolean }[];
   assumptions: {
     label: string; value: string; basis: string; source: string;
@@ -445,7 +445,8 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
           [planId, lp.phase_key],
         );
         await c.query(
-          `UPDATE plan_sections SET content = '', provenance = '[]', confidence = NULL, status = 'empty'
+          `UPDATE plan_sections SET content = '', provenance = '[]', exhibits = '[]',
+                  confidence = NULL, status = 'empty'
             WHERE plan_id = $1 AND key = ANY($2)`,
           [planId, laterSpec.sectionKeys],
         );
@@ -640,9 +641,19 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       if (!draft) continue; // left as the empty row created at plan creation
       await c.query(
         `UPDATE plan_sections
-            SET content = $1, provenance = $2, confidence = $3, status = 'drafted', updated_at = now()
-          WHERE plan_id = $4 AND key = $5`,
-        [draft.content, JSON.stringify(draft.provenance ?? []), draft.confidence ?? null, planId, spec.key],
+            SET content = $1, provenance = $2, confidence = $3, exhibits = $4,
+                status = 'drafted', updated_at = now()
+          WHERE plan_id = $5 AND key = $6`,
+        [
+          draft.content,
+          JSON.stringify(draft.provenance ?? []),
+          draft.confidence ?? null,
+          // Normalised at the boundary rather than trusted: a ragged table
+          // renders as a broken document, and the prose is written to stand
+          // without it. See normaliseExhibits.
+          JSON.stringify(normaliseExhibits(draft.exhibits)),
+          planId, spec.key,
+        ],
       );
     }
 
