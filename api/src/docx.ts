@@ -25,6 +25,7 @@ import {
   TextRun,
   WidthType,
 } from "docx";
+import type { AppendixTable } from "../../src/planner/appendices.ts";
 import { config } from "./config.ts";
 
 const MUTED = "666666";
@@ -401,6 +402,24 @@ function sensitivityTable(baseRows: FinRow[], sensitivityRows: FinRow[]): { tabl
   return { table, year };
 }
 
+/**
+ * A generic N-column exhibit, used for the audit appendices.
+ *
+ * Deliberately plain: an appendix is reference material a reader scans for
+ * one row, not a designed exhibit. Column widths are left to Word, which
+ * distributes them by content — the alternative is guessing proportions for
+ * tables whose shape varies by client.
+ */
+function dataTable(headers: string[], rows: string[][]): Table {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({ children: headers.map((h) => tableCell(h, true)) }),
+      ...rows.map((r) => new TableRow({ children: r.map((v) => tableCell(v)) })),
+    ],
+  });
+}
+
 function assumptionsTable(rows: { label: string; value: string; basis: string }[]): Table | null {
   if (rows.length === 0) return null;
 
@@ -422,6 +441,9 @@ export async function buildPlanDocx(opts: {
   sections: { key: string; title_en: string; content: string }[];
   financials: FinRow[];
   assumptions: { label: string; value: string; basis: string }[];
+  /** The audit trail (src/planner/appendices.ts). Empty for a view that
+   *  should not carry one — the caller decides, not this function. */
+  appendices?: AppendixTable[];
 }): Promise<Buffer> {
   const meta = [
     `Prepared ${dateLabel(new Date())}`,
@@ -499,6 +521,30 @@ export async function buildPlanDocx(opts: {
   const assumpTable = assumptionsTable(opts.assumptions);
   if (assumpTable) {
     children.push(heading("Assumptions", HeadingLevel.HEADING_1), assumpTable);
+  }
+
+  // The audit trail. Appended after the statements and before the
+  // disclaimer, in letter order, each on its own page — a reviewer works
+  // through these one at a time and a page break is what stops Appendix C
+  // from starting three rows below the end of Appendix B.
+  for (const appendix of opts.appendices ?? []) {
+    children.push(
+      new Paragraph({
+        text: `Appendix ${appendix.key} — ${appendix.title}`,
+        heading: HeadingLevel.HEADING_1,
+        pageBreakBefore: true,
+        spacing: { after: 120 },
+      }),
+    );
+    if (appendix.note) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: appendix.note, italics: true, color: MUTED, font: BODY_FONT })],
+          spacing: { after: 160 },
+        }),
+      );
+    }
+    children.push(dataTable(appendix.headers, appendix.rows));
   }
 
   children.push(

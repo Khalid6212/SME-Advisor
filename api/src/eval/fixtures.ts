@@ -8,6 +8,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SourceRecord } from "../../../src/planner/sources.ts";
 import type { PlanInputs } from "../../../src/planner/types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,12 @@ export interface EvalFixture {
   }[];
   plan_inputs: PlanInputs;
   document_facts: { filename: string; summary: string | null; facts: unknown }[];
+  /** The Source Register the fixture puts in front of the agent. Optional —
+   *  an existing fixture that omits it runs against an empty register, which
+   *  is itself a real case worth testing: nothing to cite, so nothing may be
+   *  cited. A fixture that lists sources can check the opposite, that the
+   *  agent cites the codes it was given and invents none. */
+  sources?: SourceRecord[];
   expect: {
     comment?: string;
     sections_should_draft?: string[];

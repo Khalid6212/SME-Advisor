@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type FinancialLine, type PlanPhase } from "../api";
+import { api, ApiError, type AuditResult, type FinancialLine, type PlanPhase } from "../api";
 import { PlanInputs } from "./PlanInputs";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 
@@ -276,6 +276,9 @@ export function Plan({ clientId }: { clientId: string }) {
   const [phaseRatingNote, setPhaseRatingNote] = useState("");
   const [chosenOption, setChosenOption] = useState<string | null>(null);
   const [decisionRationale, setDecisionRationale] = useState("");
+  const [auditReport, setAuditReport] = useState<AuditResult | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [overrideReason, setOverrideReason] = useState("");
   // Rail selection: either a phase_key or one of the fixed non-phase
   // destinations ("gaps" | "financials" | "assumptions") — replaces the old
   // tab bar + separate expanded-phase state with one selection.
@@ -388,12 +391,53 @@ export function Plan({ clientId }: { clientId: string }) {
     setBusy(null);
   };
 
-  const approve = async () => {
+  /**
+   * Approving runs the pre-delivery audit trail check server-side. A clean
+   * result delivers; a failing one comes back as a 409 carrying the issues,
+   * which land in `auditReport` for the manager to read. Delivering anyway
+   * takes a written reason — that is the whole point of the gate, so the
+   * decision is recorded rather than clicked past.
+   */
+  const approve = async (override?: string) => {
     if (!view) return;
     setBusy("approve");
-    await api.post(`/plans/${view.plan.id}/approve`);
-    await openPlan(view.plan.id);
-    setBusy(null);
+    setAuditError(null);
+    try {
+      const res = await api.post<{ approved: boolean; audit: AuditResult }>(
+        `/plans/${view.plan.id}/approve`,
+        override
+          ? { acknowledge_audit: true, audit_override_reason: override }
+          : {},
+      );
+      setAuditReport(res.audit ?? null);
+      setOverrideReason("");
+      await openPlan(view.plan.id);
+    } catch (e) {
+      const err = e as ApiError;
+      if (err.body?.audit) {
+        setAuditReport(err.body.audit as AuditResult);
+        setAuditError(err.message);
+      } else {
+        setAuditError(err.message ?? "Couldn't approve this plan — try again.");
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** On-demand, so a manager can see what delivery would block on before
+   *  attempting it. Free — the check makes no model call. */
+  const runAudit = async () => {
+    if (!view) return;
+    setBusy("audit");
+    setAuditError(null);
+    try {
+      setAuditReport(await api.get<AuditResult>(`/plans/${view.plan.id}/audit`));
+    } catch (e) {
+      setAuditError((e as ApiError).message ?? "Couldn't run the audit check.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const save = async (s: Section) => {
@@ -561,9 +605,67 @@ export function Plan({ clientId }: { clientId: string }) {
                     ? "Every phase is approved — approve the plan as a whole before exporting."
                     : "Every phase below needs to be drafted and approved before the plan as a whole can be approved and exported."}
                 </p>
-                <button className="primary" onClick={approve} disabled={busy === "approve" || !allPhasesApproved}>
+                <button onClick={runAudit} disabled={busy === "audit"}>
+                  {busy === "audit" ? "Checking…" : "Run audit check"}
+                </button>
+                <button className="primary" onClick={() => approve()} disabled={busy === "approve" || !allPhasesApproved}>
                   {busy === "approve" ? "Approving…" : "Approve plan"}
                 </button>
+              </div>
+            )}
+            {(auditReport || auditError) && (
+              <div className="card" style={{ marginTop: 10, padding: 12 }}>
+                <div className="row" style={{ alignItems: "baseline" }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>Audit trail check</div>
+                  <button onClick={() => { setAuditReport(null); setAuditError(null); }}>Dismiss</button>
+                </div>
+
+                {auditReport && (
+                  <p className="muted" style={{ fontSize: 12, margin: "4px 0 8px" }}>
+                    {auditReport.clean
+                      ? "Every citation resolves, the statements balance, and every figure traces to the evidence."
+                      : `${auditReport.counts.error} blocking, ${auditReport.counts.warning} to look at, ${auditReport.counts.note} noted.`}
+                  </p>
+                )}
+
+                {auditReport?.issues.map((issue, i) => (
+                  <div key={i} className="row" style={{ gap: 8, fontSize: 12, padding: "4px 0", alignItems: "baseline" }}>
+                    <span className={`pill ${issue.severity === "error" ? "bad" : issue.severity === "warning" ? "warn" : "grey"}`}>
+                      {issue.severity}
+                    </span>
+                    <span style={{ minWidth: 150, fontWeight: 500 }}>{issue.where}</span>
+                    <span style={{ flex: 1 }}>{issue.detail}</span>
+                  </div>
+                ))}
+
+                {auditError && (
+                  <p style={{ fontSize: 12, marginTop: 8 }}>{auditError}</p>
+                )}
+
+                {/* Delivering over a failing check takes a written reason, which
+                    goes into the audit log with the approval. A manager who has
+                    looked and decided is the right authority; a manager who
+                    clicked through is not, and this is the difference. */}
+                {auditReport && !auditReport.clean && !approved && (
+                  <div style={{ marginTop: 10 }}>
+                    <label className="muted" style={{ fontSize: 12 }}>
+                      Deliver anyway — why are these acceptable?
+                    </label>
+                    <textarea
+                      rows={2} style={{ width: "100%", marginTop: 4 }}
+                      placeholder="Recorded with the approval. Be specific about which issues you have checked and why they stand."
+                      value={overrideReason}
+                      onChange={(e) => setOverrideReason(e.target.value)}
+                    />
+                    <button
+                      style={{ marginTop: 6 }}
+                      onClick={() => approve(overrideReason.trim())}
+                      disabled={busy === "approve" || overrideReason.trim().length === 0}
+                    >
+                      {busy === "approve" ? "Approving…" : "Approve despite the check"}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
             {approved && (

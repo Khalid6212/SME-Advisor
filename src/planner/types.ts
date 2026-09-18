@@ -116,6 +116,13 @@ export interface FinancialLine {
   value: number;
   basis: string | null;
   scenario: "base" | "bull" | "bear";
+  /**
+   * Calculation Register code (CALC-nnn) for the formula that produced this
+   * figure — see calc.ts. `basis` is the prose a reader gets in the table;
+   * this is the handle that walks them to the formula and its inputs.
+   * Optional so a row built before the register existed still typechecks.
+   */
+  calc_code?: string | null;
 }
 
 /**

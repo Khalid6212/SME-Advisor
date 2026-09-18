@@ -11,6 +11,8 @@
  */
 
 import { PLANNER_SYSTEM, buildPhaseBrief, buildPhaseTools } from "../../../src/planner/agent.ts";
+import { CalcRegistry, renderCalcRegister, type Calculation } from "../../../src/planner/calc.ts";
+import { renderSourceRegister, type SourceRecord } from "../../../src/planner/sources.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import {
   buildProjectionBase, computeBalanceSheet, computeCashFlowStatement, computeProjections, computeSensitivity,
@@ -22,6 +24,7 @@ import { PLAN_PHASES, phaseByKey, sectionsBeforePhase, type PhaseSpec } from "..
 import type { RuleAgent } from "../../../src/learning/types.ts";
 import { MODEL, runAgentLoop, type Message } from "../anthropic.ts";
 import { audit, one, query, tx } from "../db.ts";
+import { listCitableSources } from "../sources.ts";
 import { houseRules } from "./house-rules.ts";
 
 export const TEMPLATES = { [businessPlanTemplate.key]: businessPlanTemplate };
@@ -40,7 +43,7 @@ export function computeFinancialsBlock(
   profileData: any,
   planInputs: PlanInputs,
   facts: ProjectionFact[] = [],
-): { financials: ReturnType<typeof computeProjections>; block: string } {
+): { financials: ReturnType<typeof computeProjections>; calculations: Calculation[]; block: string } {
   const profileBase = {
     annualRevenue: profileData?.revenue_and_customers?.annual_revenue ?? null,
     grossMarginPct: profileData?.financial_health?.gross_margin_pct ?? null,
@@ -52,11 +55,19 @@ export function computeFinancialsBlock(
     inventoryDays: profileData?.financial_health?.inventory_days ?? null,
   };
   const projectionBase = buildProjectionBase(profileBase, facts);
-  const baseProjections = computeProjections(projectionBase, planInputs);
-  const sensitivity = computeSensitivity(projectionBase, planInputs);
-  const cashFlowStatement = computeCashFlowStatement(projectionBase, planInputs, baseProjections);
-  const balanceSheet = computeBalanceSheet(projectionBase, planInputs, baseProjections, cashFlowStatement);
+
+  // One registry across all four statements, so a code allocated by the
+  // income statement is the same code the cash flow statement and balance
+  // sheet cite when they read that figure — the point of the register is
+  // that a reader can walk from closing cash back to the growth assumption
+  // without the chain breaking at a statement boundary.
+  const calc = new CalcRegistry();
+  const baseProjections = computeProjections(projectionBase, planInputs, calc);
+  const sensitivity = computeSensitivity(projectionBase, planInputs, calc);
+  const cashFlowStatement = computeCashFlowStatement(projectionBase, planInputs, baseProjections, calc);
+  const balanceSheet = computeBalanceSheet(projectionBase, planInputs, baseProjections, cashFlowStatement, calc);
   const financials = [...baseProjections, ...sensitivity, ...cashFlowStatement, ...balanceSheet];
+  const calculations = calc.list();
 
   const sourceNote =
     projectionBase.annualRevenueSource === "document" || projectionBase.cashOnHandSource === "document"
@@ -65,6 +76,11 @@ export function computeFinancialsBlock(
 
   const block = [
     sourceNote,
+    "",
+    // Cheap in tokens and the whole reason the register exists: the model
+    // cites CALC-004 rather than re-deriving or paraphrasing a formula,
+    // which is shorter output as well as a traceable one.
+    renderCalcRegister(calculations),
     "",
     baseProjections.length > 0
       ? `COMPUTED INCOME STATEMENT (base case, includes an illustrative Zakat line) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
@@ -83,7 +99,7 @@ export function computeFinancialsBlock(
       : "COMPUTED BALANCE SHEET: none — needs the same inputs as the cash flow statement.",
   ].join("\n");
 
-  return { financials, block };
+  return { financials, calculations, block };
 }
 
 export interface PhaseContext {
@@ -95,6 +111,11 @@ export interface PhaseContext {
   }[];
   planInputs: PlanInputs;
   documentFacts: { filename: string; summary: string | null; facts: unknown }[];
+  /** The Source Register (Appendix A) — the closed set of things this plan is
+   *  allowed to cite. Given to every phase, not just the financial one:
+   *  market statistics and competitor facts are exactly where an invented
+   *  citation does the most damage, and those are drafted first. */
+  sources: SourceRecord[];
   /** Gaps this phase's sections previously flagged, since answered directly
    *  by a manager (see PATCH /plan-gaps/:gapId) rather than sent to the
    *  client — the whole point of capturing that answer is for a redraft to
@@ -145,6 +166,8 @@ export function buildPhaseMessages(phase: PhaseSpec, ctx: PhaseContext): { syste
       content: [
         `Draft the "${phase.title.en}" phase of the business plan for ${ctx.clientName}.`,
         "",
+        renderSourceRegister(ctx.sources),
+        "",
         "PROFILE (owner-reported at interview, unverified unless a claim below says otherwise):",
         JSON.stringify(ctx.profileData, null, 2),
         "",
@@ -182,7 +205,11 @@ export interface PresentedOptions {
 export interface PhaseAgentOutcome {
   drafted: { section_key: string; content: string; provenance: any[]; confidence: string }[];
   gaps: { section_key: string; question: string; why_it_matters: string; blocking: boolean }[];
-  assumptions: { label: string; value: string; basis: string; source: string }[];
+  assumptions: {
+    label: string; value: string; basis: string; source: string;
+    unit?: string | null; historical_benchmark?: string | null;
+    confidence?: string | null; sensitivity?: string | null;
+  }[];
   noteForManager: string | null;
   /** Milestone 6 (pilot) — set only for phases with presentsOptions, and
    *  only when the agent actually found a real choice worth presenting. */
@@ -465,13 +492,21 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     // client re-uploaded to correct must not still hand its old figure to
     // the base-year lookup, or the historical trend, alongside (or instead
     // of) the correction.
+    // s.code rides along so a base-year figure lifted from a document keeps
+    // its citation all the way into the Calculation Register — see
+    // buildProjectionBase's `refs`. LEFT JOIN because a fact can predate the
+    // source register (or its registration can have failed, which is
+    // best-effort by design); those simply carry no code, and the register
+    // labels them owner-reported rather than inventing a citation.
     const clientFacts = await query<ProjectionFact>(
-      `SELECT f.key, f.period, f.value
-         FROM facts f JOIN documents d ON d.id = f.source_document_id
+      `SELECT f.key, f.period, f.value, s.code AS source_code
+         FROM facts f
+         JOIN documents d ON d.id = f.source_document_id
+         LEFT JOIN sources s ON s.document_id = d.id
         WHERE f.client_id = $1 AND d.deleted_at IS NULL AND d.superseded_at IS NULL`,
       [plan.client_id],
     );
-    const { financials, block } = computeFinancialsBlock(profile.data, planInputs, clientFacts);
+    const { financials, calculations, block } = computeFinancialsBlock(profile.data, planInputs, clientFacts);
     financialsBlock = block;
     historicalTrendsBlock = renderHistoricalTrendsBlock(computeHistoricalTrends(clientFacts));
 
@@ -484,9 +519,26 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
         await c.query(`DELETE FROM plan_financials WHERE plan_id = $1`, [planId]);
         for (const p of financials) {
           await c.query(
-            `INSERT INTO plan_financials (plan_id, year_offset, line_item, value, basis, scenario)
-             VALUES ($1,$2,$3,$4,$5,$6)`,
-            [planId, p.year_offset, p.line_item, p.value, p.basis, p.scenario],
+            `INSERT INTO plan_financials (plan_id, year_offset, line_item, value, basis, scenario, calc_code)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [planId, p.year_offset, p.line_item, p.value, p.basis, p.scenario, p.calc_code ?? null],
+          );
+        }
+
+        // Rebuilt from scratch on every financial redraft, same as the
+        // statements themselves — codes are allocated in emission order, so
+        // a redraft with different inputs can legitimately produce a
+        // different register, and keeping stale rows would leave figures
+        // citing calculations that no longer describe them.
+        await c.query(`DELETE FROM plan_calculations WHERE plan_id = $1`, [planId]);
+        for (const [i, calculation] of calculations.entries()) {
+          await c.query(
+            `INSERT INTO plan_calculations (plan_id, code, metric, formula, inputs, result_note, position)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [
+              planId, calculation.code, calculation.metric, calculation.formula,
+              JSON.stringify(calculation.inputs), calculation.result_note, i + 1,
+            ],
           );
         }
       });
@@ -507,6 +559,11 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     [planId, phase.sectionKeys],
   );
 
+  // Deleted and superseded documents are excluded, same guard as
+  // documentFacts above — citing a document the client replaced to correct
+  // it would be worse than not citing at all.
+  const sources = await listCitableSources(plan.client_id);
+
   const rules = await houseRules(phase.agent as RuleAgent, client!.sector_id);
   const earlierSectionKeys = sectionsBeforePhase(phase.key);
   const earlierSections = earlierSectionKeys.length > 0
@@ -523,6 +580,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     claims,
     planInputs,
     documentFacts,
+    sources,
     resolvedGapAnswers,
     openFindings,
     earlierSections,
@@ -575,9 +633,13 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
 
     for (const a of outcome.assumptions) {
       await c.query(
-        `INSERT INTO plan_assumptions (plan_id, label, value, basis, source)
-         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (plan_id, label) DO NOTHING`,
-        [planId, a.label, a.value, a.basis, a.source],
+        `INSERT INTO plan_assumptions
+           (plan_id, label, value, unit, basis, historical_benchmark, confidence, sensitivity, source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (plan_id, label) DO NOTHING`,
+        [
+          planId, a.label, a.value, a.unit ?? null, a.basis,
+          a.historical_benchmark ?? null, a.confidence ?? null, a.sensitivity ?? null, a.source,
+        ],
       );
     }
 

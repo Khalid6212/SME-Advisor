@@ -27,6 +27,7 @@
  * computeBalanceSheet's header comment for the identity itself.
  */
 
+import { CalcRegistry, pct, sar } from "./calc.ts";
 import type { FinancialLine, PlanInputs } from "./types.ts";
 
 export const LINE_ITEMS = [
@@ -94,14 +95,29 @@ export interface ProjectionBase {
    *  buildProjectionBase, the only place that sets these to "document". */
   annualRevenueSource?: "document" | "profile";
   cashOnHandSource?: "document" | "profile";
+  /**
+   * The Source Register code (INT-004) each base-year figure was taken
+   * from, where it came from a document. Null means the profile's
+   * owner-reported figure was used instead — which the Calculation Register
+   * says in the input's own label rather than pretending a citation exists.
+   * This is what turns "base-year revenue" in a formula into something a
+   * reader can actually look up.
+   */
+  refs?: Partial<Record<
+    "annualRevenue" | "cashOnHand" | "grossMarginPct" | "receivableDays" | "payableDays" | "inventoryDays",
+    string | null
+  >>;
 }
 
 /** One row from the normalized `facts` table (src/planner/types.ts) — only
- *  the fields buildProjectionBase actually needs. */
+ *  the fields buildProjectionBase actually needs, plus the code of the
+ *  registered source its document was filed under, so a figure lifted from
+ *  a document keeps the citation all the way into the register. */
 export interface ProjectionFact {
   key: string;
   period: string | null;
   value: string;
+  source_code?: string | null;
 }
 
 // The extraction and ledger agents' own system prompts (api/src/agents/
@@ -187,6 +203,12 @@ export function buildProjectionBase(profileBase: ProjectionBase, facts: Projecti
   const marginFact = latestFact(facts, GROSS_MARGIN_KEYS);
   const marginValue = marginFact ? parseFactNumber(marginFact.value) : null;
 
+  // A ref only exists where the document's figure actually won — a fact
+  // that failed to parse fell back to the profile, and citing the document
+  // for a number that did not come from it would be worse than no citation.
+  const refOf = (fact: ProjectionFact | null, used: number | null) =>
+    used != null && fact ? fact.source_code ?? null : null;
+
   return {
     ...profileBase,
     annualRevenue: revenueValue ?? profileBase.annualRevenue,
@@ -197,6 +219,33 @@ export function buildProjectionBase(profileBase: ProjectionBase, facts: Projecti
     payableDays: payableValue ?? profileBase.payableDays,
     inventoryDays: inventoryValue ?? profileBase.inventoryDays,
     grossMarginPct: marginValue ?? profileBase.grossMarginPct,
+    refs: {
+      annualRevenue: refOf(revenueFact, revenueValue),
+      cashOnHand: refOf(cashFact, cashValue),
+      grossMarginPct: refOf(marginFact, marginValue),
+      receivableDays: refOf(receivableFact, receivableValue),
+      payableDays: refOf(payableFact, payableValue),
+      inventoryDays: refOf(inventoryFact, inventoryValue),
+    },
+  };
+}
+
+/**
+ * How a base-year input is described in the Calculation Register: the same
+ * figure reads very differently depending on whether a document backed it,
+ * and the register is exactly where that distinction has to survive.
+ */
+function baseInput(
+  base: ProjectionBase,
+  field: "annualRevenue" | "cashOnHand" | "grossMarginPct" | "receivableDays" | "payableDays" | "inventoryDays",
+  label: string,
+  value: string,
+) {
+  const ref = base.refs?.[field] ?? null;
+  return {
+    label: ref ? label : `${label} (owner-reported at interview, unverified)`,
+    value,
+    ref,
   };
 }
 
@@ -208,7 +257,11 @@ export function buildProjectionBase(profileBase: ProjectionBase, facts: Projecti
  * the others, so a plan with a growth assumption but no loan-term estimate
  * still gets a P&L, just not a debt schedule.
  */
-export function computeProjections(base: ProjectionBase, inputs: PlanInputs): FinancialLine[] {
+export function computeProjections(
+  base: ProjectionBase,
+  inputs: PlanInputs,
+  calc: CalcRegistry = new CalcRegistry(),
+): FinancialLine[] {
   if (base.annualRevenue == null || inputs.revenue_growth_pct == null) return [];
 
   const lines: FinancialLine[] = [];
@@ -227,6 +280,28 @@ export function computeProjections(base: ProjectionBase, inputs: PlanInputs): Fi
   const annualPrincipal = canFinance ? base.loanAmount! / inputs.loan_term_years! : 0;
   const annualDepreciation = canDepreciate ? base.loanAmount! / inputs.asset_useful_life_years! : 0;
 
+  // Registered once, outside the year loop's own emissions, because the
+  // base-year revenue row is not the growth formula — it is the starting
+  // point the growth formula reads.
+  const baseRevenueCalc = calc.register("revenue_base", {
+    metric: "Base-year revenue",
+    formula: "Revenue₀ = the most recent full-year revenue on record",
+    inputs: [baseInput(base, "annualRevenue", "Base-year revenue", sar(base.annualRevenue))],
+    result_note: "Income statement, revenue, year 0.",
+  });
+
+  const revenueCalc = calc.register("revenue", {
+    metric: "Projected revenue",
+    formula: "Revenueₙ = Revenue₀ × (1 + g)ⁿ",
+    inputs: [
+      baseInput(base, "annualRevenue", "Revenue₀ (base-year revenue)", sar(base.annualRevenue)),
+      { label: "g (annual revenue growth)", value: pct(inputs.revenue_growth_pct), ref: "plan_inputs.revenue_growth_pct" },
+      { label: "Basis for g", value: inputs.growth_basis ?? "advisor estimate, no basis recorded", ref: "plan_inputs.growth_basis" },
+      { label: "n", value: `1 to ${inputs.projection_years} (projection years)`, ref: "plan_inputs.projection_years" },
+    ],
+    result_note: "Income statement, revenue, years 1 onward.",
+  });
+
   for (let year = 0; year <= inputs.projection_years; year++) {
     const revenue = round(base.annualRevenue * Math.pow(1 + growth, year));
     lines.push({
@@ -234,6 +309,7 @@ export function computeProjections(base: ProjectionBase, inputs: PlanInputs): Fi
       line_item: "revenue",
       value: revenue,
       scenario: "base",
+      calc_code: year === 0 ? baseRevenueCalc : revenueCalc,
       basis:
         year === 0
           ? base.annualRevenueSource === "document"
@@ -245,20 +321,60 @@ export function computeProjections(base: ProjectionBase, inputs: PlanInputs): Fi
     if (margin == null) continue;
     const cogs = round(revenue * (1 - margin));
     const grossProfit = round(revenue - cogs);
+    const cogsCalc = calc.register("cogs", {
+      metric: "Cost of goods sold",
+      formula: "COGS = Revenue × (1 − gross margin)",
+      inputs: [
+        { label: "Revenue", value: "per projected revenue", ref: revenueCalc },
+        baseInput(base, "grossMarginPct", "Gross margin", pct(base.grossMarginPct!)),
+      ],
+      result_note: "Income statement, cost of goods sold.",
+    });
+    const grossProfitCalc = calc.register("gross_profit", {
+      metric: "Gross profit",
+      formula: "Gross profit = Revenue − COGS",
+      inputs: [
+        { label: "Revenue", value: "per projected revenue", ref: revenueCalc },
+        { label: "COGS", value: "per cost of goods sold", ref: cogsCalc },
+      ],
+      result_note: "Income statement, gross profit.",
+    });
     lines.push(
-      { year_offset: year, line_item: "cogs", value: cogs, scenario: "base", basis: "Revenue × (1 − gross margin, as reported)." },
-      { year_offset: year, line_item: "gross_profit", value: grossProfit, scenario: "base", basis: "Revenue − COGS." },
+      { year_offset: year, line_item: "cogs", value: cogs, scenario: "base", calc_code: cogsCalc, basis: "Revenue × (1 − gross margin, as reported)." },
+      { year_offset: year, line_item: "gross_profit", value: grossProfit, scenario: "base", calc_code: grossProfitCalc, basis: "Revenue − COGS." },
     );
 
     if (annualOpex == null) continue;
     const ebitda = round(grossProfit - annualOpex);
+    const opexCalc = calc.register("operating_cost", {
+      metric: "Operating cost",
+      formula: "Operating cost = Monthly operating cost × 12 (held flat across the projection)",
+      inputs: [
+        {
+          label: "Monthly operating cost (owner-reported at interview, unverified)",
+          value: sar(base.monthlyOperatingCost!),
+          ref: "profile.financial_health.monthly_operating_cost",
+        },
+        { label: "Cost-growth assumption", value: "none supplied — costs held flat, which understates them if volumes rise", ref: null },
+      ],
+      result_note: "Income statement, operating cost.",
+    });
+    const ebitdaCalc = calc.register("ebitda", {
+      metric: "EBITDA",
+      formula: "EBITDA = Gross profit − Operating cost",
+      inputs: [
+        { label: "Gross profit", value: "per gross profit", ref: grossProfitCalc },
+        { label: "Operating cost", value: "per operating cost", ref: opexCalc },
+      ],
+      result_note: "Income statement, EBITDA.",
+    });
     lines.push(
       {
-        year_offset: year, line_item: "operating_cost", value: round(annualOpex), scenario: "base",
+        year_offset: year, line_item: "operating_cost", value: round(annualOpex), scenario: "base", calc_code: opexCalc,
         basis: "Monthly operating cost × 12, held flat — no cost-growth assumption supplied.",
       },
       {
-        year_offset: year, line_item: "ebitda", value: ebitda, scenario: "base",
+        year_offset: year, line_item: "ebitda", value: ebitda, scenario: "base", calc_code: ebitdaCalc,
         basis: "Gross profit − operating cost, before financing and depreciation.",
       },
     );
@@ -267,16 +383,44 @@ export function computeProjections(base: ProjectionBase, inputs: PlanInputs): Fi
     // follows applies to it.
     if (year === 0) continue;
 
+    // Hoisted out of the branches below: the bottom-line block needs both
+    // codes, and each is minted inside the branch that can produce it.
+    let ebitCalcCode: string | null = null;
+    let interestCalcCode: string | null = null;
+
     let ebit: number | null = null;
     if (canDepreciate && year <= inputs.asset_useful_life_years!) {
       const depreciation = round(annualDepreciation);
       ebit = round(ebitda - depreciation);
+      const depCalc = calc.register("depreciation", {
+        metric: "Depreciation",
+        formula: "Depreciation = Requested facility amount ÷ Useful life (straight line)",
+        inputs: [
+          { label: "Requested facility amount", value: sar(base.loanAmount!), ref: "profile.funding_need.amount_requested" },
+          {
+            label: "Useful life",
+            value: `${inputs.asset_useful_life_years} years (advisor estimate, not an accounting policy)`,
+            ref: "plan_inputs.asset_useful_life_years",
+          },
+        ],
+        result_note: "Income statement, depreciation, years 1 onward.",
+      });
+      ebitCalcCode = calc.register("ebit", {
+        metric: "EBIT",
+        formula: "EBIT = EBITDA − Depreciation",
+        inputs: [
+          { label: "EBITDA", value: "per EBITDA", ref: ebitdaCalc },
+          { label: "Depreciation", value: "per depreciation", ref: depCalc },
+        ],
+        result_note: "Income statement, EBIT.",
+      });
+      const ebitCalc = ebitCalcCode;
       lines.push(
         {
-          year_offset: year, line_item: "depreciation", value: depreciation, scenario: "base",
+          year_offset: year, line_item: "depreciation", value: depreciation, scenario: "base", calc_code: depCalc,
           basis: `Requested facility amount (SAR ${base.loanAmount!.toLocaleString()}) straight-lined over ${inputs.asset_useful_life_years} years — advisor estimate of useful life, not an accounting policy.`,
         },
-        { year_offset: year, line_item: "ebit", value: ebit, scenario: "base", basis: "EBITDA − depreciation." },
+        { year_offset: year, line_item: "ebit", value: ebit, scenario: "base", calc_code: ebitCalc, basis: "EBITDA − depreciation." },
       );
     }
 
@@ -287,20 +431,68 @@ export function computeProjections(base: ProjectionBase, inputs: PlanInputs): Fi
       interest = round(openingBalance * (inputs.loan_interest_rate_pct! / 100));
       const principal = round(annualPrincipal);
       debtService = round(interest + principal);
+
+      const principalCalc = calc.register("principal_repayment", {
+        metric: "Principal repayment",
+        formula: "Principal = Requested facility amount ÷ Loan term (equal annual instalments)",
+        inputs: [
+          { label: "Requested facility amount", value: sar(base.loanAmount!), ref: "profile.funding_need.amount_requested" },
+          {
+            label: "Loan term",
+            value: `${inputs.loan_term_years} years (advisor estimate, not a lender-quoted term)`,
+            ref: "plan_inputs.loan_term_years",
+          },
+        ],
+        result_note: "Income statement, principal repayment.",
+      });
+      interestCalcCode = calc.register("interest_expense", {
+        metric: "Interest expense",
+        formula: "Interestₙ = Opening balanceₙ × r, where Opening balanceₙ = Facility − Principal × (n − 1)",
+        inputs: [
+          { label: "Requested facility amount", value: sar(base.loanAmount!), ref: "profile.funding_need.amount_requested" },
+          { label: "Principal", value: "per principal repayment", ref: principalCalc },
+          {
+            label: "r (interest rate)",
+            value: `${pct(inputs.loan_interest_rate_pct!)} (advisor estimate, not a lender-quoted rate)`,
+            ref: "plan_inputs.loan_interest_rate_pct",
+          },
+        ],
+        result_note: "Income statement, interest expense.",
+      });
+      const interestCalc = interestCalcCode;
+      const debtServiceCalc = calc.register("debt_service", {
+        metric: "Debt service",
+        formula: "Debt service = Interest + Principal",
+        inputs: [
+          { label: "Interest", value: "per interest expense", ref: interestCalc },
+          { label: "Principal", value: "per principal repayment", ref: principalCalc },
+        ],
+        result_note: "Income statement, debt service.",
+      });
+      const dscrCalc = calc.register("dscr", {
+        metric: "Debt service coverage ratio",
+        formula: "DSCR = EBITDA ÷ Debt service",
+        inputs: [
+          { label: "EBITDA", value: "per EBITDA", ref: ebitdaCalc },
+          { label: "Debt service", value: "per debt service", ref: debtServiceCalc },
+        ],
+        result_note: "Income statement, DSCR. A ratio, not a currency amount.",
+      });
+
       lines.push(
         {
-          year_offset: year, line_item: "interest_expense", value: interest, scenario: "base",
+          year_offset: year, line_item: "interest_expense", value: interest, scenario: "base", calc_code: interestCalc,
           basis: `${inputs.loan_interest_rate_pct}% on the declining balance of the requested facility — advisor estimate, not a lender-quoted rate.`,
         },
         {
-          year_offset: year, line_item: "principal_repayment", value: principal, scenario: "base",
+          year_offset: year, line_item: "principal_repayment", value: principal, scenario: "base", calc_code: principalCalc,
           basis: `Requested facility repaid in equal annual instalments over ${inputs.loan_term_years} years — advisor estimate.`,
         },
-        { year_offset: year, line_item: "debt_service", value: debtService, scenario: "base", basis: "Interest + principal due this year." },
+        { year_offset: year, line_item: "debt_service", value: debtService, scenario: "base", calc_code: debtServiceCalc, basis: "Interest + principal due this year." },
       );
 
       lines.push({
-        year_offset: year, line_item: "dscr", value: round(ebitda / debtService), scenario: "base",
+        year_offset: year, line_item: "dscr", value: round(ebitda / debtService), scenario: "base", calc_code: dscrCalc,
         basis: "EBITDA ÷ total debt service (interest + principal) for the year.",
       });
     }
@@ -312,13 +504,44 @@ export function computeProjections(base: ProjectionBase, inputs: PlanInputs): Fi
     if (ebit != null && interest != null) {
       const ebt = round(ebit - interest);
       const zakat = round(Math.max(0, ebt) * (ZAKAT_RATE_PCT / 100));
+      const ebtCalc = calc.register("ebt", {
+        metric: "Earnings before Zakat",
+        formula: "EBT = EBIT − Interest expense",
+        inputs: [
+          { label: "EBIT", value: "per EBIT", ref: ebitCalcCode },
+          { label: "Interest expense", value: "per interest expense", ref: interestCalcCode },
+        ],
+        result_note: "Income statement, earnings before Zakat.",
+      });
+      const zakatCalc = calc.register("zakat", {
+        metric: "Zakat (illustrative)",
+        formula: "Zakat = max(0, EBT) × 2.5%",
+        inputs: [
+          { label: "EBT", value: "per earnings before Zakat", ref: ebtCalc },
+          {
+            label: "Rate",
+            value: `${ZAKAT_RATE_PCT}% — a flat illustrative rate, NOT the ZATCA Zakat base (equity + provisions + long-term liabilities − net fixed assets − deferred costs). Assumes Saudi/GCC ownership; foreign or mixed ownership may owe income tax instead.`,
+            ref: null,
+          },
+        ],
+        result_note: "Income statement, Zakat. Confirm the real position with an accountant.",
+      });
+      const netIncomeCalc = calc.register("net_income", {
+        metric: "Net income",
+        formula: "Net income = EBT − Zakat",
+        inputs: [
+          { label: "EBT", value: "per earnings before Zakat", ref: ebtCalc },
+          { label: "Zakat", value: "per Zakat", ref: zakatCalc },
+        ],
+        result_note: "Income statement, net income.",
+      });
       lines.push(
-        { year_offset: year, line_item: "ebt", value: ebt, scenario: "base", basis: "EBIT − interest expense." },
+        { year_offset: year, line_item: "ebt", value: ebt, scenario: "base", calc_code: ebtCalc, basis: "EBIT − interest expense." },
         {
-          year_offset: year, line_item: "zakat", value: zakat, scenario: "base",
+          year_offset: year, line_item: "zakat", value: zakat, scenario: "base", calc_code: zakatCalc,
           basis: `Illustrative estimate at ${ZAKAT_RATE_PCT}% of positive earnings before Zakat — not the actual Zakat-base calculation. Confirm the real position with an accountant; assumes Saudi/GCC ownership (foreign or mixed ownership may owe income tax instead).`,
         },
-        { year_offset: year, line_item: "net_income", value: round(ebt - zakat), scenario: "base", basis: "Earnings before Zakat − Zakat." },
+        { year_offset: year, line_item: "net_income", value: round(ebt - zakat), scenario: "base", calc_code: netIncomeCalc, basis: "Earnings before Zakat − Zakat." },
       );
     }
   }
@@ -331,7 +554,11 @@ export function computeProjections(base: ProjectionBase, inputs: PlanInputs): Fi
  * the base case (margin and opex included, since EBITDA needs both); returns
  * [] otherwise rather than a partial, misleading range.
  */
-export function computeSensitivity(base: ProjectionBase, inputs: PlanInputs): FinancialLine[] {
+export function computeSensitivity(
+  base: ProjectionBase,
+  inputs: PlanInputs,
+  calc: CalcRegistry = new CalcRegistry(),
+): FinancialLine[] {
   if (
     base.annualRevenue == null || inputs.revenue_growth_pct == null ||
     base.grossMarginPct == null || base.monthlyOperatingCost == null
@@ -344,17 +571,47 @@ export function computeSensitivity(base: ProjectionBase, inputs: PlanInputs): Fi
   const annualOpex = base.monthlyOperatingCost * 12;
   const lines: FinancialLine[] = [];
 
+  const sensRevenueCalc = calc.register("sensitivity_revenue", {
+    metric: "Sensitivity revenue (bull / bear)",
+    formula: "Revenue = Revenue₀ × (1 + g ± 8pp)^N, for the final projection year N only",
+    inputs: [
+      baseInput(base, "annualRevenue", "Revenue₀ (base-year revenue)", sar(base.annualRevenue)),
+      { label: "g (base-case growth)", value: pct(inputs.revenue_growth_pct), ref: "plan_inputs.revenue_growth_pct" },
+      {
+        label: "Band",
+        value: `±${SENSITIVITY_VARIANCE_POINTS} percentage points — a fixed, disclosed sensitivity band, not a separately researched scenario`,
+        ref: null,
+      },
+      { label: "N", value: `${targetYear} (final projection year)`, ref: "plan_inputs.projection_years" },
+    ],
+    result_note: "Sensitivity exhibit, revenue.",
+  });
+  const sensEbitdaCalc = calc.register("sensitivity_ebitda", {
+    metric: "Sensitivity EBITDA (bull / bear)",
+    formula: "EBITDA = Revenue × Gross margin − Operating cost",
+    inputs: [
+      { label: "Revenue", value: "per sensitivity revenue", ref: sensRevenueCalc },
+      baseInput(base, "grossMarginPct", "Gross margin (held at the base-case level)", pct(base.grossMarginPct)),
+      {
+        label: "Operating cost",
+        value: `${sar(annualOpex)} — held flat, so this flexes revenue only, not the cost base`,
+        ref: "profile.financial_health.monthly_operating_cost",
+      },
+    ],
+    result_note: "Sensitivity exhibit, EBITDA.",
+  });
+
   for (const [scenario, delta] of [["bull", SENSITIVITY_VARIANCE_POINTS], ["bear", -SENSITIVITY_VARIANCE_POINTS]] as const) {
     const growth = (inputs.revenue_growth_pct + delta) / 100;
     const revenue = round(base.annualRevenue * Math.pow(1 + growth, targetYear));
     const ebitda = round(revenue * margin - annualOpex);
     lines.push(
       {
-        year_offset: targetYear, line_item: "revenue", value: revenue, scenario,
+        year_offset: targetYear, line_item: "revenue", value: revenue, scenario, calc_code: sensRevenueCalc,
         basis: `Growth rate ${delta > 0 ? "+" : ""}${delta} points versus the base case (${scenario} scenario) — a fixed sensitivity band, not a separate assumption.`,
       },
       {
-        year_offset: targetYear, line_item: "ebitda", value: ebitda, scenario,
+        year_offset: targetYear, line_item: "ebitda", value: ebitda, scenario, calc_code: sensEbitdaCalc,
         basis: `Revenue at the ${scenario} growth rate × gross margin − operating cost, held flat.`,
       },
     );
@@ -372,8 +629,29 @@ interface WcYear {
 /** Shared by the cash flow statement and the balance sheet so the two can
  *  never disagree on what accounts receivable, inventory, or payables were
  *  in a given year — both read from this one schedule, never recompute it. */
-function computeWorkingCapital(base: ProjectionBase, inputs: PlanInputs, mainLines: FinancialLine[]): WcYear[] {
+function computeWorkingCapital(
+  base: ProjectionBase,
+  inputs: PlanInputs,
+  mainLines: FinancialLine[],
+  calc: CalcRegistry,
+): WcYear[] {
   const inventoryDays = base.inventoryDays ?? 0; // null = no inventory (service business), not a gap
+
+  calc.register("working_capital", {
+    metric: "Working capital",
+    formula:
+      "Receivables = Revenue × Receivable days ÷ 365; Inventory = COGS × Inventory days ÷ 365; " +
+      "Payables = COGS × Payable days ÷ 365; Net working capital = Receivables + Inventory − Payables",
+    inputs: [
+      baseInput(base, "receivableDays", "Receivable days", `${base.receivableDays} days`),
+      base.inventoryDays != null
+        ? baseInput(base, "inventoryDays", "Inventory days", `${base.inventoryDays} days`)
+        : { label: "Inventory days", value: "none reported — treated as a service business carrying no inventory", ref: null },
+      baseInput(base, "payableDays", "Payable days", `${base.payableDays} days`),
+      { label: "Days per year", value: String(DAYS_PER_YEAR), ref: null },
+    ],
+    result_note: "Balance sheet: receivables, inventory, payables. Drives the cash flow statement's working-capital movement.",
+  });
   const byItem = (year: number, item: string) =>
     mainLines.find((l) => l.year_offset === year && l.line_item === item && l.scenario === "base")?.value ?? 0;
 
@@ -452,10 +730,58 @@ export function computeCashFlowStatement(
   base: ProjectionBase,
   inputs: PlanInputs,
   mainLines: FinancialLine[],
+  calc: CalcRegistry = new CalcRegistry(),
 ): FinancialLine[] {
   if (!canBuildStatements(base, inputs, mainLines)) return [];
 
-  const wc = computeWorkingCapital(base, inputs, mainLines);
+  const wc = computeWorkingCapital(base, inputs, mainLines, calc);
+
+  const wcChangeCalc = calc.register("cf_working_capital_change", {
+    metric: "Working-capital movement",
+    formula: "Working-capital movement = −Delta receivables − Delta inventory + Delta payables",
+    inputs: [{ label: "Receivables, inventory, payables", value: "per working capital", ref: calc.codeFor("working_capital") }],
+    result_note: "Cash flow statement, working-capital movement. Negative means growth is absorbing cash.",
+  });
+  const cfoCalc = calc.register("cf_operating", {
+    metric: "Cash from operating activities",
+    formula: "CFO = Net income + Depreciation + Working-capital movement (indirect method)",
+    inputs: [
+      { label: "Net income", value: "per net income", ref: calc.codeFor("net_income") },
+      { label: "Depreciation", value: "per depreciation — added back as a non-cash charge", ref: calc.codeFor("depreciation") },
+      { label: "Working-capital movement", value: "per working-capital movement", ref: wcChangeCalc },
+    ],
+    result_note: "Cash flow statement, cash from operating activities.",
+  });
+  const cfiCalc = calc.register("cf_investing", {
+    metric: "Cash used in investing activities",
+    formula: "CFI = −Capex, where Capex = the requested facility amount, assumed spent in full in year 1",
+    inputs: [
+      { label: "Requested facility amount", value: base.loanAmount != null ? sar(base.loanAmount) : "none requested", ref: "profile.funding_need.amount_requested" },
+      { label: "Spend timing", value: "assumed fully deployed in year 1 — a simplification, not a procurement schedule", ref: null },
+    ],
+    result_note: "Cash flow statement, cash used in investing activities.",
+  });
+  const cffCalc = calc.register("cf_financing", {
+    metric: "Cash from financing activities",
+    formula: "CFF = Facility drawn − Principal repaid",
+    inputs: [
+      { label: "Facility drawn", value: "the requested amount, assumed drawn in full in year 1", ref: "profile.funding_need.amount_requested" },
+      { label: "Principal repaid", value: "per principal repayment", ref: calc.codeFor("principal_repayment") },
+    ],
+    result_note: "Cash flow statement, cash from financing activities.",
+  });
+  const cashCalc = calc.register("cash_closing", {
+    metric: "Closing cash",
+    formula: "Closing cash = Opening cash + CFO + CFI + CFF",
+    inputs: [
+      baseInput(base, "cashOnHand", "Opening cash (year 1)", sar(base.cashOnHand!)),
+      { label: "CFO", value: "per cash from operating activities", ref: cfoCalc },
+      { label: "CFI", value: "per cash used in investing activities", ref: cfiCalc },
+      { label: "CFF", value: "per cash from financing activities", ref: cffCalc },
+    ],
+    result_note:
+      "Cash flow statement, closing cash — and the balance sheet's cash line, which reads this figure rather than estimating one. This is what makes the two statements reconcile by construction.",
+  });
   const byItem = (year: number, item: string) =>
     mainLines.find((l) => l.year_offset === year && l.line_item === item && l.scenario === "base")?.value ?? 0;
 
@@ -485,17 +811,17 @@ export function computeCashFlowStatement(
     runningCash = cashClosing;
 
     lines.push(
-      { year_offset: year, line_item: "cash_opening", value: cashOpening, scenario: "base", basis: year === 1 ? (base.cashOnHandSource === "document" ? "From the most recent uploaded financial statement — verified." : "Current cash balance, as reported in the interview, unverified.") : "Prior year's closing cash." },
-      { year_offset: year, line_item: "cf_net_income", value: round(netIncome), scenario: "base", basis: "From the income statement." },
-      { year_offset: year, line_item: "cf_depreciation", value: round(depreciation), scenario: "base", basis: "Added back — a non-cash charge." },
-      { year_offset: year, line_item: "cf_working_capital_change", value: wcChange, scenario: "base", basis: "− Δ receivables − Δ inventory + Δ payables, from the working-capital assumptions." },
-      { year_offset: year, line_item: "cf_operating", value: cfo, scenario: "base", basis: "Net income + depreciation + working-capital change." },
-      { year_offset: year, line_item: "cf_capex", value: round(-capex), scenario: "base", basis: capex > 0 ? "Requested facility assumed spent on the funded asset in year 1." : "No capital expenditure assumed." },
-      { year_offset: year, line_item: "cf_investing", value: cfi, scenario: "base", basis: "Capital expenditure for the year." },
-      { year_offset: year, line_item: "cf_debt_drawn", value: round(debtDrawn), scenario: "base", basis: debtDrawn > 0 ? "Requested facility, assumed drawn in full in year 1." : "No facility drawn this year." },
-      { year_offset: year, line_item: "cf_principal_repaid", value: round(-principalRepaid), scenario: "base", basis: "From the debt schedule." },
-      { year_offset: year, line_item: "cf_financing", value: cff, scenario: "base", basis: "Facility drawn − principal repaid." },
-      { year_offset: year, line_item: "cash_closing", value: cashClosing, scenario: "base", basis: "Opening cash + operating + investing + financing activity." },
+      { year_offset: year, line_item: "cash_opening", value: cashOpening, scenario: "base", calc_code: cashCalc, basis: year === 1 ? (base.cashOnHandSource === "document" ? "From the most recent uploaded financial statement — verified." : "Current cash balance, as reported in the interview, unverified.") : "Prior year's closing cash." },
+      { year_offset: year, line_item: "cf_net_income", value: round(netIncome), scenario: "base", calc_code: cfoCalc, basis: "From the income statement." },
+      { year_offset: year, line_item: "cf_depreciation", value: round(depreciation), scenario: "base", calc_code: cfoCalc, basis: "Added back — a non-cash charge." },
+      { year_offset: year, line_item: "cf_working_capital_change", value: wcChange, scenario: "base", calc_code: wcChangeCalc, basis: "− Δ receivables − Δ inventory + Δ payables, from the working-capital assumptions." },
+      { year_offset: year, line_item: "cf_operating", value: cfo, scenario: "base", calc_code: cfoCalc, basis: "Net income + depreciation + working-capital change." },
+      { year_offset: year, line_item: "cf_capex", value: round(-capex), scenario: "base", calc_code: cfiCalc, basis: capex > 0 ? "Requested facility assumed spent on the funded asset in year 1." : "No capital expenditure assumed." },
+      { year_offset: year, line_item: "cf_investing", value: cfi, scenario: "base", calc_code: cfiCalc, basis: "Capital expenditure for the year." },
+      { year_offset: year, line_item: "cf_debt_drawn", value: round(debtDrawn), scenario: "base", calc_code: cffCalc, basis: debtDrawn > 0 ? "Requested facility, assumed drawn in full in year 1." : "No facility drawn this year." },
+      { year_offset: year, line_item: "cf_principal_repaid", value: round(-principalRepaid), scenario: "base", calc_code: cffCalc, basis: "From the debt schedule." },
+      { year_offset: year, line_item: "cf_financing", value: cff, scenario: "base", calc_code: cffCalc, basis: "Facility drawn − principal repaid." },
+      { year_offset: year, line_item: "cash_closing", value: cashClosing, scenario: "base", calc_code: cashCalc, basis: "Opening cash + operating + investing + financing activity." },
     );
   }
 
@@ -519,10 +845,61 @@ export function computeBalanceSheet(
   inputs: PlanInputs,
   mainLines: FinancialLine[],
   cashFlowLines: FinancialLine[],
+  calc: CalcRegistry = new CalcRegistry(),
 ): FinancialLine[] {
   if (!canBuildStatements(base, inputs, mainLines)) return [];
 
-  const wc = computeWorkingCapital(base, inputs, mainLines);
+  const wc = computeWorkingCapital(base, inputs, mainLines, calc);
+
+  const wcCalc = calc.codeFor("working_capital");
+  const assetsCalc = calc.register("bs_total_assets", {
+    metric: "Total assets",
+    formula:
+      "Total assets = Cash + Receivables + Inventory + Net fixed assets, " +
+      "where Net fixed assets = Requested facility − Accumulated straight-line depreciation",
+    inputs: [
+      { label: "Cash", value: "closing cash, read from the cash flow statement — never estimated separately", ref: calc.codeFor("cash_closing") },
+      { label: "Receivables and inventory", value: "per working capital", ref: wcCalc },
+      { label: "Net fixed assets", value: "requested facility less accumulated depreciation; nil in the base year, which predates the facility", ref: calc.codeFor("depreciation") },
+    ],
+    result_note: "Balance sheet, total assets.",
+  });
+  const liabilitiesCalc = calc.register("bs_total_liabilities", {
+    metric: "Total liabilities",
+    formula: "Total liabilities = Payables + Current portion of debt + Long-term debt",
+    inputs: [
+      { label: "Payables", value: "per working capital", ref: wcCalc },
+      { label: "Debt, split current / long-term", value: "outstanding facility balance, by the repayment schedule", ref: calc.codeFor("principal_repayment") },
+    ],
+    result_note: "Balance sheet, total liabilities.",
+  });
+  const equityCalc = calc.register("bs_equity", {
+    metric: "Equity",
+    formula:
+      "Equity₀ = Total assets₀ − Total liabilities₀ (a derived balancing figure); " +
+      "Equityₙ = Equityₙ₋₁ + Net income",
+    inputs: [
+      { label: "Total assets / liabilities, base year", value: "per total assets and total liabilities", ref: assetsCalc },
+      { label: "Net income", value: "per net income", ref: calc.codeFor("net_income") },
+      {
+        label: "Base-year caveat",
+        value: "there is no historical balance sheet to open from, so year-0 equity is a plug — it is NOT an audited opening position and must not be presented as one",
+        ref: null,
+      },
+    ],
+    result_note: "Balance sheet, equity.",
+  });
+  calc.register("bs_identity", {
+    metric: "Balance sheet identity check",
+    formula: "Total assets = Total liabilities + Equity, in every projected year",
+    inputs: [
+      { label: "Total assets", value: "per total assets", ref: assetsCalc },
+      { label: "Total liabilities", value: "per total liabilities", ref: liabilitiesCalc },
+      { label: "Equity", value: "per equity", ref: equityCalc },
+    ],
+    result_note:
+      "Holds by construction, not by adjustment: cash is the cash flow statement's own plug and the same net income, depreciation and working-capital movements drive both statements. No balancing entry is inserted anywhere.",
+  });
   const netIncomeFor = (year: number) =>
     mainLines.find((l) => l.year_offset === year && l.line_item === "net_income" && l.scenario === "base")?.value ?? 0;
   const cashFor = (year: number) =>
@@ -550,24 +927,24 @@ export function computeBalanceSheet(
 
     const yearLabel = year === 0 ? "the base year" : `year ${year}`;
     lines.push(
-      { year_offset: year, line_item: "bs_cash", value: cash, scenario: "base", basis: year === 0 ? (base.cashOnHandSource === "document" ? "From the most recent uploaded financial statement — verified." : "Current cash balance, as reported in the interview, unverified.") : "Closing cash, from the cash flow statement." },
-      { year_offset: year, line_item: "bs_receivables", value: wcYear.ar, scenario: "base", basis: "Revenue × receivable days ÷ 365, as reported." },
-      { year_offset: year, line_item: "bs_inventory", value: wcYear.inventory, scenario: "base", basis: base.inventoryDays != null ? "COGS × inventory days ÷ 365, as reported." : "No inventory days reported — treated as a service business." },
-      { year_offset: year, line_item: "bs_total_current_assets", value: totalCurrentAssets, scenario: "base", basis: "Cash + receivables + inventory." },
-      { year_offset: year, line_item: "bs_net_fixed_assets", value: netFixedAssets, scenario: "base", basis: year === 0 ? "None — predates the requested facility." : "Requested facility less accumulated depreciation." },
-      { year_offset: year, line_item: "bs_total_assets", value: totalAssets, scenario: "base", basis: "Current assets + net fixed assets." },
-      { year_offset: year, line_item: "bs_payables", value: wcYear.ap, scenario: "base", basis: "COGS × payable days ÷ 365, as reported." },
-      { year_offset: year, line_item: "bs_debt_current", value: current, scenario: "base", basis: "Principal due within the next year, from the debt schedule." },
-      { year_offset: year, line_item: "bs_total_current_liabilities", value: totalCurrentLiabilities, scenario: "base", basis: "Payables + current portion of long-term debt." },
-      { year_offset: year, line_item: "bs_debt_longterm", value: longTerm, scenario: "base", basis: "Remaining facility balance beyond the next year." },
-      { year_offset: year, line_item: "bs_total_liabilities", value: totalLiabilities, scenario: "base", basis: "Current liabilities + long-term debt." },
+      { year_offset: year, line_item: "bs_cash", value: cash, scenario: "base", calc_code: calc.codeFor("cash_closing"), basis: year === 0 ? (base.cashOnHandSource === "document" ? "From the most recent uploaded financial statement — verified." : "Current cash balance, as reported in the interview, unverified.") : "Closing cash, from the cash flow statement." },
+      { year_offset: year, line_item: "bs_receivables", value: wcYear.ar, scenario: "base", calc_code: wcCalc, basis: "Revenue × receivable days ÷ 365, as reported." },
+      { year_offset: year, line_item: "bs_inventory", value: wcYear.inventory, scenario: "base", calc_code: wcCalc, basis: base.inventoryDays != null ? "COGS × inventory days ÷ 365, as reported." : "No inventory days reported — treated as a service business." },
+      { year_offset: year, line_item: "bs_total_current_assets", value: totalCurrentAssets, scenario: "base", calc_code: assetsCalc, basis: "Cash + receivables + inventory." },
+      { year_offset: year, line_item: "bs_net_fixed_assets", value: netFixedAssets, scenario: "base", calc_code: assetsCalc, basis: year === 0 ? "None — predates the requested facility." : "Requested facility less accumulated depreciation." },
+      { year_offset: year, line_item: "bs_total_assets", value: totalAssets, scenario: "base", calc_code: assetsCalc, basis: "Current assets + net fixed assets." },
+      { year_offset: year, line_item: "bs_payables", value: wcYear.ap, scenario: "base", calc_code: wcCalc, basis: "COGS × payable days ÷ 365, as reported." },
+      { year_offset: year, line_item: "bs_debt_current", value: current, scenario: "base", calc_code: liabilitiesCalc, basis: "Principal due within the next year, from the debt schedule." },
+      { year_offset: year, line_item: "bs_total_current_liabilities", value: totalCurrentLiabilities, scenario: "base", calc_code: liabilitiesCalc, basis: "Payables + current portion of long-term debt." },
+      { year_offset: year, line_item: "bs_debt_longterm", value: longTerm, scenario: "base", calc_code: liabilitiesCalc, basis: "Remaining facility balance beyond the next year." },
+      { year_offset: year, line_item: "bs_total_liabilities", value: totalLiabilities, scenario: "base", calc_code: liabilitiesCalc, basis: "Current liabilities + long-term debt." },
       {
-        year_offset: year, line_item: "bs_equity", value: equity, scenario: "base",
+        year_offset: year, line_item: "bs_equity", value: equity, scenario: "base", calc_code: equityCalc,
         basis: year === 0
           ? "Derived as a balancing figure from reported cash, debt, and working-capital assumptions — not an audited opening balance sheet."
           : `Prior year's equity + net income for ${yearLabel}.`,
       },
-      { year_offset: year, line_item: "bs_total_liabilities_and_equity", value: round(totalLiabilities + equity), scenario: "base", basis: "Total liabilities + equity — matches total assets by construction." },
+      { year_offset: year, line_item: "bs_total_liabilities_and_equity", value: round(totalLiabilities + equity), scenario: "base", calc_code: calc.codeFor("bs_identity"), basis: "Total liabilities + equity — matches total assets by construction." },
     );
   }
 

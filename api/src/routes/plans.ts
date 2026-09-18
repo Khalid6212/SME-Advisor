@@ -19,6 +19,11 @@ import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import { type Audience, type Provenance, sectionsForAudience } from "../../../src/planner/types.ts";
 import { type ClaimLookup, buildClaimLookup, confidenceTier } from "../../../src/planner/confidence.ts";
 import { PLAN_PHASES, phaseForSection } from "../../../src/planner/phases.ts";
+import { type AppendixTable, appendixMarkdown, buildAppendices } from "../../../src/planner/appendices.ts";
+import { loadAppendixData } from "../appendices.ts";
+import { auditPlan } from "../audit-trail.ts";
+import { SOURCE_CONFIDENCE, SOURCE_TYPE } from "../../../src/planner/sources.ts";
+import { deleteSource, listSources, registerSource } from "../sources.ts";
 import { editDistance } from "../../../src/learning/types.ts";
 import { approvePhase, createPlan, draftPhase, TEMPLATES } from "../agents/planner.ts";
 import { distillEdit } from "../agents/distiller.ts";
@@ -72,6 +77,14 @@ const resolveGapSchema = z.object({
   manager_response: z.string().trim().min(1).max(2000),
 });
 
+/** Delivering over a failing audit check takes both an explicit
+ *  acknowledgement and a reason — neither alone, so it cannot happen by a
+ *  client sending a stray flag or by a manager clicking through. */
+const approvePlanSchema = z.object({
+  acknowledge_audit: z.boolean().default(false),
+  audit_override_reason: z.string().trim().max(2000).nullish(),
+});
+
 const approvePhaseSchema = z.object({
   rating: z.number().int().min(1).max(5).nullable().optional(),
   rating_note: z.string().trim().max(2000).nullable().optional(),
@@ -80,6 +93,30 @@ const approvePhaseSchema = z.object({
   // whether it's required depends on DB state the schema can't see.
   chosen_option: z.string().trim().max(200).nullable().optional(),
   decision_rationale: z.string().trim().max(2000).nullable().optional(),
+});
+
+/** An external reference the advisor recorded by hand — a market report, a
+ *  regulator's page, a competitor's published pricing. Internal sources are
+ *  never created this way; they are registered from the documents themselves
+ *  (see api/src/sources.ts), so the register cannot drift from the data room.
+ *
+ *  `title` is the only hard requirement. Publisher, date, locator, URL and
+ *  access date are each optional because a real reference is often missing
+ *  one of them, and refusing the whole record over a missing publication
+ *  date would push the advisor back to citing nothing. */
+const sourceSchema = z.object({
+  source_type: z.enum(SOURCE_TYPE).refine((t) => t !== "company_internal", {
+    message: "Internal sources are registered from uploaded documents, not entered by hand.",
+  }),
+  title: z.string().trim().min(1).max(500),
+  publisher: z.string().trim().max(300).nullish(),
+  published_on: z.string().date().nullish(),
+  period_covered: z.string().trim().max(200).nullish(),
+  locator: z.string().trim().max(300).nullish(),
+  url: z.string().url().max(2000).nullish(),
+  accessed_on: z.string().date().nullish(),
+  confidence: z.enum(SOURCE_CONFIDENCE).default("medium"),
+  notes: z.string().trim().max(2000).nullish(),
 });
 
 const competitorNoteSchema = z.object({
@@ -271,6 +308,66 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
    * button only; this spends real money on every call, so it never runs
    * automatically.
    */
+  /**
+   * The Source Register for a client — Appendix A, and the closed set of
+   * things the drafting agent may cite. Internal rows appear here on their
+   * own as documents are uploaded; this endpoint lists everything.
+   */
+  app.get("/clients/:id/sources", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    return { sources: await listSources(id) };
+  });
+
+  /** Records one external reference. The advisor's own research — a URL and
+   *  an access date are judgment, not something to infer from a figure. */
+  app.post("/clients/:id/sources", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const parsed = sourceSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", detail: parsed.error.issues[0]?.message });
+    }
+
+    const client = await one<{ id: string }>(`SELECT id FROM clients WHERE id = $1`, [id]);
+    if (!client) return reply.code(404).send({ error: "not_found" });
+
+    const source = await registerSource(id, parsed.data, user.id);
+    await audit("source.registered", {
+      actorUserId: user.id, clientId: id,
+      payload: { code: source.code, source_type: source.source_type, title: source.title },
+    });
+    return { source };
+  });
+
+  /**
+   * Removes an external reference. Internal sources are deliberately not
+   * removable here — they belong to a document, and a register that no
+   * longer matches the data room is worse than one with a stale row.
+   *
+   * Codes are never reused after a delete (see nextCode), so a citation in
+   * an already-delivered plan can never silently start pointing somewhere
+   * else. It points at nothing, which the audit check reports.
+   */
+  app.delete("/clients/:id/sources/:sourceId", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id, sourceId } = req.params as { id: string; sourceId: string };
+
+    const removed = await deleteSource(id, sourceId);
+    if (!removed) {
+      return reply.code(409).send({
+        error: "not_removable",
+        message: "Not found, or an internal source — those are removed with their document.",
+      });
+    }
+    await audit("source.deleted", { actorUserId: user.id, clientId: id, payload: { source_id: sourceId } });
+    return { deleted: true };
+  });
+
   app.post("/clients/:id/plan-inputs/research", async (req, reply) => {
     const user = requireManager(req, reply);
     if (!user) return;
@@ -514,6 +611,24 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * The pre-delivery audit trail check. Runs on demand so a manager can see
+   * what delivery would block on before attempting it — and runs again
+   * inside the approval itself, since the plan can change in between.
+   *
+   * Costs nothing: joins and regexes, no model call.
+   */
+  app.get("/plans/:planId/audit", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { planId } = req.params as { planId: string };
+
+    const plan = await one<{ client_id: string }>(`SELECT client_id FROM plans WHERE id = $1`, [planId]);
+    if (!plan) return reply.code(404).send({ error: "not_found" });
+
+    return auditPlan(planId, plan.client_id);
+  });
+
+  /**
    * The explicit whole-plan approval gate. Only an approved plan can be
    * exported in finished form — see the export routes below. Requires every
    * phase to already be approved — otherwise "delivered" could mean a
@@ -541,14 +656,58 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
+    /**
+     * The audit trail gate. An `error` means something a reader would catch:
+     * a citation pointing at nothing, a statement that does not balance, a
+     * section carrying figures with no provenance at all.
+     *
+     * Overridable rather than absolute, because the check cannot tell a real
+     * fault from a case it does not understand, and a manager who has looked
+     * and decided is the right authority — but the override is explicit and
+     * lands in the audit log with its reason, so "we shipped it anyway"
+     * stays a recorded decision rather than a silent default. Warnings and
+     * notes never block; they are returned so the manager sees them either
+     * way.
+     */
+    const parsed = approvePlanSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+
+    const auditResult = await auditPlan(planId, plan.client_id);
+    const override = parsed.data.acknowledge_audit;
+    if (!auditResult.clean && !override) {
+      return reply.code(409).send({
+        error: "audit_failed",
+        message: `The audit trail check found ${auditResult.counts.error} issue${auditResult.counts.error === 1 ? "" : "s"} that would not survive review. Fix them, or approve again acknowledging the check with a reason.`,
+        audit: auditResult,
+      });
+    }
+    if (!auditResult.clean && !parsed.data.audit_override_reason?.trim()) {
+      return reply.code(409).send({
+        error: "override_reason_required",
+        message: "Say why these are acceptable before delivering over a failed audit check.",
+        audit: auditResult,
+      });
+    }
+
     await query(
       `UPDATE plans SET status = 'delivered', approved_by = $2, approved_at = now() WHERE id = $1`,
       [planId, user.id],
     );
 
-    await audit("plan.approved", { actorUserId: user.id, clientId: plan.client_id, payload: { plan_id: planId } });
+    await audit("plan.approved", {
+      actorUserId: user.id,
+      clientId: plan.client_id,
+      payload: {
+        plan_id: planId,
+        audit_errors: auditResult.counts.error,
+        audit_warnings: auditResult.counts.warning,
+        // Only set when the manager delivered over a failing check — which
+        // is exactly the decision a later reader of this log needs to find.
+        audit_override_reason: auditResult.clean ? null : parsed.data.audit_override_reason?.trim() ?? null,
+      },
+    });
 
-    return { approved: true };
+    return { approved: true, audit: auditResult };
   });
 
   /**
@@ -743,8 +902,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const { planId } = req.params as { planId: string };
     const audience = parseAudience((req.query as { audience?: string }).audience);
 
-    const plan = await one<{ client_name: string; status: string }>(
-      `SELECT c.name AS client_name, p.status
+    const plan = await one<{ client_id: string; client_name: string; status: string }>(
+      `SELECT p.client_id, c.name AS client_name, p.status
          FROM plans p JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
       [planId],
     );
@@ -778,6 +937,14 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         )
       : [];
 
+    // The audit trail travels with the internal and full views only. The
+    // marketing view goes to prospects and partners: a reconciliation
+    // schedule and a data-gap list are the firm's working papers, not
+    // sales material. Appendix A is the exception and rides along with
+    // every view — citing sources to a customer costs nothing and is the
+    // one appendix that strengthens the document for any reader.
+    const appendices = await buildExportAppendices(planId, plan.client_id, includeFinancials);
+
     const body = [
       `# ${plan.client_name} — ${AUDIENCE_LABEL[audience]}`,
       "",
@@ -793,6 +960,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
             "",
           ]
         : []),
+      ...appendices.flatMap(appendixMarkdown),
       "---",
       "",
       "Figures are as reported by the business owner and have not been independently verified, except where a reviewed document is cited in the text above.",
@@ -811,8 +979,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const { planId } = req.params as { planId: string };
     const audience = parseAudience((req.query as { audience?: string }).audience);
 
-    const plan = await one<{ client_name: string; status: string; approved_at: Date | null }>(
-      `SELECT c.name AS client_name, p.status, p.approved_at
+    const plan = await one<{ client_id: string; client_name: string; status: string; approved_at: Date | null }>(
+      `SELECT p.client_id, c.name AS client_name, p.status, p.approved_at
          FROM plans p JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
       [planId],
     );
@@ -845,6 +1013,9 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         )
       : [];
 
+    // Same audience rule as the markdown export above.
+    const appendices = await buildExportAppendices(planId, plan.client_id, includeFinancials);
+
     const buffer = await buildPlanDocx({
       firm: firmIdentity(),
       clientName: plan.client_name,
@@ -853,6 +1024,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       sections,
       financials,
       assumptions,
+      appendices,
     });
 
     await audit("plan.exported", { actorUserId: user.id, payload: { plan_id: planId, format: "docx", audience } });
@@ -940,6 +1112,32 @@ const FINANCIAL_LINE_LABEL: Record<string, string> = {
 };
 
 type FinRow = { year_offset: number; line_item: string; value: string; scenario: string };
+
+/**
+ * The audit appendices for one export.
+ *
+ * `full` is false for the marketing view, which keeps Appendix A (the source
+ * register — citing sources helps any reader) and drops the rest: the
+ * assumption, calculation, historical-KPI and forecast-driver tables are all
+ * financial apparatus the marketing view deliberately excludes, and the
+ * reconciliation schedule and data-gap list are the firm's own working
+ * papers. Sending either to a prospect would be a disclosure decision made
+ * by accident.
+ */
+async function buildExportAppendices(
+  planId: string,
+  clientId: string,
+  full: boolean,
+): Promise<AppendixTable[]> {
+  const data = await loadAppendixData(planId, clientId);
+  const all = buildAppendices({
+    ...data,
+    lineItemLabel: FINANCIAL_LINE_LABEL,
+    lineItemOrder: FINANCIAL_LINE_ORDER,
+    formatValue: fmtFinancial,
+  });
+  return full ? all : all.filter((t) => t.key === "A");
+}
 
 function fmtFinancial(item: string, v: string | undefined): string {
   if (v == null) return "—";

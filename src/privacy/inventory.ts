@@ -165,6 +165,37 @@ export const INVENTORY: DataElement[] = [
     processors: ["hosting", "model_api"],
   },
   {
+    location: "sources",
+    label: "Source register",
+    subject: "business",
+    category: "derived",
+    purpose:
+      "Give every figure in a delivered plan a citation a reader can check — Appendix A of the business plan.",
+    lawful_basis: "contract",
+    retention_months: 84,
+    retention_trigger: "client_closed",
+    erasure: "retain_with_basis",
+    retention_note:
+      "Bibliographic records — a document's filename, or a published report's title and URL. Cascades with the client. " +
+      "Retained for as long as the plan that cites it, since a delivered document whose citations no longer resolve is worse than one with none.",
+    processors: ["hosting", "model_api"],
+  },
+  {
+    location: "plan_calculations",
+    label: "Calculation register",
+    subject: "business",
+    category: "derived",
+    purpose:
+      "Show the formula and inputs behind every forecast figure — Appendix C of the business plan.",
+    lawful_basis: "contract",
+    retention_months: 84,
+    retention_trigger: "client_closed",
+    erasure: "retain_with_basis",
+    retention_note:
+      "Formulas and the business's own aggregate figures; no personal data. Retained with the plan it explains.",
+    processors: ["hosting", "model_api"],
+  },
+  {
     location: "audit_events",
     label: "Access and action log",
     subject: "manager",

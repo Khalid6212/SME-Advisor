@@ -29,6 +29,7 @@
 import { type ContentBlock, EXTRACT_MODEL, type Message, runAgentLoop } from "../anthropic.ts";
 import { audit, one, query } from "../db.ts";
 import { storage } from "../storage.ts";
+import { registerDocumentSource } from "../sources.ts";
 import { XLSX_MIME, xlsxToText } from "../xlsx-read.ts";
 import { reconcileClient } from "./reconcile.ts";
 import { analyzeLedger } from "./ledger.ts";
@@ -139,6 +140,16 @@ export async function extractDocument(documentId: string): Promise<void> {
     `SELECT claim_keys, document_type FROM data_room_nodes WHERE id = $1`,
     [doc.node_id],
   );
+
+  // Registered before anything else happens to the document: before the
+  // ledger dispatch below, and before the unsupported-format bail further
+  // down. A document the business handed over is a source whether or not
+  // this app could parse it, and a register that quietly omitted the
+  // unreadable ones — or the sales exports, which return early — would
+  // misstate what evidence actually exists. Idempotent by document, so a
+  // re-run never mints a second code. Never allowed to fail the extraction
+  // it precedes; same best-effort posture as reconciliation.
+  await registerDocumentSource(doc.client_id, documentId, doc.filename).catch(() => {});
 
   // A sales-ledger export is a data job, not a reading job — routed to a
   // dedicated code-execution agent instead of this single-pass reader. See

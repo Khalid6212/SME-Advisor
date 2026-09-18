@@ -24,6 +24,16 @@ You will be tempted to fill a thin section with plausible industry language — 
 
 If you cannot ground a statement, call \`flag_gap\` instead of writing it. If an entire section has nothing to ground it — the input it needs is simply absent, not thin — call \`flag_gap\` for that section and stop there. Do not also call \`draft_section\` for the same key with a paragraph that works around the gap in softer language ("data was not yet available, but the sector appears..."); that is the invented content this rule exists to prevent, just hedged. A section is either drafted or flagged, never both.
 
+## Citing sources and calculations
+
+You are given a SOURCE REGISTER — every document uploaded and every external reference the advisor recorded, each with a code (INT-003, EXT-001). Where a phase draws on the computed statements you are also given a CALCULATION REGISTER (CALC-004), one entry per formula behind the forecast figures.
+
+Put the code in provenance \`ref\` for anything drawn from one. A code is what makes a figure checkable; a filename or a field path is not. Two rules, both absolute: never write a code that is not on the register you were given, and never cite a source for a figure that did not come from it — a wrong citation is worse than none, because it survives review that an obvious gap would not.
+
+Where a number was computed rather than reported, say what drives it rather than restating the arithmetic: "the year-three revenue figure assumes the 12.9% growth rate recorded in the planning input, applied to the FY2025 base [CALC-002]". The register holds the formula; the prose does not need to repeat it.
+
+Nothing on the register is a licence to cite it for something it does not cover. A sales export evidences revenue and patient counts, not market size.
+
 ## Where the profile and the evidence disagree
 
 Some figures below come from an uploaded document that reconciled against what the owner said and confirmed or contradicted it — that shows up as a claim's verification status. Where a document contradicts the owner's figure, use the document's figure and say so plainly in one sentence — do not silently prefer one or paper over the difference. A discrepancy the plan surfaces is a smaller problem than one a credit officer finds later.
@@ -89,7 +99,11 @@ const PROVENANCE_ITEM: JSONSchema = {
     source: { type: "string", enum: [...PROVENANCE_SOURCE] },
     ref: {
       type: "string",
-      description: "Profile field path, claim key, or assumption label, matching `source`.",
+      description:
+        "Where this traces to. Prefer a code from the SOURCE REGISTER (e.g. \"INT-003\", \"EXT-001\") " +
+        "or the CALCULATION REGISTER (e.g. \"CALC-004\") — those are what a reader can actually look up. " +
+        "Otherwise a profile field path, a claim key, or an assumption label, matching `source`. " +
+        "Never invent a code that is not on one of the registers you were given.",
     },
   },
   required: ["statement", "source", "ref"],
@@ -126,13 +140,43 @@ export const RECORD_ASSUMPTION_TOOL = {
     properties: {
       label: { type: "string" },
       value: { type: "string" },
+      unit: {
+        type: ["string", "null"],
+        description: "SAR, %, days, count — or null where the value is not numeric.",
+      },
       basis: {
         type: "string",
         description: "Why this value. 'Owner's estimate' is acceptable; blank is not.",
       },
+      // The question a credit officer asks first about any forecast input is
+      // not "why this number" but "how far is it from what this business has
+      // actually done". Required rather than optional: an assumption that
+      // cannot be placed against history is itself the finding, and saying
+      // so explicitly is the honest answer, not an omission.
+      historical_benchmark: {
+        type: "string",
+        description:
+          "What this metric has actually been, from the historical trends, the profile, or a document — " +
+          "e.g. \"FY2024 7%, FY2025 8%\". Where nothing establishes a historical level, say so plainly " +
+          "(\"no historical figure available\") rather than leaving it blank or repeating the basis.",
+      },
+      confidence: {
+        type: "string",
+        enum: ["high", "medium", "low"],
+        description:
+          "high: grounded in audited statements, signed contracts, or verified records. " +
+          "medium: management accounts, operational reports, reputable external research. " +
+          "low: an estimate, or built on incomplete information. When in doubt, low.",
+      },
+      sensitivity: {
+        type: ["string", "null"],
+        description:
+          "What moves if this assumption is wrong, in one line — e.g. \"2 points lower cuts year-3 EBITDA by roughly SAR 340k\". " +
+          "Null where the effect is not material enough to quantify.",
+      },
       source: { type: "string", enum: ["owner", "manager", "profile_derived"] },
     },
-    required: ["label", "value", "basis", "source"],
+    required: ["label", "value", "basis", "historical_benchmark", "confidence", "source"],
   },
 } as const;
 
