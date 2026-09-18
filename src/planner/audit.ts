@@ -20,6 +20,7 @@
  */
 
 import { baseYearVariance, checkDrivers, computeDriverRevenue, type RevenueDriver } from "./drivers.ts";
+import { residualIsMaterial, type NormalizedStatements } from "./historical.ts";
 import { CALC_CODE_PATTERN, SOURCE_CODE_PATTERN } from "./sources.ts";
 
 export const AUDIT_SEVERITY = ["error", "warning", "note"] as const;
@@ -69,6 +70,8 @@ export interface AuditInput {
   /** Base-year revenue already on record, from a document or the profile —
    *  what the build has to reproduce to be describing this business. */
   reportedBaseRevenue: number | null;
+  /** Normalized historical statements, where the evidence supports them. */
+  historical: NormalizedStatements | null;
 }
 
 /**
@@ -559,6 +562,58 @@ function checkRevenueBuild(input: AuditInput): AuditIssue[] {
   return issues;
 }
 
+// ─── the historical statements ──────────────────────────────────────────────
+
+/**
+ * Checks the rebuilt history.
+ *
+ * These are warnings rather than errors throughout, and deliberately so.
+ * Unlike the forward statements — which this app computes and which
+ * therefore have no excuse for not footing — the historical ones are
+ * reassembled from whatever a model managed to read out of whatever
+ * documents a client happened to upload. A balance sheet that does not foot
+ * there usually means a line nobody extracted, not a fault in the plan. The
+ * right response is to say so on the page, which the export does, and to put
+ * it in front of the manager, which this does — not to block delivery over
+ * evidence that was never going to be complete.
+ */
+function checkHistorical(input: AuditInput): AuditIssue[] {
+  const issues: AuditIssue[] = [];
+  const h = input.historical;
+  if (!h) return issues;
+
+  for (const period of h.periods) {
+    const residual = h.residuals[period];
+    if (residual === undefined) continue;
+    const totalAssets = h.balanceSheet.find((l) => l.key === "total_assets")?.cells[period]?.value ?? null;
+    if (!residualIsMaterial(residual, totalAssets)) continue;
+
+    issues.push({
+      severity: "warning",
+      code: "historical_balance_residual",
+      where: `Historical balance sheet, ${period}`,
+      detail:
+        `Assets do not equal liabilities plus equity — a residual of ${residual.toLocaleString()}. ` +
+        "Usually a balance-sheet line no document reported. The statement shows the gap rather than closing it, " +
+        "but a reader will ask: either extract the missing line or say which one it is.",
+    });
+  }
+
+  for (const d of h.discrepancies) {
+    issues.push({
+      severity: "warning",
+      code: "historical_reported_vs_derived",
+      where: `${d.line}, ${d.period}`,
+      detail:
+        `The document reports ${d.reported.toLocaleString()} but its own components give ${d.derived.toLocaleString()} ` +
+        `(out by ${d.difference.toLocaleString()}${d.differencePct != null ? `, ${d.differencePct}%` : ""}). ` +
+        "The reported figure is shown and neither has been adjusted. Resolve it with the client or explain it in the text.",
+    });
+  }
+
+  return issues;
+}
+
 export interface AuditResult {
   issues: AuditIssue[];
   counts: Record<AuditSeverity, number>;
@@ -576,6 +631,7 @@ export function runAuditTrail(input: AuditInput): AuditResult {
     ...checkStatementsBalance(input),
     ...checkRegisters(input),
     ...checkRevenueBuild(input),
+    ...checkHistorical(input),
     ...checkNumbersTraceable(input),
     ...checkReadiness(input),
   ];

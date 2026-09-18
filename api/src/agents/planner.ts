@@ -23,6 +23,10 @@ import {
 } from "../../../src/planner/projections.ts";
 import { normaliseExhibits, type PlanInputs } from "../../../src/planner/types.ts";
 import { computeHistoricalTrends, renderHistoricalTrendsBlock } from "../../../src/planner/history.ts";
+import {
+  hasUsableHistory, normalizeHistoricalStatements, renderHistoricalStatements,
+  type NormalizedStatements,
+} from "../../../src/planner/historical.ts";
 import { PLAN_PHASES, phaseByKey, sectionsBeforePhase, type PhaseSpec } from "../../../src/planner/phases.ts";
 import type { RuleAgent } from "../../../src/learning/types.ts";
 import { MODEL, runAgentLoop, type Message } from "../anthropic.ts";
@@ -51,7 +55,12 @@ export function computeFinancialsBlock(
    *  Defaults to none, so every existing caller — the eval fixtures
    *  included — keeps the blended-growth-rate behaviour unchanged. */
   revenueBuild: { formula: string | null; drivers: RevenueDriver[] } = { formula: null, drivers: [] },
-): { financials: ReturnType<typeof computeProjections>; calculations: Calculation[]; block: string } {
+): {
+  financials: ReturnType<typeof computeProjections>;
+  calculations: Calculation[];
+  historical: NormalizedStatements | null;
+  block: string;
+} {
   const profileBase = {
     annualRevenue: profileData?.revenue_and_customers?.annual_revenue ?? null,
     grossMarginPct: profileData?.financial_health?.gross_margin_pct ?? null,
@@ -93,6 +102,13 @@ export function computeFinancialsBlock(
       : `REVENUE BUILD: declared but not usable — ${built.error.message} Revenue below falls back to the growth rate. Say the build is incomplete rather than describing drivers the numbers do not come from.`;
   }
 
+  // What actually happened, restated onto one basis — the backward-looking
+  // half the forward statements are only credible against. Null rather than
+  // an empty shell when there is not enough multi-period evidence to make a
+  // comparison: one column is a snapshot, not a historical statement.
+  const normalized = normalizeHistoricalStatements(facts);
+  const historical = hasUsableHistory(normalized) ? normalized : null;
+
   const sourceNote =
     projectionBase.annualRevenueSource === "document" || projectionBase.cashOnHandSource === "document"
       ? "\nBASE YEAR NOTE: the figures below marked as document-sourced (see each line's own \"basis\") replaced the interview's owner-reported estimate with the most recent uploaded financial statement's figure — say so plainly if you narrate the base year, the same way you would flag any other discrepancy between a document and an owner's claim."
@@ -107,6 +123,8 @@ export function computeFinancialsBlock(
     renderCalcRegister(calculations),
     "",
     driverBuildBlock,
+    "",
+    historical ? renderHistoricalStatements(historical) : "",
     "",
     baseProjections.length > 0
       ? `COMPUTED INCOME STATEMENT (base case, includes an illustrative Zakat line) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
@@ -125,7 +143,7 @@ export function computeFinancialsBlock(
       : "COMPUTED BALANCE SHEET: none — needs the same inputs as the cash flow statement.",
   ].join("\n");
 
-  return { financials, calculations, block };
+  return { financials, calculations, historical, block };
 }
 
 export interface PhaseContext {
@@ -541,10 +559,15 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       ),
     ]);
 
-    const { financials, calculations, block } = computeFinancialsBlock(
+    const { financials, calculations, historical, block } = computeFinancialsBlock(
       profile.data, planInputs, clientFacts,
       { formula: buildRow?.revenue_formula ?? null, drivers },
     );
+    // Deliberately not persisted: the statements derive purely from `facts`,
+    // which is client-level and changes as documents arrive. Recomputing
+    // them at export and audit time costs one pure function call and can
+    // never go stale against the evidence, which a stored copy could.
+    void historical;
     financialsBlock = block;
     historicalTrendsBlock = renderHistoricalTrendsBlock(computeHistoricalTrends(clientFacts));
 

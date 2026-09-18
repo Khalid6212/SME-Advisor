@@ -15,6 +15,7 @@
  */
 
 import { driverValueAt, type RevenueDriver } from "./drivers.ts";
+import type { HistoricalDiscrepancy } from "./historical.ts";
 import { SOURCE_TYPE_LABEL, type SourceRecord } from "./sources.ts";
 
 export interface AppendixTable {
@@ -109,6 +110,12 @@ export interface AppendixInput {
    *  everything below it is derived from. */
   drivers: RevenueDriver[];
   revenueFormula: string | null;
+  /** Arithmetic disagreements found rebuilding the historical statements —
+   *  a document's own stated total against its own components. These belong
+   *  in the reconciliation schedule beside the agent-raised findings, since
+   *  a reader working through Appendix F wants every discrepancy in one
+   *  place regardless of which pass caught it. */
+  historicalDiscrepancies: HistoricalDiscrepancy[];
   /** Display label per line item, shared with the statement exhibits so a
    *  driver row and a statement row name the same thing identically. */
   lineItemLabel: Record<string, string>;
@@ -305,13 +312,28 @@ function forecastDrivers(input: AppendixInput): AppendixTable | null {
  * and hiding it would leave a reader unable to tell a clean file from an
  * unexamined one.
  */
-function reconciliations(findings: FindingRow[]): AppendixTable | null {
-  if (findings.length === 0) return null;
+function reconciliations(
+  findings: FindingRow[],
+  historical: HistoricalDiscrepancy[],
+): AppendixTable | null {
+  if (findings.length === 0 && historical.length === 0) return null;
 
   const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
   const sorted = [...findings].sort(
     (a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9),
   );
+
+  // Arithmetic disagreements are listed as unresolved by construction:
+  // nothing here picks a side, which is the point — the reported figure
+  // stays on the face of the statement and the difference stays visible.
+  const historicalRows = historical.map((d) => [
+    "medium",
+    "reported vs derived",
+    `${d.line} (${d.period}): reported ${d.reported.toLocaleString("en-US")}, components give ${d.derived.toLocaleString("en-US")}`,
+    `Out by ${d.difference.toLocaleString("en-US")}${d.differencePct != null ? ` (${d.differencePct}%)` : ""}. ${d.detail}`,
+    "open — reported figure shown, neither adjusted",
+  ]);
+
   return {
     key: "F",
     title: "Reconciliation schedule",
@@ -319,13 +341,16 @@ function reconciliations(findings: FindingRow[]): AppendixTable | null {
       "Discrepancies found between the documents provided and what was stated, and how each was handled. " +
       "An open item is one the plan has surfaced rather than resolved.",
     headers: ["Severity", "Type", "Discrepancy", "Detail", "Status"],
-    rows: sorted.map((f) => [
-      cell(f.severity),
-      cell(f.type).replace(/_/g, " "),
-      cell(f.statement),
-      cell(f.detail),
-      f.dismissed_reason ? `${f.status} — ${f.dismissed_reason}` : cell(f.status),
-    ]),
+    rows: [
+      ...sorted.map((f) => [
+        cell(f.severity),
+        cell(f.type).replace(/_/g, " "),
+        cell(f.statement),
+        cell(f.detail),
+        f.dismissed_reason ? `${f.status} — ${f.dismissed_reason}` : cell(f.status),
+      ]),
+      ...historicalRows,
+    ],
   };
 }
 
@@ -368,7 +393,7 @@ export function buildAppendices(input: AppendixInput): AppendixTable[] {
     calculationRegister(input.calculations),
     historicalKpis(input.facts),
     forecastDrivers(input),
-    reconciliations(input.findings),
+    reconciliations(input.findings, input.historicalDiscrepancies),
     dataGaps(input.gaps),
   ].filter((t): t is AppendixTable => t !== null);
 }

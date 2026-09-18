@@ -21,6 +21,11 @@ import { type ClaimLookup, buildClaimLookup, confidenceTier } from "../../../src
 import { PLAN_PHASES, phaseForSection } from "../../../src/planner/phases.ts";
 import { type AppendixTable, appendixMarkdown, buildAppendices } from "../../../src/planner/appendices.ts";
 import type { SectionExhibit } from "../../../src/planner/types.ts";
+import {
+  hasUsableHistory, normalizeHistoricalStatements, residualIsMaterial,
+  type NormalizedStatements, type StatementLine,
+} from "../../../src/planner/historical.ts";
+import type { HistoricalExhibit } from "../docx.ts";
 import { loadAppendixData } from "../appendices.ts";
 import { auditPlan } from "../audit-trail.ts";
 import { SOURCE_CONFIDENCE, SOURCE_TYPE } from "../../../src/planner/sources.ts";
@@ -1056,6 +1061,18 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     // every view — citing sources to a customer costs nothing and is the
     // one appendix that strengthens the document for any reader.
     const appendices = await buildExportAppendices(planId, plan.client_id, includeFinancials);
+    const historicalForMd = includeFinancials ? await loadHistorical(plan.client_id) : null;
+    const historicalMarkdown = historicalForMd
+      ? historicalExhibits(historicalForMd).flatMap((h) => [
+          `## ${h.title}`,
+          "",
+          `| ${h.headers.join(" | ")} |`,
+          `|${h.headers.map(() => "---").join("|")}|`,
+          ...h.rows.map((r) => `| ${r.join(" | ")} |`),
+          "",
+          ...(h.note ? [`_${h.note}_`, ""] : []),
+        ])
+      : null;
 
     const body = [
       `# ${plan.client_name} — ${AUDIENCE_LABEL[audience]}`,
@@ -1065,6 +1082,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         renderSectionMarkdown(s.content), "",
         ...(s.exhibits ?? []).flatMap((ex, j) => exhibitMarkdown(ex, i + 1, j + 1)),
       ]),
+      ...(historicalMarkdown ?? []),
       ...financialExhibitsMarkdown(financials),
       ...(assumptions.length
         ? [
@@ -1131,6 +1149,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
 
     // Same audience rule as the markdown export above.
     const appendices = await buildExportAppendices(planId, plan.client_id, includeFinancials);
+    const historicalStatements = includeFinancials ? await loadHistorical(plan.client_id) : null;
 
     const buffer = await buildPlanDocx({
       firm: firmIdentity(),
@@ -1141,6 +1160,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       financials,
       assumptions,
       appendices,
+      historical: historicalStatements ? historicalExhibits(historicalStatements) : null,
     });
 
     await audit("plan.exported", { actorUserId: user.id, payload: { plan_id: planId, format: "docx", audience } });
@@ -1242,6 +1262,75 @@ function exhibitMarkdown(ex: SectionExhibit, sectionNo: number, index: number): 
     "",
     ...(ex.source_note ? [`_Source: ${ex.source_note}_`, ""] : []),
   ];
+}
+
+/**
+ * Flattens the normalized historical statements into renderable tables.
+ *
+ * A derived figure is marked on the face of the table, not only in a note —
+ * the distinction between "the document says this" and "we worked this out"
+ * is the point of the whole exercise, and a reader scanning a column will
+ * not go looking for a legend.
+ */
+function historicalExhibits(s: NormalizedStatements): HistoricalExhibit[] {
+  const cell = (line: StatementLine, period: string): string => {
+    const c = line.cells[period];
+    if (!c || c.value == null) return "—";
+    const abs = Math.abs(c.value).toLocaleString("en-US", { maximumFractionDigits: 0 });
+    const shown = c.value < 0 ? `(${abs})` : abs;
+    return c.origin === "calculated" ? `${shown} *` : shown;
+  };
+
+  const table = (title: string, lines: StatementLine[], note: string | null): HistoricalExhibit | null => {
+    const present = lines.filter((l) => s.periods.some((p) => l.cells[p]?.value != null));
+    if (present.length === 0) return null;
+    return {
+      title,
+      headers: ["", ...s.periods],
+      rows: present.map((l) => [l.label, ...s.periods.map((p) => cell(l, p))]),
+      note,
+    };
+  };
+
+  const derivedNote = "* Derived from other reported figures, not stated by any document.";
+
+  const out: HistoricalExhibit[] = [];
+  const is = table("Normalized historical income statement", s.incomeStatement, derivedNote);
+  if (is) out.push(is);
+
+  // The residual rides with the balance sheet it belongs to rather than
+  // sitting in a note elsewhere: a reader looking at a balance sheet that
+  // does not foot should be told so on the same page.
+  const unfooted = s.periods.filter((p) => {
+    const r = s.residuals[p];
+    return r !== undefined &&
+      residualIsMaterial(r, s.balanceSheet.find((l) => l.key === "total_assets")?.cells[p]?.value ?? null);
+  });
+  const bsNote = unfooted.length > 0
+    ? `${derivedNote} Rebuilt from extracted figures, and it does not foot in ` +
+      `${unfooted.map((p) => `${p} (residual ${s.residuals[p]!.toLocaleString("en-US")})`).join(", ")}. ` +
+      "The difference is a gap in the available evidence and has deliberately not been closed with a balancing entry."
+    : derivedNote;
+  const bs = table("Normalized historical balance sheet", s.balanceSheet, bsNote);
+  if (bs) out.push(bs);
+
+  return out;
+}
+
+/** The historical statements for one plan, or null when the evidence is too
+ *  thin to make a comparison. Recomputed from facts rather than stored — see
+ *  computeFinancialsBlock. */
+async function loadHistorical(clientId: string): Promise<NormalizedStatements | null> {
+  const facts = await query<{ key: string; period: string | null; value: string; source_code: string | null }>(
+    `SELECT f.key, f.period, f.value, s.code AS source_code
+       FROM facts f
+       JOIN documents d ON d.id = f.source_document_id
+       LEFT JOIN sources s ON s.document_id = d.id
+      WHERE f.client_id = $1 AND d.deleted_at IS NULL AND d.superseded_at IS NULL`,
+    [clientId],
+  );
+  const normalized = normalizeHistoricalStatements(facts);
+  return hasUsableHistory(normalized) ? normalized : null;
 }
 
 /**

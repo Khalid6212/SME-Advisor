@@ -27,6 +27,16 @@ import {
 } from "docx";
 import type { AppendixTable } from "../../src/planner/appendices.ts";
 import type { SectionExhibit } from "../../src/planner/types.ts";
+
+/** A normalized historical statement, flattened for rendering. Built by
+ *  historicalExhibits() in routes/plans.ts, which owns the number formatting
+ *  so the historical and forward tables agree. */
+export interface HistoricalExhibit {
+  title: string;
+  headers: string[];
+  rows: string[][];
+  note: string | null;
+}
 import { config } from "./config.ts";
 
 const MUTED = "666666";
@@ -445,6 +455,10 @@ export async function buildPlanDocx(opts: {
   /** The audit trail (src/planner/appendices.ts). Empty for a view that
    *  should not carry one — the caller decides, not this function. */
   appendices?: AppendixTable[];
+  /** Normalized historical statements, where enough multi-period evidence
+   *  exists to build them. Rendered before the forward statements, which is
+   *  the order they are read in: what happened, then what is projected. */
+  historical?: HistoricalExhibit[] | null;
 }): Promise<Buffer> {
   const meta = [
     `Prepared ${dateLabel(new Date())}`,
@@ -508,6 +522,20 @@ export async function buildPlanDocx(opts: {
   const sensitivityRows = opts.financials.filter((r) => r.scenario === "bull" || r.scenario === "bear");
   const cashFlowRows = opts.financials.filter((r) => r.scenario === "base" && (CASH_FLOW_ORDER as readonly string[]).includes(r.line_item));
   const balanceSheetRows = opts.financials.filter((r) => r.scenario === "base" && (BALANCE_SHEET_ORDER as readonly string[]).includes(r.line_item));
+
+  for (const h of opts.historical ?? []) {
+    children.push(heading(h.title, HeadingLevel.HEADING_1), dataTable(h.headers, h.rows));
+    if (h.note) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: h.note, italics: true, color: MUTED, font: BODY_FONT, size: 17 })],
+          spacing: { before: 80, after: 200 },
+        }),
+      );
+    } else {
+      children.push(new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
+  }
 
   const finTable = yearsByItemTable(baseRows, LINE_ITEM_ORDER);
   if (finTable) {

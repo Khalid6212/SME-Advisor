@@ -15,6 +15,9 @@ import type {
   AssumptionRow, CalculationRow, FactRow, FindingRow, GapRow, FinancialRow,
 } from "../../src/planner/appendices.ts";
 import type { RevenueDriver } from "../../src/planner/drivers.ts";
+import {
+  hasUsableHistory, normalizeHistoricalStatements, type HistoricalDiscrepancy,
+} from "../../src/planner/historical.ts";
 import type { SourceRecord } from "../../src/planner/sources.ts";
 import { query } from "./db.ts";
 import { listDrivers } from "./drivers.ts";
@@ -31,6 +34,7 @@ export interface AppendixData {
   financials: FinancialRow[];
   drivers: RevenueDriver[];
   revenueFormula: string | null;
+  historicalDiscrepancies: HistoricalDiscrepancy[];
 }
 
 /**
@@ -102,9 +106,15 @@ export async function loadAppendixData(planId: string, clientId: string): Promis
     ),
   ]);
 
+  // Rebuilt from the facts just loaded rather than queried separately, so
+  // Appendix F and the historical statements cannot disagree about what the
+  // documents said.
+  const normalized = normalizeHistoricalStatements(facts);
+
   return {
     sources, assumptions, calculations, facts, findings, gaps, financials,
     drivers,
     revenueFormula: build?.revenue_formula ?? null,
+    historicalDiscrepancies: hasUsableHistory(normalized) ? normalized.discrepancies : [],
   };
 }

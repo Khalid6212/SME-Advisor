@@ -9,6 +9,7 @@
  */
 
 import { runAuditTrail, type AuditResult } from "../../src/planner/audit.ts";
+import { hasUsableHistory, normalizeHistoricalStatements } from "../../src/planner/historical.ts";
 import { loadAppendixData } from "./appendices.ts";
 import { listDrivers } from "./drivers.ts";
 import { one, query } from "./db.ts";
@@ -44,6 +45,12 @@ export async function auditPlan(planId: string, clientId: string): Promise<Audit
     [clientId],
   );
   const drivers = await listDrivers(clientId);
+
+  // Same facts the appendices already loaded — reassembled here rather than
+  // queried again, so the audit and the delivered statements cannot be
+  // looking at different evidence.
+  const normalized = normalizeHistoricalStatements(data.facts);
+  const historical = hasUsableHistory(normalized) ? normalized : null;
 
   // What the build has to reproduce. Prefer a document-extracted figure over
   // the interview's estimate, same precedence the projection engine itself
@@ -87,5 +94,6 @@ export async function auditPlan(planId: string, clientId: string): Promise<Audit
     drivers,
     projectionYears: Number(planInputs?.projection_years ?? 3),
     reportedBaseRevenue,
+    historical,
   });
 }
