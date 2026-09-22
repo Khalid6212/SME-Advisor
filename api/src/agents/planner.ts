@@ -695,22 +695,28 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
 
   // Live critique — a second, independent pass over this phase's own draft
   // before a manager ever sees it (see api/src/agents/critique.ts). Reviews
-  // against the exact same evidence the draft itself was given (system[1]
-  // is buildPhaseMessages's own "variable" block — the phase brief, earlier
-  // sections, and house rules; messages[0] is the profile/claims/planning-
-  // input/document-facts/source-register/financials block). A blocking
-  // finding triggers one automatic redraft with the critique folded in as
-  // feedback — the same "manager feedback -> fresh draft" pattern
-  // resolvedGapAnswers above already uses — capped at one attempt: a
-  // critique loop that can keep re-triggering itself has no natural
-  // stopping point, and after one honest second try, a real problem
-  // belongs in front of the manager, not hidden behind more automation.
+  // against the same phase brief and earlier-sections context the draft
+  // itself was given (messages[0] is the profile/claims/planning-input/
+  // document-facts/source-register/financials block) plus the SAME house
+  // rules, passed separately and clearly labelled rather than buried in
+  // system[1] — so the critique judges against what this firm has actually
+  // taught its agents, not a rule-blind standard, and correctly following a
+  // house rule never gets flagged as a defect. A blocking finding triggers
+  // one automatic redraft with the critique folded in as feedback — the
+  // same "manager feedback -> fresh draft" pattern resolvedGapAnswers above
+  // already uses — capped at one attempt: a critique loop that can keep
+  // re-triggering itself has no natural stopping point, and after one
+  // honest second try, a real problem belongs in front of the manager, not
+  // hidden behind more automation.
   let finalOutcome = outcome;
   let critiqueNote: string | null = null;
   let critiqueRedrafted = false;
   if (outcome.drafted.length > 0) {
-    const evidenceContext = [system[1] ?? "", messages[0]!.content as string].join("\n\n");
-    const critique = await critiquePhase(phase.title.en, evidenceContext, outcome.drafted);
+    const evidenceContext = [
+      buildPhaseBrief(phase, businessPlanTemplate, earlierSections),
+      messages[0]!.content as string,
+    ].join("\n\n");
+    const critique = await critiquePhase(phase.title.en, evidenceContext, outcome.drafted, rules);
     await audit("agent.usage", {
       actorUserId: createdBy,
       clientId: plan.client_id,

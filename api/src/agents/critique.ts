@@ -26,6 +26,7 @@ Flag a "blocking" issue only for something that would genuinely make you push th
 - A contradiction — within this phase's own sections, or against a section drafted in an earlier phase (given to you below as "already drafted, from earlier phases").
 - A citation to a source or calculation code that does not appear in the register given, or that does not actually support the sentence it is attached to.
 - A section that reads as vague or padded where the source material actually contained the specific detail needed and the draft simply did not use it.
+- HOUSE RULES, where given, are conventions this firm has deliberately taught its drafting agents from real past corrections — not house style you're free to second-guess. Correctly following one is never a defect, even where it looks unusual to you. The only house-rule-related blocking issue is the reverse: a rule that clearly applied here and the draft ignored or contradicted.
 
 Do not flag as blocking: a register or tone preference, a section that is honestly thin because the underlying material is genuinely thin (a labelled gap is the correct outcome there, not a defect), or a stylistic choice you would have made differently. Use "note" for anything real but not worth a full redraft over.
 
@@ -69,15 +70,24 @@ export interface CritiqueResult {
 
 /**
  * `evidenceContext` is the exact same context (phase brief, earlier
- * sections, house rules, profile, claims, planning input, document facts,
- * source register, financials) the drafting call itself was given — the
- * critique reviews against precisely what the drafting agent had, never a
- * separately reconstructed context that could quietly drift from it.
+ * sections, profile, claims, planning input, document facts, source
+ * register, financials) the drafting call itself was given — the critique
+ * reviews against precisely what the drafting agent had, never a separately
+ * reconstructed context that could quietly drift from it.
+ *
+ * `rules` is passed separately, not folded into evidenceContext, and given
+ * its own clearly labelled block in the message below — the same house
+ * rules the phase being reviewed was drafted under (see houseRules in
+ * draftPhase), so the critique judges against what this firm has actually
+ * taught its agents rather than a generic, house-rule-blind standard. See
+ * CRITIQUE_SYSTEM: correctly following a house rule is never a blocking
+ * issue, even where it looks unusual on its own.
  */
 export async function critiquePhase(
   phaseTitle: string,
   evidenceContext: string,
   drafted: { section_key: string; content: string; provenance: unknown[] }[],
+  rules: string,
 ): Promise<CritiqueResult> {
   const box: { result: { issues: CritiqueIssue[]; overall_note: string } | null } = { result: null };
 
@@ -89,6 +99,10 @@ export async function critiquePhase(
         "",
         "EVIDENCE THE DRAFTING AGENT HAD AVAILABLE (identical to what it was given):",
         evidenceContext,
+        "",
+        rules
+          ? `HOUSE RULES — established firm/sector conventions the drafting agent was told to follow. Do not flag correct compliance with one of these as a defect:\n${rules}`
+          : "HOUSE RULES: none apply to this phase/sector yet.",
         "",
         `DRAFTED THIS PHASE, TO REVIEW:\n${JSON.stringify(drafted, null, 2)}`,
       ].join("\n"),
