@@ -29,11 +29,12 @@ import {
 } from "../../../src/planner/historical.ts";
 import { PLAN_PHASES, phaseByKey, sectionsBeforePhase, type PhaseSpec } from "../../../src/planner/phases.ts";
 import type { RuleAgent } from "../../../src/learning/types.ts";
-import { MODEL, runAgentLoop, type Message } from "../anthropic.ts";
+import { EVAL_JUDGE_MODEL, MODEL, runAgentLoop, type Message } from "../anthropic.ts";
 import { audit, one, query, tx } from "../db.ts";
 import { listCitableSources } from "../sources.ts";
 import { listDrivers } from "../drivers.ts";
 import { houseRules } from "./house-rules.ts";
+import { critiquePhase } from "./critique.ts";
 
 export const TEMPLATES = { [businessPlanTemplate.key]: businessPlanTemplate };
 
@@ -440,6 +441,10 @@ export interface DraftPhaseResult {
   gaps: number;
   assumptions: number;
   note_for_manager: string | null;
+  /** What the live critique found, if it ran at all — see critique.ts.
+   *  Also persisted to plan_phases for later review, not just this response. */
+  critique_note: string | null;
+  critique_redrafted: boolean;
 }
 
 /**
@@ -487,7 +492,8 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
         await c.query(
           `UPDATE plan_phases
               SET status = 'pending', drafted_at = NULL, approved_at = NULL,
-                  approved_by = NULL, rating = NULL, rating_note = NULL
+                  approved_by = NULL, rating = NULL, rating_note = NULL,
+                  critique_note = NULL, critique_redrafted = false
             WHERE plan_id = $1 AND phase_key = $2`,
           [planId, lp.phase_key],
         );
@@ -687,9 +693,56 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     payload: { agent: phase.agent, model: MODEL, plan_id: planId, phase: phase.key, ...outcome.usage },
   });
 
+  // Live critique — a second, independent pass over this phase's own draft
+  // before a manager ever sees it (see api/src/agents/critique.ts). Reviews
+  // against the exact same evidence the draft itself was given (system[1]
+  // is buildPhaseMessages's own "variable" block — the phase brief, earlier
+  // sections, and house rules; messages[0] is the profile/claims/planning-
+  // input/document-facts/source-register/financials block). A blocking
+  // finding triggers one automatic redraft with the critique folded in as
+  // feedback — the same "manager feedback -> fresh draft" pattern
+  // resolvedGapAnswers above already uses — capped at one attempt: a
+  // critique loop that can keep re-triggering itself has no natural
+  // stopping point, and after one honest second try, a real problem
+  // belongs in front of the manager, not hidden behind more automation.
+  let finalOutcome = outcome;
+  let critiqueNote: string | null = null;
+  let critiqueRedrafted = false;
+  if (outcome.drafted.length > 0) {
+    const evidenceContext = [system[1] ?? "", messages[0]!.content as string].join("\n\n");
+    const critique = await critiquePhase(phase.title.en, evidenceContext, outcome.drafted);
+    await audit("agent.usage", {
+      actorUserId: createdBy,
+      clientId: plan.client_id,
+      payload: { agent: "critique", model: EVAL_JUDGE_MODEL, plan_id: planId, phase: phase.key, ...critique.usage },
+    });
+
+    const blocking = critique.issues.filter((i) => i.severity === "blocking");
+    critiqueNote = [critique.overallNote, ...critique.issues.map((i) => `[${i.severity}] ${i.section_key}: ${i.problem}`)]
+      .filter(Boolean)
+      .join("\n");
+
+    if (blocking.length > 0) {
+      const feedbackBlock = [
+        "",
+        "A PRIOR DRAFT OF THIS PHASE WAS REVIEWED AND FOUND THESE PROBLEMS — fix them in this draft, do not just acknowledge them:",
+        ...blocking.map((i) => `- [${i.section_key}] ${i.problem}`),
+      ].join("\n");
+      const redraftMessages: Message[] = [{ role: "user", content: `${messages[0]!.content as string}${feedbackBlock}` }];
+      const redraftOutcome = await runPhaseAgent(phase, system, redraftMessages);
+      await audit("agent.usage", {
+        actorUserId: createdBy,
+        clientId: plan.client_id,
+        payload: { agent: phase.agent, model: MODEL, plan_id: planId, phase: phase.key, redraft: "critique", ...redraftOutcome.usage },
+      });
+      finalOutcome = redraftOutcome;
+      critiqueRedrafted = true;
+    }
+  }
+
   await tx(async (c) => {
     for (const spec of businessPlanTemplate.sections.filter((s) => phase.sectionKeys.includes(s.key))) {
-      const draft = outcome.drafted.find((d) => d.section_key === spec.key);
+      const draft = finalOutcome.drafted.find((d) => d.section_key === spec.key);
       if (!draft) continue; // left as the empty row created at plan creation
       await c.query(
         `UPDATE plan_sections
@@ -723,7 +776,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       [planId, phase.sectionKeys],
     );
 
-    for (const g of outcome.gaps) {
+    for (const g of finalOutcome.gaps) {
       await c.query(
         `INSERT INTO plan_gaps (plan_id, section_key, question, why_it_matters, blocking)
          VALUES ($1,$2,$3,$4,$5)`,
@@ -731,7 +784,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       );
     }
 
-    for (const a of outcome.assumptions) {
+    for (const a of finalOutcome.assumptions) {
       await c.query(
         `INSERT INTO plan_assumptions
            (plan_id, label, value, unit, basis, historical_benchmark, confidence, sensitivity, source)
@@ -749,9 +802,10 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     await c.query(
       `UPDATE plan_phases
           SET status = 'drafted', drafted_at = now(),
-              options_presented = $3, chosen_option = NULL, decision_rationale = NULL
+              options_presented = $3, chosen_option = NULL, decision_rationale = NULL,
+              critique_note = $4, critique_redrafted = $5
         WHERE plan_id = $1 AND phase_key = $2`,
-      [planId, phase.key, outcome.optionsPresented ? JSON.stringify(outcome.optionsPresented) : null],
+      [planId, phase.key, finalOutcome.optionsPresented ? JSON.stringify(finalOutcome.optionsPresented) : null, critiqueNote, critiqueRedrafted],
     );
 
     await audit("plan_phase.drafted", {
@@ -759,7 +813,8 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
       clientId: plan.client_id,
       payload: {
         plan_id: planId, phase: phase.key,
-        sections_drafted: outcome.drafted.length, gaps: outcome.gaps.length,
+        sections_drafted: finalOutcome.drafted.length, gaps: finalOutcome.gaps.length,
+        critique_redrafted: critiqueRedrafted,
       },
       client: c,
     });
@@ -767,10 +822,12 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
 
   return {
     phase_key: phase.key,
-    drafted: outcome.drafted.length,
-    gaps: outcome.gaps.length,
-    assumptions: outcome.assumptions.length,
-    note_for_manager: outcome.noteForManager,
+    drafted: finalOutcome.drafted.length,
+    gaps: finalOutcome.gaps.length,
+    assumptions: finalOutcome.assumptions.length,
+    note_for_manager: finalOutcome.noteForManager,
+    critique_note: critiqueNote,
+    critique_redrafted: critiqueRedrafted,
   };
 }
 

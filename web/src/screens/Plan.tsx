@@ -916,6 +916,20 @@ export function Plan({ clientId }: { clientId: string }) {
                   </p>
                 )}
 
+                {phase.critique_note && (
+                  <div className="card" style={{ padding: "10px 12px", marginBottom: 14, background: "var(--panel-sunken)" }}>
+                    <div className="row" style={{ gap: 6, marginBottom: 4 }}>
+                      <span className="pill info" style={{ fontSize: 10.5 }}>Reviewed</span>
+                      <span className="muted" style={{ fontSize: 11.5 }}>
+                        {phase.critique_redrafted
+                          ? "A second pass found a problem and this draft was automatically revised before you saw it."
+                          : "A second pass reviewed this draft before you saw it."}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: 12.5, margin: 0, whiteSpace: "pre-wrap" }}>{phase.critique_note}</p>
+                  </div>
+                )}
+
                 {phase.status === "pending" && unlocked && (
                   <div className="row">
                     <button className="primary" onClick={() => draftPhase(phase.phase_key)} disabled={busy === phase.phase_key}>

@@ -575,8 +575,10 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         phase_key: string; position: number; status: string; rating: number | null; rating_note: string | null;
         options_presented: { question: string; options: { key: string; label: string; case_for: string; case_against: string }[] } | null;
         chosen_option: string | null; decision_rationale: string | null;
+        critique_note: string | null; critique_redrafted: boolean;
       }>(
-        `SELECT phase_key, position, status, rating, rating_note, options_presented, chosen_option, decision_rationale
+        `SELECT phase_key, position, status, rating, rating_note, options_presented, chosen_option, decision_rationale,
+                critique_note, critique_redrafted
            FROM plan_phases WHERE plan_id = $1 ORDER BY position`, [planId]),
       query<ClaimLookup>(
         `SELECT claim_key, field_path, verification_status FROM claims

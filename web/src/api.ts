@@ -251,6 +251,11 @@ export interface PlanPhase {
   options_presented: { question: string; options: PhaseOption[] } | null;
   chosen_option: string | null;
   decision_rationale: string | null;
+  /** What a second, independent review pass found before this draft ever
+   *  reached a manager — see api/src/agents/critique.ts. Null before that
+   *  pass has run for this phase's current draft. */
+  critique_note: string | null;
+  critique_redrafted: boolean;
 }
 
 export interface EvalRunSummary {
