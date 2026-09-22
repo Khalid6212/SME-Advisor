@@ -1418,49 +1418,62 @@ function tableMarkdown(rows: FinRow[], order: string[], yearLabel: (y: number) =
   return [header, sep, ...body];
 }
 
-/** Four distinct exhibits, not one continuous sheet: the base-case income
- *  statement, a bull/bear range for the final projection year, the
- *  multi-year cash flow statement, and the multi-year balance sheet. Each
- *  filter is a positive inclusion, not "everything else" — with four
- *  disjoint line-item vocabularies now sharing one table, an exclusion
- *  filter would silently leak one exhibit's rows into another. */
+const SCENARIO_LABEL: Record<string, string> = { base: "Base Case", bull: "Growth Case", bear: "Downside Case" };
+
+/** Final-year headline comparison across all three scenarios, mirroring
+ *  docx.ts's scenarioSummaryTable — the "does this survive the downside"
+ *  table a reader checks before three full per-scenario statement sets. */
+function scenarioSummaryMarkdown(rows: FinRow[]): string[] {
+  const scenarios = ["bull", "base", "bear"] as const;
+  const finalYear = Math.max(0, ...rows.map((r) => r.year_offset));
+  const metric = (scenario: string, item: string) =>
+    fmtFinancial(item, rows.find((r) => r.scenario === scenario && r.year_offset === finalYear && r.line_item === item)?.value);
+  if (!scenarios.some((s) => rows.some((r) => r.scenario === s && r.year_offset === finalYear))) return [];
+
+  return [
+    "## Scenario comparison",
+    "",
+    "_Growth and Downside apply the same fixed growth-rate band used throughout this plan's sensitivity discussion to the full three-statement model, not just the final year's headline figures._",
+    "",
+    `| Scenario | Year ${finalYear} revenue | EBITDA | Net income | Closing cash |`,
+    "|---|---|---|---|---|",
+    ...scenarios.map(
+      (s) => `| ${SCENARIO_LABEL[s]} | ${metric(s, "revenue")} | ${metric(s, "ebitda")} | ${metric(s, "net_income")} | ${metric(s, "cash_closing")} |`,
+    ),
+    "",
+  ];
+}
+
+/** Three full exhibit sets (income statement, cash flow, balance sheet), one
+ *  per scenario — mirrors docx.ts's buildPlanDocx loop. Each filter is a
+ *  positive inclusion, not "everything else": three disjoint line-item
+ *  vocabularies share tableMarkdown, and an exclusion filter would silently
+ *  leak one exhibit's rows into another. */
 function financialExhibitsMarkdown(rows: FinRow[]): string[] {
-  const base = rows.filter((r) => r.scenario === "base" && FINANCIAL_LINE_ORDER.includes(r.line_item));
-  const sensitivity = rows.filter((r) => r.scenario === "bull" || r.scenario === "bear");
-  const cashFlow = rows.filter((r) => r.scenario === "base" && CASH_FLOW_ORDER.includes(r.line_item));
-  const balanceSheet = rows.filter((r) => r.scenario === "base" && BALANCE_SHEET_ORDER.includes(r.line_item));
+  const out: string[] = [...scenarioSummaryMarkdown(rows)];
 
-  const out: string[] = [];
+  for (const scenario of ["base", "bull", "bear"] as const) {
+    const scenarioRows = rows.filter((r) => r.scenario === scenario);
+    if (scenarioRows.length === 0) continue;
+    const label = SCENARIO_LABEL[scenario];
 
-  if (base.length > 0) {
-    out.push("## Income statement", "", ...tableMarkdown(base, FINANCIAL_LINE_ORDER, (y) => (y === 0 ? "Base year" : `Year ${y}`)), "");
-  }
+    const income = scenarioRows.filter((r) => FINANCIAL_LINE_ORDER.includes(r.line_item));
+    if (income.length > 0) {
+      out.push(`## ${label} — income statement`, "", ...tableMarkdown(income, FINANCIAL_LINE_ORDER, (y) => (y === 0 ? "Base year" : `Year ${y}`)), "");
+    }
 
-  if (sensitivity.length > 0) {
-    const year = sensitivity[0]!.year_offset;
-    const byScenario = (scenario: string, item: string) =>
-      fmtFinancial(item, sensitivity.find((r) => r.scenario === scenario && r.line_item === item)?.value);
-    out.push(
-      `## Sensitivity (year ${year})`,
-      "",
-      "| Scenario | Revenue | EBITDA |",
-      "|---|---|---|",
-      `| Bear | ${byScenario("bear", "revenue")} | ${byScenario("bear", "ebitda")} |`,
-      `| Base | ${fmtFinancial("revenue", base.find((r) => r.year_offset === year && r.line_item === "revenue")?.value)} | ${fmtFinancial("ebitda", base.find((r) => r.year_offset === year && r.line_item === "ebitda")?.value)} |`,
-      `| Bull | ${byScenario("bull", "revenue")} | ${byScenario("bull", "ebitda")} |`,
-      "",
-    );
-  }
+    const cashFlow = scenarioRows.filter((r) => CASH_FLOW_ORDER.includes(r.line_item));
+    if (cashFlow.length > 0) {
+      out.push(`## ${label} — cash flow statement`, "", ...tableMarkdown(cashFlow, CASH_FLOW_ORDER, (y) => `Year ${y}`), "");
+    }
 
-  if (cashFlow.length > 0) {
-    out.push("## Cash flow statement", "", ...tableMarkdown(cashFlow, CASH_FLOW_ORDER, (y) => `Year ${y}`), "");
-  }
-
-  if (balanceSheet.length > 0) {
-    out.push(
-      "## Balance sheet (Statement of Financial Position)", "",
-      ...tableMarkdown(balanceSheet, BALANCE_SHEET_ORDER, (y) => (y === 0 ? "Base year" : `Year ${y}`)), "",
-    );
+    const balanceSheet = scenarioRows.filter((r) => BALANCE_SHEET_ORDER.includes(r.line_item));
+    if (balanceSheet.length > 0) {
+      out.push(
+        `## ${label} — balance sheet (Statement of Financial Position)`, "",
+        ...tableMarkdown(balanceSheet, BALANCE_SHEET_ORDER, (y) => (y === 0 ? "Base year" : `Year ${y}`)), "",
+      );
+    }
   }
 
   return out;

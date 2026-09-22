@@ -182,80 +182,96 @@ function YearsByItemTable({ rows, order }: { rows: FinancialLine[]; order: strin
   );
 }
 
-/** Four distinct exhibits, not one continuous sheet — matches how the
- *  exported documents present the same data (see api/src/docx.ts). Each
- *  filter positively includes its own line items rather than excluding the
- *  others' — with four disjoint vocabularies sharing one table, an
- *  exclusion filter would silently leak rows between exhibits. */
-function FinancialsExhibits({ rows }: { rows: FinancialLine[] }) {
-  const base = rows.filter((r) => r.scenario === "base" && LINE_ITEM_ORDER.includes(r.line_item));
-  const sensitivity = rows.filter((r) => r.scenario === "bull" || r.scenario === "bear");
-  const cashFlow = rows.filter((r) => r.scenario === "base" && CASH_FLOW_ORDER.includes(r.line_item));
-  const balanceSheet = rows.filter((r) => r.scenario === "base" && BALANCE_SHEET_ORDER.includes(r.line_item));
-  if (base.length === 0 && sensitivity.length === 0 && cashFlow.length === 0 && balanceSheet.length === 0) return null;
+const SCENARIO_LABEL: Record<string, string> = { base: "Base Case", bull: "Growth Case", bear: "Downside Case" };
 
-  const find = (source: FinancialLine[], scenario: string, item: string, year: number) =>
-    source.find((r) => r.scenario === scenario && r.year_offset === year && r.line_item === item)?.value;
+/** Final-year headline comparison across all three scenarios — matches
+ *  api/src/docx.ts's scenarioSummaryTable, the "does this survive the
+ *  downside" table a reviewer checks before the full per-scenario sets. */
+function ScenarioSummaryTable({ rows }: { rows: FinancialLine[] }) {
+  const scenarios = ["bull", "base", "bear"] as const;
+  const finalYear = Math.max(0, ...rows.map((r) => r.year_offset));
+  const metric = (scenario: string, item: string) =>
+    fmtFinancial(item, rows.find((r) => r.scenario === scenario && r.year_offset === finalYear && r.line_item === item)?.value);
+  if (!scenarios.some((s) => rows.some((r) => r.scenario === s && r.year_offset === finalYear))) return null;
 
   return (
     <>
-      {base.length > 0 && (
-        <>
-          <h2>Income statement</h2>
-          <div className="card" style={{ overflowX: "auto" }}>
-            <YearsByItemTable rows={base} order={LINE_ITEM_ORDER} />
-          </div>
-        </>
-      )}
+      <h2>Scenario comparison</h2>
+      <p className="muted" style={{ fontSize: 13 }}>
+        Growth and Downside apply the same fixed growth-rate band used throughout this plan's sensitivity
+        discussion to the full three-statement model, not just the final year's headline figures.
+      </p>
+      <div className="card" style={{ overflowX: "auto" }}>
+        <table className="fin">
+          <thead>
+            <tr><th>Scenario</th><th>Year {finalYear} revenue</th><th>EBITDA</th><th>Net income</th><th>Closing cash</th></tr>
+          </thead>
+          <tbody>
+            {scenarios.map((s) => (
+              <tr key={s}>
+                <td>{SCENARIO_LABEL[s]}</td>
+                <td>{metric(s, "revenue")}</td>
+                <td>{metric(s, "ebitda")}</td>
+                <td>{metric(s, "net_income")}</td>
+                <td>{metric(s, "cash_closing")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
 
-      {sensitivity.length > 0 && (() => {
-        const year = sensitivity[0]!.year_offset;
+/** Three full exhibit sets — income statement, cash flow, balance sheet —
+ *  one per scenario, matching api/src/docx.ts and the markdown export. Each
+ *  filter positively includes its own line items rather than excluding the
+ *  others' — with three disjoint vocabularies sharing one table, an
+ *  exclusion filter would silently leak rows between exhibits. */
+function FinancialsExhibits({ rows }: { rows: FinancialLine[] }) {
+  if (rows.length === 0) return null;
+
+  return (
+    <>
+      <ScenarioSummaryTable rows={rows} />
+
+      {(["base", "bull", "bear"] as const).map((scenario) => {
+        const scenarioRows = rows.filter((r) => r.scenario === scenario);
+        if (scenarioRows.length === 0) return null;
+        const label = SCENARIO_LABEL[scenario];
+        const income = scenarioRows.filter((r) => LINE_ITEM_ORDER.includes(r.line_item));
+        const cashFlow = scenarioRows.filter((r) => CASH_FLOW_ORDER.includes(r.line_item));
+        const balanceSheet = scenarioRows.filter((r) => BALANCE_SHEET_ORDER.includes(r.line_item));
+
         return (
-          <>
-            <h2>Sensitivity (year {year})</h2>
-            <div className="card" style={{ overflowX: "auto" }}>
-              <table className="fin">
-                <thead><tr><th>Scenario</th><th>Revenue</th><th>EBITDA</th></tr></thead>
-                <tbody>
-                  <tr>
-                    <td>Bear</td>
-                    <td>{fmtFinancial("revenue", find(sensitivity, "bear", "revenue", year))}</td>
-                    <td>{fmtFinancial("ebitda", find(sensitivity, "bear", "ebitda", year))}</td>
-                  </tr>
-                  <tr>
-                    <td>Base</td>
-                    <td>{fmtFinancial("revenue", find(base, "base", "revenue", year))}</td>
-                    <td>{fmtFinancial("ebitda", find(base, "base", "ebitda", year))}</td>
-                  </tr>
-                  <tr>
-                    <td>Bull</td>
-                    <td>{fmtFinancial("revenue", find(sensitivity, "bull", "revenue", year))}</td>
-                    <td>{fmtFinancial("ebitda", find(sensitivity, "bull", "ebitda", year))}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </>
+          <div key={scenario}>
+            {income.length > 0 && (
+              <>
+                <h2>{label} — income statement</h2>
+                <div className="card" style={{ overflowX: "auto" }}>
+                  <YearsByItemTable rows={income} order={LINE_ITEM_ORDER} />
+                </div>
+              </>
+            )}
+            {cashFlow.length > 0 && (
+              <>
+                <h2>{label} — cash flow statement</h2>
+                <div className="card" style={{ overflowX: "auto" }}>
+                  <YearsByItemTable rows={cashFlow} order={CASH_FLOW_ORDER} />
+                </div>
+              </>
+            )}
+            {balanceSheet.length > 0 && (
+              <>
+                <h2>{label} — balance sheet (Statement of Financial Position)</h2>
+                <div className="card" style={{ overflowX: "auto" }}>
+                  <YearsByItemTable rows={balanceSheet} order={BALANCE_SHEET_ORDER} />
+                </div>
+              </>
+            )}
+          </div>
         );
-      })()}
-
-      {cashFlow.length > 0 && (
-        <>
-          <h2>Cash flow statement</h2>
-          <div className="card" style={{ overflowX: "auto" }}>
-            <YearsByItemTable rows={cashFlow} order={CASH_FLOW_ORDER} />
-          </div>
-        </>
-      )}
-
-      {balanceSheet.length > 0 && (
-        <>
-          <h2>Balance sheet (Statement of Financial Position)</h2>
-          <div className="card" style={{ overflowX: "auto" }}>
-            <YearsByItemTable rows={balanceSheet} order={BALANCE_SHEET_ORDER} />
-          </div>
-        </>
-      )}
+      })}
     </>
   );
 }

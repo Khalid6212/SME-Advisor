@@ -14,6 +14,7 @@ import {
   Footer,
   Header,
   HeadingLevel,
+  ImageRun,
   Packer,
   PageNumber,
   Paragraph,
@@ -25,6 +26,7 @@ import {
   TextRun,
   WidthType,
 } from "docx";
+import { barChartSvg, lineChartSvg, svgToPng } from "./charts.ts";
 import type { AppendixTable } from "../../src/planner/appendices.ts";
 import type { SectionExhibit } from "../../src/planner/types.ts";
 
@@ -392,25 +394,79 @@ function yearsByItemTable(rows: FinRow[], order: readonly string[]): Table | nul
   return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [header, ...body] });
 }
 
-function sensitivityTable(baseRows: FinRow[], sensitivityRows: FinRow[]): { table: Table; year: number } | null {
-  if (sensitivityRows.length === 0) return null;
-  const year = sensitivityRows[0]!.year_offset;
-  const find = (rows: FinRow[], scenario: string, item: string) =>
-    fmtFinancial(item, rows.find((r) => r.scenario === scenario && r.year_offset === year && r.line_item === item)?.value);
+const SCENARIO_LABEL: Record<string, string> = { base: "Base Case", bull: "Growth Case", bear: "Downside Case" };
+const SCENARIO_CHART_COLOR: Record<string, string> = { base: ACCENT, bull: "#2F855A", bear: "#B7472A" };
+
+function numOrNull(v: string | undefined): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Final-year headline comparison across all three scenarios — the "does
+ *  this business survive the downside, and what does the upside actually
+ *  look like" table a reader checks before reading three full statements. */
+function scenarioSummaryTable(rows: FinRow[]): Table | null {
+  const scenarios = ["base", "bull", "bear"] as const;
+  const finalYear = Math.max(0, ...rows.map((r) => r.year_offset));
+  const metric = (scenario: string, item: string) =>
+    fmtFinancial(item, rows.find((r) => r.scenario === scenario && r.year_offset === finalYear && r.line_item === item)?.value);
+  if (!scenarios.some((s) => rows.some((r) => r.scenario === s && r.year_offset === finalYear))) return null;
 
   const header = new TableRow({
-    children: [tableCell("Scenario", true), tableCell("Revenue", true), tableCell("EBITDA", true)],
+    children: [tableCell("Scenario", true), tableCell(`Year ${finalYear} revenue`, true), tableCell("EBITDA", true), tableCell("Net income", true), tableCell("Closing cash", true)],
   });
-  const row = (label: string, scenario: string, source: FinRow[]) =>
+  const row = (scenario: (typeof scenarios)[number]) =>
     new TableRow({
-      children: [tableCell(label), tableCell(find(source, scenario, "revenue")), tableCell(find(source, scenario, "ebitda"))],
+      children: [
+        tableCell(SCENARIO_LABEL[scenario]!),
+        tableCell(metric(scenario, "revenue")),
+        tableCell(metric(scenario, "ebitda")),
+        tableCell(metric(scenario, "net_income")),
+        tableCell(metric(scenario, "cash_closing")),
+      ],
     });
 
-  const table = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [header, row("Bear", "bear", sensitivityRows), row("Base", "base", baseRows), row("Bull", "bull", sensitivityRows)],
-  });
-  return { table, year };
+  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [header, row("bull"), row("base"), row("bear")] });
+}
+
+/** Final-year revenue by scenario, as a bar chart — the same headline
+ *  comparison as scenarioSummaryTable, shown visually first. null when
+ *  there's nothing to compare. */
+async function scenarioComparisonChart(rows: FinRow[]): Promise<ImageRun | null> {
+  const finalYear = Math.max(0, ...rows.map((r) => r.year_offset));
+  const data = (["bull", "base", "bear"] as const)
+    .map((s) => ({
+      scenario: s,
+      value: numOrNull(rows.find((r) => r.scenario === s && r.year_offset === finalYear && r.line_item === "revenue")?.value),
+    }))
+    .filter((d): d is { scenario: "bull" | "base" | "bear"; value: number } => d.value != null)
+    .map((d) => ({ label: SCENARIO_LABEL[d.scenario]!, value: d.value, color: SCENARIO_CHART_COLOR[d.scenario] }));
+  if (data.length === 0) return null;
+
+  const svg = barChartSvg(`Year ${finalYear} revenue by scenario (SAR)`, data);
+  const { buffer } = await svgToPng(svg, 640);
+  return new ImageRun({ type: "png", data: buffer, transformation: { width: 420, height: 210 } });
+}
+
+/** Base Case revenue and EBITDA across every projected year, as a line
+ *  chart — null when there are fewer than two years, since a single point
+ *  isn't a trend. */
+async function revenueTrendChart(rows: FinRow[]): Promise<ImageRun | null> {
+  const base = rows.filter((r) => r.scenario === "base");
+  const years = [...new Set(base.map((r) => r.year_offset))].sort((a, b) => a - b);
+  if (years.length < 2) return null;
+
+  const revenue = years.map((y) => numOrNull(base.find((r) => r.year_offset === y && r.line_item === "revenue")?.value) ?? 0);
+  const ebitda = years.map((y) => numOrNull(base.find((r) => r.year_offset === y && r.line_item === "ebitda")?.value) ?? 0);
+  const categories = years.map((y) => (y === 0 ? "Base year" : `Year ${y}`));
+
+  const svg = lineChartSvg("Revenue and EBITDA — Base Case (SAR)", categories, [
+    { name: "Revenue", color: ACCENT, points: revenue },
+    { name: "EBITDA", color: "#2F855A", points: ebitda },
+  ]);
+  const { buffer } = await svgToPng(svg, 640);
+  return new ImageRun({ type: "png", data: buffer, transformation: { width: 460, height: 245 } });
 }
 
 /**
@@ -515,14 +571,6 @@ export async function buildPlanDocx(opts: {
     });
   });
 
-  // Positive inclusion per exhibit, not "everything else" — four disjoint
-  // line-item vocabularies now share this table, and an exclusion filter
-  // would silently leak one exhibit's rows into another.
-  const baseRows = opts.financials.filter((r) => r.scenario === "base" && (LINE_ITEM_ORDER as readonly string[]).includes(r.line_item));
-  const sensitivityRows = opts.financials.filter((r) => r.scenario === "bull" || r.scenario === "bear");
-  const cashFlowRows = opts.financials.filter((r) => r.scenario === "base" && (CASH_FLOW_ORDER as readonly string[]).includes(r.line_item));
-  const balanceSheetRows = opts.financials.filter((r) => r.scenario === "base" && (BALANCE_SHEET_ORDER as readonly string[]).includes(r.line_item));
-
   for (const h of opts.historical ?? []) {
     children.push(heading(h.title, HeadingLevel.HEADING_1), dataTable(h.headers, h.rows));
     if (h.note) {
@@ -537,40 +585,49 @@ export async function buildPlanDocx(opts: {
     }
   }
 
-  const finTable = yearsByItemTable(baseRows, LINE_ITEM_ORDER);
-  if (finTable) {
+  const trendChart = await revenueTrendChart(opts.financials);
+  if (trendChart) {
     children.push(
-      heading("Income statement", HeadingLevel.HEADING_1),
-      finTable,
+      heading("Financial trend", HeadingLevel.HEADING_1),
+      new Paragraph({ children: [trendChart], alignment: AlignmentType.CENTER, spacing: { after: 200 } }),
+    );
+  }
+
+  // Positive inclusion per exhibit, not "everything else" — three disjoint
+  // line-item vocabularies now share this table, and an exclusion filter
+  // would silently leak one exhibit's rows into another.
+  const summary = scenarioSummaryTable(opts.financials);
+  if (summary) {
+    const scenarioChart = await scenarioComparisonChart(opts.financials);
+    children.push(
+      heading("Scenario comparison", HeadingLevel.HEADING_1),
+      new Paragraph({
+        children: [new TextRun({ text: "Growth and Downside apply the same fixed growth-rate band used throughout this plan's sensitivity discussion to the full three-statement model, not just the final year's headline figures.", color: MUTED, italics: true })],
+        spacing: { after: 120 },
+      }),
+      ...(scenarioChart ? [new Paragraph({ children: [scenarioChart], alignment: AlignmentType.CENTER, spacing: { after: 160 } })] : []),
+      summary,
       new Paragraph({ text: "", spacing: { after: 200 } }),
     );
   }
 
-  const sensitivity = sensitivityTable(baseRows, sensitivityRows);
-  if (sensitivity) {
-    children.push(
-      heading(`Sensitivity (year ${sensitivity.year})`, HeadingLevel.HEADING_1),
-      sensitivity.table,
-      new Paragraph({ text: "", spacing: { after: 200 } }),
-    );
-  }
+  for (const scenario of ["base", "bull", "bear"] as const) {
+    const rows = opts.financials.filter((r) => r.scenario === scenario);
+    if (rows.length === 0) continue;
+    const label = SCENARIO_LABEL[scenario]!;
 
-  const cashFlowTable = yearsByItemTable(cashFlowRows, CASH_FLOW_ORDER);
-  if (cashFlowTable) {
-    children.push(
-      heading("Cash flow statement", HeadingLevel.HEADING_1),
-      cashFlowTable,
-      new Paragraph({ text: "", spacing: { after: 200 } }),
-    );
-  }
-
-  const balanceSheetTable = yearsByItemTable(balanceSheetRows, BALANCE_SHEET_ORDER);
-  if (balanceSheetTable) {
-    children.push(
-      heading("Balance sheet (Statement of Financial Position)", HeadingLevel.HEADING_1),
-      balanceSheetTable,
-      new Paragraph({ text: "", spacing: { after: 200 } }),
-    );
+    const finTable = yearsByItemTable(rows.filter((r) => (LINE_ITEM_ORDER as readonly string[]).includes(r.line_item)), LINE_ITEM_ORDER);
+    if (finTable) {
+      children.push(heading(`${label} — income statement`, HeadingLevel.HEADING_1), finTable, new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
+    const cashFlowTable = yearsByItemTable(rows.filter((r) => (CASH_FLOW_ORDER as readonly string[]).includes(r.line_item)), CASH_FLOW_ORDER);
+    if (cashFlowTable) {
+      children.push(heading(`${label} — cash flow statement`, HeadingLevel.HEADING_1), cashFlowTable, new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
+    const balanceSheetTable = yearsByItemTable(rows.filter((r) => (BALANCE_SHEET_ORDER as readonly string[]).includes(r.line_item)), BALANCE_SHEET_ORDER);
+    if (balanceSheetTable) {
+      children.push(heading(`${label} — balance sheet (Statement of Financial Position)`, HeadingLevel.HEADING_1), balanceSheetTable, new Paragraph({ text: "", spacing: { after: 200 } }));
+    }
   }
 
   const assumpTable = assumptionsTable(opts.assumptions);

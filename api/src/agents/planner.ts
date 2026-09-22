@@ -18,7 +18,7 @@ import {
 } from "../../../src/planner/drivers.ts";
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import {
-  buildProjectionBase, computeBalanceSheet, computeCashFlowStatement, computeProjections, computeSensitivity,
+  buildProjectionBase, computeBalanceSheet, computeCashFlowStatement, computeFullScenario, computeProjections,
   type ProjectionFact,
 } from "../../../src/planner/projections.ts";
 import { normaliseExhibits, type PlanInputs } from "../../../src/planner/types.ts";
@@ -84,10 +84,19 @@ export function computeFinancialsBlock(
   // without the chain breaking at a statement boundary.
   const calc = new CalcRegistry();
   const baseProjections = computeProjections(projectionBase, planInputs, calc);
-  const sensitivity = computeSensitivity(projectionBase, planInputs, calc);
   const cashFlowStatement = computeCashFlowStatement(projectionBase, planInputs, baseProjections, calc);
   const balanceSheet = computeBalanceSheet(projectionBase, planInputs, baseProjections, cashFlowStatement, calc);
-  const financials = [...baseProjections, ...sensitivity, ...cashFlowStatement, ...balanceSheet];
+  // Growth Case / Downside Case: full multi-year three-statement scenarios,
+  // not just a final-year revenue/EBITDA range — computeSensitivity's own
+  // final-year figures are a strict subset of these (same ±8pp band, same
+  // implied growth rate — see impliedGrowth), so it is deliberately not
+  // also called here: the two would write colliding (year_offset, line_item,
+  // scenario) rows to plan_financials, which is UNIQUE on exactly that
+  // triple (db/migrations/007_scenarios.sql). computeSensitivity stays
+  // exported for anything that only wants the lightweight range.
+  const growthCase = computeFullScenario("bull", projectionBase, planInputs, calc);
+  const downsideCase = computeFullScenario("bear", projectionBase, planInputs, calc);
+  const financials = [...baseProjections, ...cashFlowStatement, ...balanceSheet, ...growthCase, ...downsideCase];
   const calculations = calc.list();
 
   // Rendered only when the build actually evaluates. A formula that does not
@@ -130,10 +139,6 @@ export function computeFinancialsBlock(
       ? `COMPUTED INCOME STATEMENT (base case, includes an illustrative Zakat line) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
       : "COMPUTED INCOME STATEMENT: none — base revenue or a growth assumption is missing. Flag the projections section as a gap.",
     "",
-    sensitivity.length > 0
-      ? `COMPUTED SENSITIVITY (bull/bear, final projection year only) — present as a range, do not recompute:\n${JSON.stringify(sensitivity, null, 2)}`
-      : "COMPUTED SENSITIVITY: none computed.",
-    "",
     cashFlowStatement.length > 0
       ? `COMPUTED CASH FLOW STATEMENT (multi-year, indirect method) — present as given:\n${JSON.stringify(cashFlowStatement, null, 2)}`
       : "COMPUTED CASH FLOW STATEMENT: none — current cash on hand or working-capital assumptions (receivable/payable days) were not recorded.",
@@ -141,6 +146,18 @@ export function computeFinancialsBlock(
     balanceSheet.length > 0
       ? `COMPUTED BALANCE SHEET (multi-year, assets = liabilities + equity by construction) — present as given:\n${JSON.stringify(balanceSheet, null, 2)}`
       : "COMPUTED BALANCE SHEET: none — needs the same inputs as the cash flow statement.",
+    "",
+    growthCase.length > 0
+      ? `COMPUTED GROWTH CASE (scenario "bull" — a full multi-year three-statement scenario at a fixed, disclosed growth-rate band above the base case) — present as given, do not recompute:\n${JSON.stringify(growthCase, null, 2)}`
+      : "COMPUTED GROWTH CASE: none — needs the same inputs as the base case.",
+    "",
+    downsideCase.length > 0
+      ? `COMPUTED DOWNSIDE CASE (scenario "bear") — present as given, do not recompute:\n${JSON.stringify(downsideCase, null, 2)}`
+      : "COMPUTED DOWNSIDE CASE: none — needs the same inputs as the base case.",
+    "",
+    growthCase.length > 0 && downsideCase.length > 0
+      ? "When you narrate the financial projections, present the Base, Growth, and Downside cases as a genuine scenario comparison — not the base case with a two-line sensitivity footnote. State what would have to be true for the Growth Case (an explicit, checkable condition — e.g. a specific revenue or margin threshold sustained for a stated period) before capital tied to it should actually be committed, and name the single most important variable driving the gap between the Downside and Growth cases."
+      : "",
   ].join("\n");
 
   return { financials, calculations, historical, block };

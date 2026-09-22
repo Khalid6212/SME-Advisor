@@ -300,6 +300,14 @@ export function computeProjections(
   base: ProjectionBase,
   inputs: PlanInputs,
   calc: CalcRegistry = new CalcRegistry(),
+  // Disambiguates the register keys for revenue only — the one figure that
+  // actually varies by scenario (see computeFullScenario). Every other key
+  // registered below stays unprefixed and shared: COGS, EBITDA, financing,
+  // and the 3-statement calculations are the same formula regardless of
+  // which growth rate produced the revenue feeding them, so reusing the
+  // base case's entry for those is correct, not a shortcut — CalcRegistry's
+  // per-key idempotency is exactly what makes that reuse automatic.
+  registryKeyPrefix: string = "",
 ): FinancialLine[] {
   // The declared build, where there is one and it evaluates. A formula that
   // fails to evaluate falls back to the growth rate rather than returning no
@@ -333,7 +341,7 @@ export function computeProjections(
   // declared values, which is the same calculation as every other year.
   const baseRevenueCalc = build
     ? null
-    : calc.register("revenue_base", {
+    : calc.register(`${registryKeyPrefix}revenue_base`, {
         metric: "Base-year revenue",
         formula: "Revenue₀ = the most recent full-year revenue on record",
         inputs: [baseInput(base, "annualRevenue", "Base-year revenue", sar(base.annualRevenue!))],
@@ -342,7 +350,7 @@ export function computeProjections(
 
   const revenueCalc = build
     ? build.calcCode
-    : calc.register("revenue", {
+    : calc.register(`${registryKeyPrefix}revenue`, {
         metric: "Projected revenue",
         formula: "Revenueₙ = Revenue₀ × (1 + g)ⁿ",
         inputs: [
@@ -605,6 +613,36 @@ export function computeProjections(
 }
 
 /**
+ * The growth rate and base-year revenue a scenario should flex from — where
+ * a driver build exists, that's its own year-0-to-final-year CAGR (the
+ * sensitivity band applies to what the drivers imply, not a growth rate the
+ * plan no longer uses); otherwise the plain growth assumption. Shared by
+ * computeSensitivity and computeFullScenario so the two always agree on
+ * what "Growth Case"/"Downside Case" actually means. Null when neither a
+ * usable build nor a plain growth assumption exists.
+ */
+function impliedGrowth(
+  base: ProjectionBase,
+  inputs: PlanInputs,
+  calc: CalcRegistry,
+): { baseRevenue: number; growthPct: number } | null {
+  const targetYear = inputs.projection_years;
+  const build = buildDriverRevenue(base, inputs, calc);
+
+  if (build && targetYear > 0) {
+    const baseRevenue = build.years[0]!.revenue;
+    const endRevenue = build.years[targetYear]!.revenue;
+    if (baseRevenue <= 0) return null;
+    const growthPct = (Math.pow(endRevenue / baseRevenue, 1 / targetYear) - 1) * 100;
+    return { baseRevenue, growthPct };
+  }
+  if (base.annualRevenue != null && inputs.revenue_growth_pct != null) {
+    return { baseRevenue: base.annualRevenue, growthPct: inputs.revenue_growth_pct };
+  }
+  return null;
+}
+
+/**
  * Bull/bear revenue and EBITDA for the final projection year only — the
  * year a reader actually asks "what if" about. Requires the same inputs as
  * the base case (margin and opex included, since EBITDA needs both); returns
@@ -618,29 +656,10 @@ export function computeSensitivity(
   if (base.grossMarginPct == null || base.monthlyOperatingCost == null) return [];
 
   const targetYear = inputs.projection_years;
-
-  // Where a driver build exists, the sensitivity flexes *it* rather than a
-  // growth rate the plan no longer uses. The band is applied to the growth
-  // the build itself implies (its year-0 to year-N CAGR), so bull and bear
-  // stay the same ±8 points either side of the actual plan — just measured
-  // against what the drivers produce instead of against a number somebody
-  // typed. Flexing one driver instead would be a different and much stronger
-  // claim about which driver is uncertain, and nothing here knows that.
-  const build = buildDriverRevenue(base, inputs, calc);
-  let baseRevenue: number;
-  let growthPct: number;
-
-  if (build && targetYear > 0) {
-    baseRevenue = build.years[0]!.revenue;
-    const endRevenue = build.years[targetYear]!.revenue;
-    if (baseRevenue <= 0) return [];
-    growthPct = (Math.pow(endRevenue / baseRevenue, 1 / targetYear) - 1) * 100;
-  } else if (base.annualRevenue != null && inputs.revenue_growth_pct != null) {
-    baseRevenue = base.annualRevenue;
-    growthPct = inputs.revenue_growth_pct;
-  } else {
-    return [];
-  }
+  const implied = impliedGrowth(base, inputs, calc);
+  if (implied == null) return [];
+  const { baseRevenue, growthPct } = implied;
+  const build = buildDriverRevenue(base, inputs, calc); // idempotent — see buildDriverRevenue's header
 
   const margin = base.grossMarginPct / 100;
   const annualOpex = base.monthlyOperatingCost * 12;
@@ -696,6 +715,68 @@ export function computeSensitivity(
     );
   }
   return lines;
+}
+
+/**
+ * Growth Case / Downside Case as full multi-year three-statement scenarios —
+ * every line computeProjections/computeCashFlowStatement/computeBalanceSheet
+ * produce for the base case, not just the final-year revenue/EBITDA range
+ * computeSensitivity already gives (kept as-is; still the plan's headline
+ * "range" exhibit). Flexes the same implied growth rate computeSensitivity
+ * uses — see impliedGrowth — so the two always describe the same scenario.
+ *
+ * Reuses the three statement functions completely unmodified. Each is
+ * called with a scenario-flexed base/inputs pair that still makes them
+ * internally compute and tag everything "base" (their own cross-references
+ * — computeWorkingCapital, canBuildStatements — are hardcoded to look for
+ * scenario === "base", and nothing about a scenario run needs those changed:
+ * it IS a base-shaped run, just against a different growth rate). Only the
+ * finished, already-cross-referenced output gets relabelled to "bull"/"bear",
+ * as the very last step.
+ *
+ * Financing and depreciation come out numerically identical to the base
+ * case in every scenario — correct, not a bug: those lines depend on the
+ * requested facility and its terms, not on revenue. Only the lines
+ * downstream of revenue (COGS through net income, and what the 3-statement
+ * model derives from net income) actually differ, and the calc register's
+ * per-key idempotency (see CalcRegistry) means those shared, formula-
+ * invariant lines cite the exact same CALC codes the base case already
+ * registered — only the revenue lines get their own scenario-suffixed
+ * codes, since g is the one thing that actually varies.
+ *
+ * Deliberately does not re-derive a declared revenue build (drivers.ts) for
+ * bull/bear — that would mean the advisor declaring a second and third
+ * driver tree, which isn't supported. The scenario base strips the build
+ * and falls back to a flat-growth run seeded at the build's own year-0
+ * revenue, flexed by the same ±8pp band as the sensitivity exhibit.
+ */
+export function computeFullScenario(
+  scenario: "bull" | "bear",
+  base: ProjectionBase,
+  inputs: PlanInputs,
+  calc: CalcRegistry = new CalcRegistry(),
+): FinancialLine[] {
+  if (base.grossMarginPct == null || base.monthlyOperatingCost == null) return [];
+
+  const implied = impliedGrowth(base, inputs, calc);
+  if (implied == null) return [];
+
+  const delta = scenario === "bull" ? SENSITIVITY_VARIANCE_POINTS : -SENSITIVITY_VARIANCE_POINTS;
+  const scenarioBase: ProjectionBase = {
+    ...base,
+    annualRevenue: implied.baseRevenue,
+    revenueFormula: null,
+    drivers: undefined,
+  };
+  const scenarioInputs: PlanInputs = { ...inputs, revenue_growth_pct: implied.growthPct + delta };
+
+  const income = computeProjections(scenarioBase, scenarioInputs, calc, `${scenario}_`);
+  if (income.length === 0) return [];
+  const cashFlow = computeCashFlowStatement(scenarioBase, scenarioInputs, income, calc);
+  const balanceSheet = computeBalanceSheet(scenarioBase, scenarioInputs, income, cashFlow, calc);
+
+  const relabel = (lines: FinancialLine[]): FinancialLine[] => lines.map((l) => ({ ...l, scenario }));
+  return [...relabel(income), ...relabel(cashFlow), ...relabel(balanceSheet)];
 }
 
 interface WcYear {
