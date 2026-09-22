@@ -48,6 +48,14 @@ export interface PhaseSpec {
    * reconciliation roadmap's Milestone 6 for the rollout rationale.
    */
   presentsOptions?: boolean;
+  /** True for the one phase that benefits from actually computing a figure
+   *  rather than reasoning about it in prose — a bottom-up market size, a
+   *  competitive pricing comparison. Grants the code_execution server tool
+   *  (see runPhaseAgent in api/src/agents/planner.ts); every other phase
+   *  either has its arithmetic already done for it (financial, via the
+   *  deterministic engine and its Calculation Register) or has nothing
+   *  quantitative enough to need it. */
+  usesCodeExecution?: boolean;
 }
 
 export const PLAN_PHASES: PhaseSpec[] = [
@@ -59,6 +67,7 @@ export const PLAN_PHASES: PhaseSpec[] = [
       "company_overview", "market_need", "value_proposition",
       "products_and_services", "market_analysis", "competitive_landscape",
     ],
+    usesCodeExecution: true,
   },
   {
     key: "financial",

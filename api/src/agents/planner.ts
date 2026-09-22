@@ -37,6 +37,18 @@ import { houseRules } from "./house-rules.ts";
 
 export const TEMPLATES = { [businessPlanTemplate.key]: businessPlanTemplate };
 
+// Non-beta server tool — same as api/src/agents/ledger.ts's precedent. Only
+// granted to phases with usesCodeExecution set (see PhaseSpec): Claude
+// writes and runs real code for a bottom-up market-sizing or competitive
+// pricing calculation rather than estimating it by eye, then narrates the
+// figure and the arithmetic that produced it directly in the section's
+// prose — this is not wired into the deterministic Calculation Register
+// (plan_calculations/CALC-xxx), which the financial phase alone owns and
+// rebuilds wholesale on every redraft; giving a second phase write access
+// to that same table would need a real ownership/redraft-cascade story
+// this doesn't yet have.
+const CODE_EXECUTION_TOOL = { type: "code_execution_20260120", name: "code_execution" };
+
 /** Only the financial phase needs the computed statements — sending them to
  *  every phase would bloat cost for context nothing else draws on. Pure and
  *  DB-free except for its caller persisting `financials` — shared between
@@ -297,7 +309,7 @@ export async function runPhaseAgent(
 
   const loopResult = await runAgentLoop({
     system,
-    tools: buildPhaseTools(phase),
+    tools: phase.usesCodeExecution ? [...buildPhaseTools(phase), CODE_EXECUTION_TOOL] : buildPhaseTools(phase),
     messages,
     maxTurns: phase.sectionKeys.length + 6, // one call per section, plus assumptions, gaps, options, and submit
     model: MODEL,
