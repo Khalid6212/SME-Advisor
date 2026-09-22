@@ -67,7 +67,7 @@ const EMPTY = {
   confidence: "medium" as SourceRow["confidence"],
 };
 
-export function SourceRegister({ clientId }: { clientId: string }) {
+export function SourceRegister({ clientId, refreshToken }: { clientId: string; refreshToken?: number }) {
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [draft, setDraft] = useState({ ...EMPTY });
   const [adding, setAdding] = useState(false);
@@ -77,9 +77,12 @@ export function SourceRegister({ clientId }: { clientId: string }) {
   const load = () =>
     api.get<{ sources: SourceRow[] }>(`/clients/${clientId}/sources`).then((d) => setSources(d.sources));
 
+  // refreshToken lets a sibling that registers sources as a side effect (the
+  // market-research panel) tell this list to reload without the two
+  // components sharing state directly.
   useEffect(() => {
     load().catch(() => {});
-  }, [clientId]);
+  }, [clientId, refreshToken]);
 
   async function add() {
     if (!draft.title.trim()) {

@@ -45,6 +45,10 @@ export function PlanInputs({ clientId }: { clientId: string }) {
   const [research, setResearch] = useState<ResearchSuggestion | null>(null);
   const [researching, setResearching] = useState(false);
   const [researchError, setResearchError] = useState<string | null>(null);
+  // Research registers real Source Register entries as a side effect (see
+  // the route) — bumping this tells the separate SourceRegister panel below
+  // to reload rather than sit stale until the manager navigates away and back.
+  const [sourcesVersion, setSourcesVersion] = useState(0);
 
   useEffect(() => {
     api.get<PlanInputsData | null>(`/clients/${clientId}/plan-inputs`).then((d) => {
@@ -86,6 +90,7 @@ export function PlanInputs({ clientId }: { clientId: string }) {
     try {
       const r = await api.post<ResearchSuggestion>(`/clients/${clientId}/plan-inputs/research`);
       setResearch(r);
+      if (r.sources.length > 0) setSourcesVersion((v) => v + 1);
     } catch (err) {
       setResearchError(
         err instanceof ApiError && err.code === "no_profile"
@@ -281,6 +286,22 @@ export function PlanInputs({ clientId }: { clientId: string }) {
                     <strong>Sources:</strong> {research.market_size_sources}
                   </p>
                 )}
+                {research.sources.length > 0 && (
+                  <ul style={{ fontSize: 12, margin: "4px 0 0", paddingLeft: 18 }}>
+                    {research.sources.map((s) => (
+                      <li key={s.code}>
+                        <span className="pill info" style={{ fontSize: 10 }}>{s.code}</span>{" "}
+                        {s.publisher} — "{s.title}"{s.period_covered ? ` (${s.period_covered})` : ""}
+                        {s.url ? (
+                          <>
+                            {" "}
+                            <a href={s.url} target="_blank" rel="noreferrer">link</a>
+                          </>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 {research.market_drivers_notes && (
                   <p style={{ fontSize: 12, margin: "4px 0 0" }}>
                     <strong>Drivers:</strong> {research.market_drivers_notes}
@@ -396,7 +417,7 @@ export function PlanInputs({ clientId }: { clientId: string }) {
           <button onClick={addCompetitor}>+ Add competitor</button>
         </div>
 
-        <SourceRegister clientId={clientId} />
+        <SourceRegister clientId={clientId} refreshToken={sourcesVersion} />
 
         <RevenueBuild clientId={clientId} />
 

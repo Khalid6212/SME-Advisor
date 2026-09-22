@@ -33,7 +33,21 @@ const SAVE_RESEARCH_TOOL = {
       },
       market_size_sources: {
         type: ["string", "null"],
-        description: "Name the actual reports, agencies, or publications the figures above came from, with year. Plain text.",
+        description: "Name the actual reports, agencies, or publications the figures above came from, with year. Plain text — a short human-readable summary of `sources` below, for a quick read.",
+      },
+      sources: {
+        type: "array",
+        description: "One entry per distinct source actually cited above — the structured form of market_size_sources, registered as a real, citable Source Register entry (EXT-xxx) once this research is saved. Every entry here must correspond to a real source you found in search, never invented.",
+        items: {
+          type: "object",
+          properties: {
+            publisher: { type: "string", description: "The organization, e.g. 'GASTAT' or 'Mordor Intelligence'." },
+            title: { type: "string", description: "The report or page title." },
+            url: { type: ["string", "null"] },
+            published_date: { type: ["string", "null"], description: "As stated by the source — often just a year, e.g. '2025' or 'Q2 2025'." },
+          },
+          required: ["publisher", "title", "url", "published_date"],
+        },
       },
       market_growth_pct: { type: ["number", "null"], description: "Annual market growth rate, percent." },
       market_drivers_notes: {
@@ -59,7 +73,7 @@ const SAVE_RESEARCH_TOOL = {
       },
     },
     required: [
-      "market_size_tam", "market_size_sam", "market_size_som", "market_size_sources",
+      "market_size_tam", "market_size_sam", "market_size_som", "market_size_sources", "sources",
       "market_growth_pct", "market_drivers_notes", "competitor_notes", "confidence_note",
     ],
   },
@@ -86,7 +100,11 @@ a business plan input for a Saudi SME. You have a web search tool — use it.
   searching, not names you already know or assume exist. If the owner named
   competitors, verify them via search rather than repeating them unchecked.
 - Call save_research exactly once, when you are done searching. Do not
-  narrate your search process in text — just search, then call the tool.`;
+  narrate your search process in text — just search, then call the tool.
+- Populate \`sources\` with one entry per distinct source you actually used —
+  this becomes a real, citable Source Register entry once saved, so it must
+  match what you actually searched, not a paraphrase or a source you didn't
+  end up using.`;
 
 export interface ResearchInput {
   clientName: string;
@@ -102,11 +120,19 @@ export interface CompetitorSuggestion {
   weaknesses: string;
 }
 
+export interface ResearchCitedSource {
+  publisher: string;
+  title: string;
+  url: string | null;
+  published_date: string | null;
+}
+
 export interface ResearchSuggestion {
   market_size_tam: number | null;
   market_size_sam: number | null;
   market_size_som: number | null;
   market_size_sources: string | null;
+  sources: ResearchCitedSource[];
   market_growth_pct: number | null;
   market_drivers_notes: string | null;
   competitor_notes: CompetitorSuggestion[];

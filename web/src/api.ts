@@ -214,11 +214,24 @@ export interface PlanInputs {
   updated_at?: string;
 }
 
+/** A Source Register entry (see web/src/components/SourceRegister.tsx) —
+ *  only the fields the research suggestion panel actually displays. */
+export interface RegisteredSource {
+  code: string;
+  title: string;
+  publisher: string | null;
+  period_covered: string | null;
+  url: string | null;
+}
+
 export interface ResearchSuggestion {
   market_size_tam: number | null;
   market_size_sam: number | null;
   market_size_som: number | null;
   market_size_sources: string | null;
+  /** Registered as real EXT-xxx Source Register entries the moment research
+   *  completes — see POST /clients/:id/plan-inputs/research. */
+  sources: RegisteredSource[];
   market_growth_pct: number | null;
   market_drivers_notes: string | null;
   competitor_notes: CompetitorNote[];

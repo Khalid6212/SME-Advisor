@@ -519,7 +519,37 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         payload: { agent: "research", model: RESEARCH_MODEL, ...result.usage },
       });
 
-      return result.suggestion;
+      // Registered immediately, not only once the advisor applies the
+      // suggestion — the same moment an uploaded document becomes an INT-xxx
+      // source (see registerDocumentSource): the source was actually
+      // consulted, whether or not every figure it backs survives into the
+      // final plan. Free-text `published_date` goes to period_covered, not
+      // the strict `published_on` date column — a web source's own date
+      // ("2025", "Q2 2025") essentially never parses as one, and guessing
+      // would be worse than the honest free-text field this table already has.
+      // Sequential, not Promise.all: registerSource allocates the next code
+      // by reading the current max, so registering this run's own sources in
+      // parallel would just race each other into the retry path for nothing.
+      const registered = [];
+      for (const s of result.suggestion.sources) {
+        registered.push(
+          await registerSource(
+            id,
+            {
+              source_type: "external",
+              title: s.title,
+              publisher: s.publisher,
+              period_covered: s.published_date,
+              url: s.url,
+              accessed_on: new Date().toISOString().slice(0, 10),
+              confidence: "medium",
+            },
+            user.id,
+          ),
+        );
+      }
+
+      return { ...result.suggestion, sources: registered };
     } catch (err: any) {
       req.log.error({ err, clientId: id }, "market research failed");
       return reply.code(502).send({ error: "agent_unavailable" });
