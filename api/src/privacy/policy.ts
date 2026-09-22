@@ -193,6 +193,36 @@ export const RULES: Rule[] = [
   },
 
   {
+    location: "sources",
+    retainedBecause:
+      "Bibliographic records for a delivered plan's citations. Kept for as long as the plan that cites them — seven years, same clock as the plan itself.",
+    sweep: async (c) => {
+      const { rowCount } = await c.query(
+        `DELETE FROM sources s USING clients cl
+          WHERE s.client_id = cl.id
+            AND cl.closed_at IS NOT NULL
+            AND cl.closed_at < now() - ${months(84)}`,
+      );
+      return { location: "sources", affected: rowCount ?? 0 };
+    },
+  },
+
+  {
+    location: "plan_calculations",
+    retainedBecause:
+      "The formulas and inputs behind a delivered plan's forecast figures. Kept for as long as the plan it explains — seven years, same clock as the plan itself.",
+    sweep: async (c) => {
+      const { rowCount } = await c.query(
+        `DELETE FROM plan_calculations pc USING plans p, clients cl
+          WHERE pc.plan_id = p.id AND p.client_id = cl.id
+            AND cl.closed_at IS NOT NULL
+            AND cl.closed_at < now() - ${months(84)}`,
+      );
+      return { location: "plan_calculations", affected: rowCount ?? 0 };
+    },
+  },
+
+  {
     location: "audit_events",
     retainedBecause:
       "Security log, kept on its own legal basis. An audit log that can be erased on request is not an audit log.",
