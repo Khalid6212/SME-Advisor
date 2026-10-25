@@ -305,6 +305,81 @@ export function residualIsMaterial(residual: number, totalAssets: number | null)
   return (Math.abs(residual) / Math.abs(totalAssets)) * 100 > RESIDUAL_MATERIALITY_PCT;
 }
 
+/** One period's ratios, derived purely from the normalized statements —
+ *  no model call, same discipline as everything else in this file. Null
+ *  where an input is missing rather than a misleading zero. */
+export interface RatioYear {
+  period: string;
+  inventory_days: number | null;
+  payable_days: number | null;
+  receivable_days: number | null;
+  asset_turnover: number | null;
+  /** Percent. */
+  roe: number | null;
+}
+
+/**
+ * Inventory/payable/receivable days, asset turnover, and ROE, across every
+ * period the normalized statements cover — the same ratios a real
+ * advisory read of four years of financials uses to turn "profit up, cash
+ * down" from a mystery into a working-capital story (too much inventory,
+ * payables stretched, both absorbing cash the P&L doesn't show).
+ */
+export function computeRatios(s: NormalizedStatements): RatioYear[] {
+  const val = (lines: StatementLine[], key: string, period: string) =>
+    lines.find((l) => l.key === key)?.cells[period]?.value ?? null;
+
+  const daysOf = (balance: number | null, base: number | null): number | null =>
+    balance != null && base != null && base !== 0 ? Math.round((balance / base) * 365 * 10) / 10 : null;
+
+  return s.periods.map((period) => {
+    const revenue = val(s.incomeStatement, "revenue", period);
+    const cogs = val(s.incomeStatement, "cost_of_revenue", period);
+    const netProfit = val(s.incomeStatement, "net_profit", period);
+    const inventory = val(s.balanceSheet, "inventory", period);
+    const receivables = val(s.balanceSheet, "receivables", period);
+    const payables = val(s.balanceSheet, "payables", period);
+    const totalAssets = val(s.balanceSheet, "total_assets", period);
+    const equity = val(s.balanceSheet, "equity", period);
+
+    return {
+      period,
+      inventory_days: daysOf(inventory, cogs),
+      payable_days: daysOf(payables, cogs),
+      receivable_days: daysOf(receivables, revenue),
+      asset_turnover: revenue != null && totalAssets != null && totalAssets !== 0
+        ? Math.round((revenue / totalAssets) * 100) / 100
+        : null,
+      roe: netProfit != null && equity != null && equity !== 0
+        ? Math.round((netProfit / equity) * 1000) / 10
+        : null,
+    };
+  });
+}
+
+/** The block handed to the financial phase alongside the normalized
+ *  statements — same "narrate the trend" contract, so the agent connects
+ *  the ratios to the cash story instead of reciting a table of numbers. */
+export function renderRatiosBlock(ratios: RatioYear[]): string {
+  const usable = ratios.filter(
+    (r) => r.inventory_days != null || r.payable_days != null || r.receivable_days != null
+      || r.asset_turnover != null || r.roe != null,
+  );
+  if (usable.length < 2) return "";
+
+  const line = (label: string, get: (r: RatioYear) => number | null, suffix = "") =>
+    `  ${label}: ${usable.map((r) => `${r.period}: ${get(r) != null ? `${get(r)}${suffix}` : "—"}`).join(" | ")}`;
+
+  return [
+    "HISTORICAL RATIO ANALYSIS — derived deterministically from the normalized statements above, across periods. Read the TREND and connect it to the cash story (e.g. profit rising while cash falls is usually a working-capital story — rising inventory or receivable days, stretched payables — not a mystery). Declare these as a real exhibit (a table) rather than reciting them in prose:",
+    line("Inventory days", (r) => r.inventory_days, " days"),
+    line("Payable days", (r) => r.payable_days, " days"),
+    line("Receivable days", (r) => r.receivable_days, " days"),
+    line("Asset turnover", (r) => r.asset_turnover, "x"),
+    line("Return on equity", (r) => r.roe, "%"),
+  ].join("\n");
+}
+
 /** Whether there is enough here to be worth presenting at all. Two periods
  *  is the minimum that makes a historical statement a comparison rather than
  *  a snapshot, and revenue is the line without which the rest says little. */

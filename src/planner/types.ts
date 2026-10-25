@@ -69,6 +69,18 @@ export interface CompetitorNote {
   weaknesses: string;
 }
 
+/** One (competitor, service) price point — the service-by-service
+ *  benchmarking matrix a real advisory plan builds, not a single blended
+ *  "competitors charge more or less" line. See api/src/agents/research.ts. */
+export interface CompetitorPrice {
+  competitor: string;
+  service: string;
+  price: string;
+  confidence: "high" | "medium" | "low";
+  confidence_reason: string;
+  notes: string | null;
+}
+
 /**
  * The advisor's own judgment, captured before drafting rather than only as an
  * edit afterward. One row per client — this is what the plan is regenerated
@@ -87,14 +99,24 @@ export interface PlanInputs {
   loan_interest_rate_pct: number | null;
   asset_useful_life_years: number | null;
   // Market sizing — the advisor's own research, with sources cited, since
-  // the planner is forbidden from inventing market statistics.
+  // the planner is forbidden from inventing market statistics. The _basis
+  // fields record which triangulation method produced each figure
+  // (top-down from a market report, narrowed by segment, bottom-up from
+  // this business's own capacity) — a number with no stated method is the
+  // unexamined figure this whole layer exists to replace.
   market_size_tam: number | null;
+  market_size_tam_basis: string | null;
   market_size_sam: number | null;
+  market_size_sam_basis: string | null;
   market_size_som: number | null;
+  market_size_som_basis: string | null;
   market_size_sources: string | null;
   market_growth_pct: number | null;
   market_drivers_notes: string | null;
   competitor_notes: CompetitorNote[];
+  /** Service-by-service pricing, built from each competitor's own page —
+   *  the quantitative counterpart to competitor_notes' qualitative read. */
+  competitor_pricing: CompetitorPrice[];
   /** The advisor's read on likely exit pathways and any comparable
    *  transactions known — not something the planner may infer. */
   exit_strategy_notes: string | null;

@@ -202,6 +202,28 @@ export const OPERATIONS = obj({
   premises: oneOf(PREMISES),
   lease_expiry: nul(str("Self-reported date. Do not ask for the lease.")),
   licences_held: arr(str("Names only, self-reported. Never request the documents.")),
+  headcount: arr(
+    obj({
+      role: str("The owner's own term for the role, e.g. 'physician', 'sales associate'. Not a fixed list — sectors vary too much for one."),
+      count: int(),
+      avg_monthly_pay: nul(num("SAR, average across people in this role. A rough figure is fine — ask for a ballpark, not an audit.")),
+    }),
+    "Rough headcount and pay by role. Skip roles the owner can't estimate rather than pressing for precision.",
+  ),
+  capacity_units: arr(
+    obj({
+      name: str("What the unit is, in the owner's own words — 'treatment rooms', 'delivery trucks', 'seats'."),
+      count: int(),
+      utilization_pct: nul(num("Rough share of capacity actually in use, 0-100. Null if the owner has no sense of it.")),
+      notes: nul(str()),
+    }),
+    "What capacity the business has and how much of it is actually used — the basis for any utilization or bottleneck discussion. Not every business has a clean capacity unit; leave empty rather than forcing one.",
+  ),
+  output_volume: obj({
+    metric: nul(str("What's actually counted, in the owner's words — 'patients', 'orders', 'covers'.")),
+    current_monthly: nul(num()),
+    capacity_monthly: nul(num("What the business could handle at full capacity, if the owner has a sense of it.")),
+  }),
 });
 
 export const MARKET_POSITION = obj({

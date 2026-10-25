@@ -19,20 +19,23 @@ import {
 import { businessPlanTemplate } from "../../../src/planner/default-template.ts";
 import {
   buildProjectionBase, computeBalanceSheet, computeCashFlowStatement, computeFullScenario, computeProjections,
-  type ProjectionFact,
+  registerPayrollBreakdown, ZAKAT_RATE_PCT,
+  type HeadcountRole, type ProjectionFact,
 } from "../../../src/planner/projections.ts";
 import { normaliseExhibits, type PlanInputs } from "../../../src/planner/types.ts";
 import { computeHistoricalTrends, renderHistoricalTrendsBlock } from "../../../src/planner/history.ts";
 import {
-  hasUsableHistory, normalizeHistoricalStatements, renderHistoricalStatements,
+  computeRatios, hasUsableHistory, normalizeHistoricalStatements, renderHistoricalStatements, renderRatiosBlock,
   type NormalizedStatements,
 } from "../../../src/planner/historical.ts";
+import { applyLevers, renderLeverBlock, type OperationalLever } from "../../../src/planner/levers.ts";
 import { PLAN_PHASES, phaseByKey, sectionsBeforePhase, type PhaseSpec } from "../../../src/planner/phases.ts";
 import type { RuleAgent } from "../../../src/learning/types.ts";
 import { EVAL_JUDGE_MODEL, MODEL, runAgentLoop, type Message } from "../anthropic.ts";
 import { audit, one, query, tx } from "../db.ts";
 import { listCitableSources } from "../sources.ts";
 import { listDrivers } from "../drivers.ts";
+import { listLevers } from "../levers.ts";
 import { houseRules } from "./house-rules.ts";
 import { critiquePhase } from "./critique.ts";
 
@@ -68,6 +71,10 @@ export function computeFinancialsBlock(
    *  Defaults to none, so every existing caller — the eval fixtures
    *  included — keeps the blended-growth-rate behaviour unchanged. */
   revenueBuild: { formula: string | null; drivers: RevenueDriver[] } = { formula: null, drivers: [] },
+  /** Declared operational improvement levers, where the advisor has
+   *  described any — see levers.ts. Defaults to none, so every existing
+   *  caller is unaffected. */
+  levers: OperationalLever[] = [],
 ): {
   financials: ReturnType<typeof computeProjections>;
   calculations: Calculation[];
@@ -84,6 +91,7 @@ export function computeFinancialsBlock(
     payableDays: profileData?.financial_health?.payable_days ?? null,
     inventoryDays: profileData?.financial_health?.inventory_days ?? null,
   };
+  const headcount: HeadcountRole[] = profileData?.operations?.headcount ?? [];
   const projectionBase = {
     ...buildProjectionBase(profileBase, facts),
     revenueFormula: revenueBuild.formula,
@@ -96,7 +104,13 @@ export function computeFinancialsBlock(
   // that a reader can walk from closing cash back to the growth assumption
   // without the chain breaking at a statement boundary.
   const calc = new CalcRegistry();
-  const baseProjections = computeProjections(projectionBase, planInputs, calc);
+  const payrollCalc = registerPayrollBreakdown(headcount, profileBase.monthlyOperatingCost, calc);
+  const rawProjections = computeProjections(projectionBase, planInputs, calc);
+  // Declared levers flow through EBITDA → EBIT → EBT → Zakat → net income
+  // here, before the cash flow statement and balance sheet are built from
+  // mainLines — so a lever's effect reaches cash and equity the same way a
+  // real operating change would, not just the one line it was declared on.
+  const baseProjections = applyLevers(rawProjections, levers, calc, ZAKAT_RATE_PCT);
   const cashFlowStatement = computeCashFlowStatement(projectionBase, planInputs, baseProjections, calc);
   const balanceSheet = computeBalanceSheet(projectionBase, planInputs, baseProjections, cashFlowStatement, calc);
   // Growth Case / Downside Case: full multi-year three-statement scenarios,
@@ -130,6 +144,12 @@ export function computeFinancialsBlock(
   // comparison: one column is a snapshot, not a historical statement.
   const normalized = normalizeHistoricalStatements(facts);
   const historical = hasUsableHistory(normalized) ? normalized : null;
+  const ratiosBlock = historical ? renderRatiosBlock(computeRatios(historical)) : "";
+
+  const leverBlock = renderLeverBlock(levers);
+  const payrollNote = payrollCalc
+    ? `\nPAYROLL — the operating-cost line above includes a payroll breakdown by role (see ${payrollCalc} in the register); narrate headcount and utilization using it rather than treating opex as one undifferentiated figure.`
+    : "";
 
   const sourceNote =
     projectionBase.annualRevenueSource === "document" || projectionBase.cashOnHandSource === "document"
@@ -138,6 +158,7 @@ export function computeFinancialsBlock(
 
   const block = [
     sourceNote,
+    payrollNote,
     "",
     // Cheap in tokens and the whole reason the register exists: the model
     // cites CALC-004 rather than re-deriving or paraphrasing a formula,
@@ -146,7 +167,11 @@ export function computeFinancialsBlock(
     "",
     driverBuildBlock,
     "",
+    leverBlock,
+    "",
     historical ? renderHistoricalStatements(historical) : "",
+    "",
+    ratiosBlock,
     "",
     baseProjections.length > 0
       ? `COMPUTED INCOME STATEMENT (base case, includes an illustrative Zakat line) — narrate these exactly, do not recompute them:\n${JSON.stringify(baseProjections, null, 2)}`
@@ -523,8 +548,9 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
     `SELECT revenue_growth_pct, growth_basis, projection_years, management_assessment,
             positioning_notes, risk_mitigants, use_of_funds_notes,
             loan_term_years, loan_interest_rate_pct, asset_useful_life_years,
-            market_size_tam, market_size_sam, market_size_som, market_size_sources,
-            market_growth_pct, market_drivers_notes, competitor_notes,
+            market_size_tam, market_size_tam_basis, market_size_sam, market_size_sam_basis,
+            market_size_som, market_size_som_basis, market_size_sources,
+            market_growth_pct, market_drivers_notes, competitor_notes, competitor_pricing,
             exit_strategy_notes, unit_economics_notes
        FROM plan_inputs WHERE client_id = $1`,
     [plan.client_id],
@@ -586,17 +612,19 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
         WHERE f.client_id = $1 AND d.deleted_at IS NULL AND d.superseded_at IS NULL`,
       [plan.client_id],
     );
-    const [drivers, buildRow] = await Promise.all([
+    const [drivers, buildRow, levers] = await Promise.all([
       listDrivers(plan.client_id),
       one<{ revenue_formula: string | null }>(
         `SELECT revenue_formula FROM plan_inputs WHERE client_id = $1`,
         [plan.client_id],
       ),
+      listLevers(plan.client_id),
     ]);
 
     const { financials, calculations, historical, block } = computeFinancialsBlock(
       profile.data, planInputs, clientFacts,
       { formula: buildRow?.revenue_formula ?? null, drivers },
+      levers,
     );
     // Deliberately not persisted: the statements derive purely from `facts`,
     // which is client-level and changes as documents arrive. Recomputing

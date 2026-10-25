@@ -26,6 +26,8 @@ import {
   TextRun,
   WidthType,
 } from "docx";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { barChartSvg, lineChartSvg, svgToPng } from "./charts.ts";
 import type { AppendixTable } from "../../src/planner/appendices.ts";
 import type { SectionExhibit } from "../../src/planner/types.ts";
@@ -44,11 +46,10 @@ import { config } from "./config.ts";
 const MUTED = "666666";
 const FAINT = "999999";
 /** The one accent used throughout — headings, the executive-summary callout
- *  border, section numbers. Deliberately a single restrained color, not a
- *  palette: a business plan is not the place to introduce a brand identity
- *  the firm doesn't already have (see FirmIdentity — no logo/color field
- *  exists there today). A muted slate reads as considered rather than
- *  decorative next to the plain, factual prose. */
+ *  border, section numbers, and now table header shading. Deliberately a
+ *  single restrained color, not a palette: this is about actually using the
+ *  firm's own accent on the elements that look unfinished without it, not
+ *  introducing a brand system the firm doesn't already have. */
 const ACCENT = "2B3A55";
 const CALLOUT_FILL = "F3F4F6";
 const HEADING_FONT = "Georgia";
@@ -76,16 +77,38 @@ export interface FirmIdentity {
   contactEmail: string;
   phone?: string;
   website?: string;
+  /** PNG bytes, or null when no logo file has been supplied yet — the cover
+   *  page falls back to the text-only letterhead it always had. */
+  logo: Buffer | null;
+}
+
+// Relative to this source file, not process.cwd() — this module is run
+// directly by Node's type-stripping (see api/Dockerfile's header comment),
+// so there is no dist/ or bundler step to break a relative path's assumption
+// about where the running file actually lives.
+const LOGO_PATH = fileURLToPath(new URL("../assets/logo.png", import.meta.url));
+
+/** No logo file is checked in — a fabricated placeholder would be worse
+ *  than none in a document carrying a client's name. Drop a real
+ *  api/assets/logo.png in (roughly square reads best at the fixed size the
+ *  cover page uses) and it appears with no further change. */
+function loadFirmLogo(): Buffer | null {
+  try {
+    return readFileSync(LOGO_PATH);
+  } catch {
+    return null;
+  }
 }
 
 /** One place reading the letterhead config, so every export call site
- *  doesn't re-derive the same four fields from `config`. */
+ *  doesn't re-derive the same fields from `config`. */
 export function firmIdentity(): FirmIdentity {
   return {
     name: config.FIRM_NAME,
     contactEmail: config.FIRM_CONTACT_EMAIL,
     phone: config.FIRM_PHONE,
     website: config.FIRM_WEBSITE,
+    logo: loadFirmLogo(),
   };
 }
 
@@ -262,14 +285,33 @@ function tableCell(text: string, bold = false): TableCell {
   });
 }
 
+/** A table's header row — shaded in the firm's own accent rather than bold
+ *  text alone, the one thing that made every table in this document read as
+ *  a plain database dump rather than a designed exhibit. */
+function headerCell(text: string): TableCell {
+  return new TableCell({
+    children: [new Paragraph({ children: [new TextRun({ text, bold: true, color: "FFFFFF" })] })],
+    margins: { top: 60, bottom: 60, left: 100, right: 100 },
+    shading: { fill: ACCENT, type: ShadingType.CLEAR, color: "auto" },
+  });
+}
+
 /** The letterhead block at the top of the cover page — firm identity first,
  *  document title second, same order a printed letterhead would carry. */
 function coverAndToc(firm: FirmIdentity, title: string, subtitle: string, metaLines: string[]): FileChild[] {
   const contact = firmContactLine(firm);
   return [
+    ...(firm.logo
+      ? [
+          new Paragraph({
+            children: [new ImageRun({ type: "png", data: firm.logo, transformation: { width: 140, height: 140 } })],
+            spacing: { before: 400, after: 200 },
+          }),
+        ]
+      : []),
     new Paragraph({
       children: [new TextRun({ text: firm.name, bold: true, size: 24 })],
-      spacing: { before: 600, after: contact ? 40 : 900 },
+      spacing: { before: firm.logo ? 0 : 600, after: contact ? 40 : 900 },
     }),
     ...(contact
       ? [
@@ -377,8 +419,8 @@ function yearsByItemTable(rows: FinRow[], order: readonly string[]): Table | nul
 
   const header = new TableRow({
     children: [
-      tableCell("SAR", true),
-      ...years.map((y) => tableCell(y === 0 ? "Base year" : `Year ${y}`, true)),
+      headerCell("SAR"),
+      ...years.map((y) => headerCell(y === 0 ? "Base year" : `Year ${y}`)),
     ],
   });
   const body = items.map(
@@ -414,7 +456,7 @@ function scenarioSummaryTable(rows: FinRow[]): Table | null {
   if (!scenarios.some((s) => rows.some((r) => r.scenario === s && r.year_offset === finalYear))) return null;
 
   const header = new TableRow({
-    children: [tableCell("Scenario", true), tableCell(`Year ${finalYear} revenue`, true), tableCell("EBITDA", true), tableCell("Net income", true), tableCell("Closing cash", true)],
+    children: [headerCell("Scenario"), headerCell(`Year ${finalYear} revenue`), headerCell("EBITDA"), headerCell("Net income"), headerCell("Closing cash")],
   });
   const row = (scenario: (typeof scenarios)[number]) =>
     new TableRow({
@@ -481,7 +523,7 @@ function dataTable(headers: string[], rows: string[][]): Table {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
-      new TableRow({ children: headers.map((h) => tableCell(h, true)) }),
+      new TableRow({ children: headers.map((h) => headerCell(h)) }),
       ...rows.map((r) => new TableRow({ children: r.map((v) => tableCell(v)) })),
     ],
   });
@@ -491,7 +533,7 @@ function assumptionsTable(rows: { label: string; value: string; basis: string }[
   if (rows.length === 0) return null;
 
   const header = new TableRow({
-    children: [tableCell("Assumption", true), tableCell("Value", true), tableCell("Basis", true)],
+    children: [headerCell("Assumption"), headerCell("Value"), headerCell("Basis")],
   });
   const body = rows.map(
     (a) => new TableRow({ children: [tableCell(a.label), tableCell(a.value), tableCell(a.basis)] }),

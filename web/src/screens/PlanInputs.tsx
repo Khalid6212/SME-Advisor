@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError, type CompetitorNote, type PlanInputs as PlanInputsData, type ResearchSuggestion } from "../api";
 import { SourceRegister } from "../components/SourceRegister";
 import { RevenueBuild } from "../components/RevenueBuild";
+import { OperationalImprovements } from "../components/OperationalImprovements";
 
 function fmtSar(n: number | null): string {
   return n === null ? "—" : `SAR ${n.toLocaleString()}`;
@@ -19,12 +20,16 @@ const EMPTY: PlanInputsData = {
   loan_interest_rate_pct: null,
   asset_useful_life_years: null,
   market_size_tam: null,
+  market_size_tam_basis: null,
   market_size_sam: null,
+  market_size_sam_basis: null,
   market_size_som: null,
+  market_size_som_basis: null,
   market_size_sources: null,
   market_growth_pct: null,
   market_drivers_notes: null,
   competitor_notes: [],
+  competitor_pricing: [],
   exit_strategy_notes: null,
   unit_economics_notes: null,
 };
@@ -107,11 +112,20 @@ export function PlanInputs({ clientId }: { clientId: string }) {
     setData((prev) => ({
       ...prev,
       market_size_tam: research.market_size_tam,
+      market_size_tam_basis: research.market_size_tam_basis,
       market_size_sam: research.market_size_sam,
+      market_size_sam_basis: research.market_size_sam_basis,
       market_size_som: research.market_size_som,
+      market_size_som_basis: research.market_size_som_basis,
       market_size_sources: research.market_size_sources,
       market_growth_pct: research.market_growth_pct,
       market_drivers_notes: research.market_drivers_notes,
+      competitor_pricing: [
+        ...prev.competitor_pricing,
+        ...research.competitor_pricing.filter(
+          (p) => !prev.competitor_pricing.some((e) => e.competitor === p.competitor && e.service === p.service),
+        ),
+      ],
     }));
   };
 
@@ -329,6 +343,28 @@ export function PlanInputs({ clientId }: { clientId: string }) {
                 </div>
               )}
 
+              {research.competitor_pricing.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 600, fontSize: 12 }}>Competitor pricing found</div>
+                  <p className="muted" style={{ fontSize: 11, margin: "2px 0 6px" }}>
+                    Pulled from each competitor's own pricing or service page — applied automatically with
+                    "Apply market sizing" above.
+                  </p>
+                  <table style={{ width: "100%", fontSize: 12 }}>
+                    <tbody>
+                      {research.competitor_pricing.map((p, i) => (
+                        <tr key={i}>
+                          <td style={{ paddingRight: 8 }}><strong>{p.competitor}</strong></td>
+                          <td style={{ paddingRight: 8 }}>{p.service}</td>
+                          <td style={{ paddingRight: 8 }}>{p.price}</td>
+                          <td className="muted" title={p.confidence_reason}>{p.confidence}{p.notes ? ` — ${p.notes}` : ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               <p className="muted" style={{ fontSize: 11, marginTop: 12, marginBottom: 0 }}>
                 {research.confidence_note}
               </p>
@@ -347,6 +383,11 @@ export function PlanInputs({ clientId }: { clientId: string }) {
                 value={data.market_size_tam ?? ""}
                 onChange={(e) => set("market_size_tam", e.target.value === "" ? null : Number(e.target.value))}
               />
+              <input
+                style={{ width: "100%", marginTop: 4, fontSize: 11 }} placeholder="Basis — top-down, from which report"
+                value={data.market_size_tam_basis ?? ""}
+                onChange={(e) => set("market_size_tam_basis", e.target.value || null)}
+              />
             </div>
             <div style={{ flex: 1 }}>
               <label className="muted" style={{ fontSize: 12 }}>SAM (SAR)</label>
@@ -355,6 +396,11 @@ export function PlanInputs({ clientId }: { clientId: string }) {
                 value={data.market_size_sam ?? ""}
                 onChange={(e) => set("market_size_sam", e.target.value === "" ? null : Number(e.target.value))}
               />
+              <input
+                style={{ width: "100%", marginTop: 4, fontSize: 11 }} placeholder="Basis — how narrowed from TAM"
+                value={data.market_size_sam_basis ?? ""}
+                onChange={(e) => set("market_size_sam_basis", e.target.value || null)}
+              />
             </div>
             <div style={{ flex: 1 }}>
               <label className="muted" style={{ fontSize: 12 }}>SOM (SAR)</label>
@@ -362,6 +408,11 @@ export function PlanInputs({ clientId }: { clientId: string }) {
                 type="number" style={{ width: "100%", marginTop: 4 }}
                 value={data.market_size_som ?? ""}
                 onChange={(e) => set("market_size_som", e.target.value === "" ? null : Number(e.target.value))}
+              />
+              <input
+                style={{ width: "100%", marginTop: 4, fontSize: 11 }} placeholder="Basis — top-down share or bottom-up from capacity"
+                value={data.market_size_som_basis ?? ""}
+                onChange={(e) => set("market_size_som_basis", e.target.value || null)}
               />
             </div>
             <div style={{ flex: 1 }}>
@@ -373,6 +424,32 @@ export function PlanInputs({ clientId }: { clientId: string }) {
               />
             </div>
           </div>
+
+          {data.competitor_pricing.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <label className="muted" style={{ fontSize: 12, display: "block" }}>Competitor pricing</label>
+              <table style={{ width: "100%", fontSize: 12, marginTop: 4 }}>
+                <tbody>
+                  {data.competitor_pricing.map((p, i) => (
+                    <tr key={i}>
+                      <td style={{ paddingRight: 8 }}><strong>{p.competitor}</strong></td>
+                      <td style={{ paddingRight: 8 }}>{p.service}</td>
+                      <td style={{ paddingRight: 8 }}>{p.price}</td>
+                      <td className="muted" title={p.confidence_reason}>{p.confidence}</td>
+                      <td>
+                        <button
+                          onClick={() => set("competitor_pricing", data.competitor_pricing.filter((_, j) => j !== i))}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           <label className="muted" style={{ fontSize: 12, display: "block", marginTop: 8 }}>Sources</label>
           <input
             style={{ width: "100%", marginTop: 4 }}
@@ -420,6 +497,8 @@ export function PlanInputs({ clientId }: { clientId: string }) {
         <SourceRegister clientId={clientId} refreshToken={sourcesVersion} />
 
         <RevenueBuild clientId={clientId} />
+
+        <OperationalImprovements clientId={clientId} />
 
         <div>
           <label className="muted" style={{ fontSize: 12 }}>Unit economics</label>

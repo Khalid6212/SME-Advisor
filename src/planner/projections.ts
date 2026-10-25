@@ -68,7 +68,7 @@ const SENSITIVITY_VARIANCE_POINTS = 8;
  *  needs a real accountant's input. Applies to Saudi/GCC-owned entities;
  *  foreign or mixed ownership may owe income tax instead — not modelled
  *  here, since ownership nationality isn't captured at interview. */
-const ZAKAT_RATE_PCT = 2.5;
+export const ZAKAT_RATE_PCT = 2.5;
 
 const DAYS_PER_YEAR = 365;
 
@@ -262,6 +262,61 @@ function baseInput(
     value,
     ref,
   };
+}
+
+/** One role from the operational input layer (src/core/schema.ts's
+ *  OPERATIONS section) — the shape `profile.operations.headcount` takes. */
+export interface HeadcountRole {
+  role: string;
+  count: number;
+  avg_monthly_pay: number | null;
+}
+
+/** Total monthly payroll implied by the declared headcount, or null when
+ *  there is nothing to compute from (no roles, or none with a pay figure). */
+export function computeMonthlyPayroll(headcount: HeadcountRole[]): number | null {
+  const known = headcount.filter((h) => h.avg_monthly_pay != null);
+  if (known.length === 0) return null;
+  return known.reduce((sum, h) => sum + h.count * h.avg_monthly_pay!, 0);
+}
+
+/**
+ * Registers a breakdown of the operating-cost line the projection already
+ * uses — payroll by role, and the remainder as non-payroll opex — without
+ * changing the total, which still comes from the reported monthly operating
+ * cost. This is what makes "we cut payroll 10%" or "utilization is the real
+ * driver" an auditable statement rather than a number buried inside one
+ * blended opex figure.
+ */
+export function registerPayrollBreakdown(
+  headcount: HeadcountRole[],
+  monthlyOperatingCost: number | null,
+  calc: CalcRegistry,
+): string | null {
+  const payroll = computeMonthlyPayroll(headcount);
+  if (payroll == null) return null;
+
+  const nonPayroll = monthlyOperatingCost != null ? round(monthlyOperatingCost - payroll) : null;
+  return calc.register("payroll_breakdown", {
+    metric: "Payroll, by role",
+    formula: "Payroll = Σ(headcount × average monthly pay), by role",
+    inputs: [
+      ...headcount
+        .filter((h) => h.avg_monthly_pay != null)
+        .map((h) => ({
+          label: `${h.role} (${h.count})`,
+          value: `${sar(h.count * h.avg_monthly_pay!)}/mo`,
+          ref: "profile.operations.headcount",
+        })),
+      {
+        label: "Non-payroll opex (remainder of the reported operating cost)",
+        value: nonPayroll != null ? `${sar(nonPayroll)}/mo` : "monthly operating cost not reported — payroll shown alone",
+        ref: "profile.financial_health.monthly_operating_cost",
+      },
+    ],
+    result_note:
+      "A breakdown of the operating-cost line already in the projection — does not change the total, which still comes from the reported monthly operating cost.",
+  });
 }
 
 /**

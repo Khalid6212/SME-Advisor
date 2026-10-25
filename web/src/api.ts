@@ -191,6 +191,15 @@ export interface CompetitorNote {
   weaknesses: string;
 }
 
+export interface CompetitorPrice {
+  competitor: string;
+  service: string;
+  price: string;
+  confidence: "high" | "medium" | "low";
+  confidence_reason: string;
+  notes: string | null;
+}
+
 export interface PlanInputs {
   revenue_growth_pct: number | null;
   growth_basis: string | null;
@@ -203,12 +212,16 @@ export interface PlanInputs {
   loan_interest_rate_pct: number | null;
   asset_useful_life_years: number | null;
   market_size_tam: number | null;
+  market_size_tam_basis: string | null;
   market_size_sam: number | null;
+  market_size_sam_basis: string | null;
   market_size_som: number | null;
+  market_size_som_basis: string | null;
   market_size_sources: string | null;
   market_growth_pct: number | null;
   market_drivers_notes: string | null;
   competitor_notes: CompetitorNote[];
+  competitor_pricing: CompetitorPrice[];
   exit_strategy_notes: string | null;
   unit_economics_notes: string | null;
   updated_at?: string;
@@ -226,8 +239,11 @@ export interface RegisteredSource {
 
 export interface ResearchSuggestion {
   market_size_tam: number | null;
+  market_size_tam_basis: string | null;
   market_size_sam: number | null;
+  market_size_sam_basis: string | null;
   market_size_som: number | null;
+  market_size_som_basis: string | null;
   market_size_sources: string | null;
   /** Registered as real EXT-xxx Source Register entries the moment research
    *  completes — see POST /clients/:id/plan-inputs/research. */
@@ -235,6 +251,7 @@ export interface ResearchSuggestion {
   market_growth_pct: number | null;
   market_drivers_notes: string | null;
   competitor_notes: CompetitorNote[];
+  competitor_pricing: CompetitorPrice[];
   confidence_note: string;
 }
 

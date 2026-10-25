@@ -33,6 +33,7 @@ import { deleteSource, listSources, registerSource } from "../sources.ts";
 import { listDrivers, replaceDrivers } from "../drivers.ts";
 import { checkDrivers } from "../../../src/planner/drivers.ts";
 import { validateFormula } from "../../../src/planner/formula.ts";
+import { listLevers, replaceLevers } from "../levers.ts";
 import { editDistance } from "../../../src/learning/types.ts";
 import { approvePhase, createPlan, draftPhase, TEMPLATES } from "../agents/planner.ts";
 import { distillEdit } from "../agents/distiller.ts";
@@ -57,6 +58,7 @@ function renderMarketInputs(data: {
   market_size_tam: number | null; market_size_sam: number | null; market_size_som: number | null;
   market_size_sources: string | null; market_growth_pct: number | null; market_drivers_notes: string | null;
   competitor_notes: { name: string; strengths: string; weaknesses: string }[];
+  competitor_pricing?: { competitor: string; service: string; price: string }[];
 }): string {
   return [
     `TAM ${data.market_size_tam ?? "—"} / SAM ${data.market_size_sam ?? "—"} / SOM ${data.market_size_som ?? "—"}`,
@@ -66,6 +68,11 @@ function renderMarketInputs(data: {
       data.competitor_notes.length === 0
         ? "none"
         : data.competitor_notes.map((c) => `${c.name} (${c.strengths}; ${c.weaknesses})`).join("; ")
+    }`,
+    `Pricing: ${
+      !data.competitor_pricing || data.competitor_pricing.length === 0
+        ? "none"
+        : data.competitor_pricing.map((p) => `${p.competitor} — ${p.service}: ${p.price}`).join("; ")
     }`,
   ].join("\n");
 }
@@ -152,10 +159,37 @@ const revenueBuildSchema = z.object({
   drivers: z.array(driverSchema).max(40),
 });
 
+/** One declared operational improvement lever — see src/planner/levers.ts. */
+const leverEffectSchema = z.object({
+  year_offset: z.number().int().min(0).max(30),
+  net_income_effect: z.number().finite(),
+});
+
+const leverSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  mechanism: z.string().trim().min(1).max(2000),
+  owner: z.string().trim().max(200).nullish(),
+  kpi: z.string().trim().max(200).nullish(),
+  fy_effects: z.array(leverEffectSchema).max(30),
+});
+
+const leversBodySchema = z.object({
+  levers: z.array(leverSchema).max(40),
+});
+
 const competitorNoteSchema = z.object({
   name: z.string().trim().min(1).max(200),
   strengths: z.string().trim().max(1000),
   weaknesses: z.string().trim().max(1000),
+});
+
+const competitorPriceSchema = z.object({
+  competitor: z.string().trim().min(1).max(200),
+  service: z.string().trim().min(1).max(300),
+  price: z.string().trim().min(1).max(200),
+  confidence: z.enum(["high", "medium", "low"]),
+  confidence_reason: z.string().trim().max(1000),
+  notes: z.string().trim().max(1000).nullable(),
 });
 
 // Loosely mirrors ResearchSuggestion (api/src/agents/research.ts) — only
@@ -164,12 +198,16 @@ const competitorNoteSchema = z.object({
 const researchSuggestionSchema = z
   .object({
     market_size_tam: z.number().nullable(),
+    market_size_tam_basis: z.string().nullable().optional(),
     market_size_sam: z.number().nullable(),
+    market_size_sam_basis: z.string().nullable().optional(),
     market_size_som: z.number().nullable(),
+    market_size_som_basis: z.string().nullable().optional(),
     market_size_sources: z.string().nullable(),
     market_growth_pct: z.number().nullable(),
     market_drivers_notes: z.string().nullable(),
     competitor_notes: z.array(z.object({ name: z.string(), strengths: z.string(), weaknesses: z.string() })),
+    competitor_pricing: z.array(competitorPriceSchema).optional(),
   })
   .optional();
 
@@ -188,12 +226,16 @@ const planInputsSchema = z.object({
   // Market sizing, competitive judgment, exit strategy, unit economics —
   // the advisor's own research, since the planner may not invent any of it.
   market_size_tam: z.number().min(0).nullable().optional(),
+  market_size_tam_basis: z.string().trim().max(1000).nullable().optional(),
   market_size_sam: z.number().min(0).nullable().optional(),
+  market_size_sam_basis: z.string().trim().max(1000).nullable().optional(),
   market_size_som: z.number().min(0).nullable().optional(),
+  market_size_som_basis: z.string().trim().max(1000).nullable().optional(),
   market_size_sources: z.string().trim().max(1000).nullable().optional(),
   market_growth_pct: z.number().min(-100).max(1000).nullable().optional(),
   market_drivers_notes: z.string().trim().max(4000).nullable().optional(),
   competitor_notes: z.array(competitorNoteSchema).max(10).optional(),
+  competitor_pricing: z.array(competitorPriceSchema).max(100).optional(),
   exit_strategy_notes: z.string().trim().max(4000).nullable().optional(),
   unit_economics_notes: z.string().trim().max(4000).nullable().optional(),
   // What the research agent suggested, if the advisor ran it this session —
@@ -227,8 +269,9 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       `SELECT revenue_growth_pct, growth_basis, projection_years, management_assessment,
               positioning_notes, risk_mitigants, use_of_funds_notes,
               loan_term_years, loan_interest_rate_pct, asset_useful_life_years,
-              market_size_tam, market_size_sam, market_size_som, market_size_sources,
-              market_growth_pct, market_drivers_notes, competitor_notes,
+              market_size_tam, market_size_tam_basis, market_size_sam, market_size_sam_basis,
+              market_size_som, market_size_som_basis, market_size_sources,
+              market_growth_pct, market_drivers_notes, competitor_notes, competitor_pricing,
               exit_strategy_notes, unit_economics_notes, updated_at
          FROM plan_inputs WHERE client_id = $1`,
       [id],
@@ -249,10 +292,11 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
          (client_id, revenue_growth_pct, growth_basis, projection_years,
           management_assessment, positioning_notes, risk_mitigants, use_of_funds_notes,
           loan_term_years, loan_interest_rate_pct, asset_useful_life_years,
-          market_size_tam, market_size_sam, market_size_som, market_size_sources,
-          market_growth_pct, market_drivers_notes, competitor_notes,
+          market_size_tam, market_size_tam_basis, market_size_sam, market_size_sam_basis,
+          market_size_som, market_size_som_basis, market_size_sources,
+          market_growth_pct, market_drivers_notes, competitor_notes, competitor_pricing,
           exit_strategy_notes, unit_economics_notes, created_by)
-       VALUES ($1,$2,$3,COALESCE($4,5),$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+       VALUES ($1,$2,$3,COALESCE($4,5),$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
        ON CONFLICT (client_id) DO UPDATE SET
          revenue_growth_pct      = EXCLUDED.revenue_growth_pct,
          growth_basis            = EXCLUDED.growth_basis,
@@ -265,12 +309,16 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
          loan_interest_rate_pct  = EXCLUDED.loan_interest_rate_pct,
          asset_useful_life_years = EXCLUDED.asset_useful_life_years,
          market_size_tam         = EXCLUDED.market_size_tam,
+         market_size_tam_basis   = EXCLUDED.market_size_tam_basis,
          market_size_sam         = EXCLUDED.market_size_sam,
+         market_size_sam_basis   = EXCLUDED.market_size_sam_basis,
          market_size_som         = EXCLUDED.market_size_som,
+         market_size_som_basis   = EXCLUDED.market_size_som_basis,
          market_size_sources     = EXCLUDED.market_size_sources,
          market_growth_pct       = EXCLUDED.market_growth_pct,
          market_drivers_notes    = EXCLUDED.market_drivers_notes,
          competitor_notes        = EXCLUDED.competitor_notes,
+         competitor_pricing      = EXCLUDED.competitor_pricing,
          exit_strategy_notes     = EXCLUDED.exit_strategy_notes,
          unit_economics_notes    = EXCLUDED.unit_economics_notes,
          updated_at              = now()`,
@@ -287,12 +335,16 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         parsed.data.loan_interest_rate_pct ?? null,
         parsed.data.asset_useful_life_years ?? null,
         parsed.data.market_size_tam ?? null,
+        parsed.data.market_size_tam_basis ?? null,
         parsed.data.market_size_sam ?? null,
+        parsed.data.market_size_sam_basis ?? null,
         parsed.data.market_size_som ?? null,
+        parsed.data.market_size_som_basis ?? null,
         parsed.data.market_size_sources ?? null,
         parsed.data.market_growth_pct ?? null,
         parsed.data.market_drivers_notes ?? null,
         JSON.stringify(parsed.data.competitor_notes ?? []),
+        JSON.stringify(parsed.data.competitor_pricing ?? []),
         parsed.data.exit_strategy_notes ?? null,
         parsed.data.unit_economics_notes ?? null,
         user.id,
@@ -317,6 +369,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         market_growth_pct: parsed.data.market_growth_pct ?? null,
         market_drivers_notes: parsed.data.market_drivers_notes ?? null,
         competitor_notes: parsed.data.competitor_notes ?? [],
+        competitor_pricing: parsed.data.competitor_pricing ?? [],
       });
       if (suggested !== final) {
         const client = await one<{ sector_id: string }>(`SELECT sector_id FROM clients WHERE id = $1`, [id]);
@@ -423,6 +476,35 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       drivers: saved,
       check: formula ? checkDrivers(formula, saved) : { unknown: [], unused: [] },
     };
+  });
+
+  /** Declared operational improvement levers — see src/planner/levers.ts. */
+  app.get("/clients/:id/operational-improvements", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    return { levers: await listLevers(id) };
+  });
+
+  /** Saves the lever set as a unit, same "edited together" reasoning as the
+   *  revenue build — a lever's name and its effects are one edit. */
+  app.put("/clients/:id/operational-improvements", async (req, reply) => {
+    const user = requireManager(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+
+    const parsed = leversBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", detail: parsed.error.issues[0]?.message });
+    }
+
+    await replaceLevers(id, parsed.data.levers, user.id);
+    await audit("operational_improvements.saved", {
+      actorUserId: user.id, clientId: id,
+      payload: { levers: parsed.data.levers.length },
+    });
+
+    return { levers: await listLevers(id) };
   });
 
   /**
