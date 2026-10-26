@@ -26,6 +26,9 @@ interface PlanView {
     id: string; version: number; status: string; readiness: string | null;
     manager_note: string | null; template_key: string; profile_superseded: boolean;
     approved_by: string | null; approved_at: string | null;
+    /** The explicit choice made when this plan was started — see startPlan.
+     *  Independent of whatever language the interview ran in. */
+    language: "en" | "ar";
   };
   sections: Section[];
   assumptions: { label: string; value: string; basis: string }[];
@@ -278,7 +281,7 @@ function FinancialsExhibits({ rows }: { rows: FinancialLine[] }) {
 
 export function Plan({ clientId }: { clientId: string }) {
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [plans, setPlans] = useState<{ id: string; version: number; status: string }[]>([]);
+  const [plans, setPlans] = useState<{ id: string; version: number; status: string; language: "en" | "ar" }[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; version: number } | null>(null);
   const [view, setView] = useState<PlanView | null>(null);
   const [audience, setAudience] = useState<"full" | "marketing" | "internal">("full");
@@ -343,11 +346,11 @@ export function Plan({ clientId }: { clientId: string }) {
     setSelectedNav(active?.phase_key ?? ph[0]?.phase_key ?? "gaps");
   }, [view?.plan.id]);
 
-  const startPlan = async (key: string) => {
-    setBusy(key);
+  const startPlan = async (key: string, language: "en" | "ar") => {
+    setBusy(`${key}-${language}`);
     setError(null);
     try {
-      const r = await api.post<{ plan_id: string }>(`/clients/${clientId}/plans`, {});
+      const r = await api.post<{ plan_id: string }>(`/clients/${clientId}/plans`, { language });
       await loadList();
       await openPlan(r.plan_id);
     } catch (e: any) {
@@ -559,17 +562,23 @@ export function Plan({ clientId }: { clientId: string }) {
       )}
 
       <div className="card">
-        <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
+        <div className="row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           {templates.map((t) => (
-            <button key={t.key} onClick={() => startPlan(t.key)} disabled={!!busy} className="primary">
-              {busy === t.key ? "Starting…" : `Start new plan`}
-            </button>
+            <div key={t.key} className="row" style={{ gap: 4 }}>
+              <span className="muted" style={{ fontSize: 12 }}>Start new plan in:</span>
+              <button onClick={() => startPlan(t.key, "en")} disabled={!!busy} className="primary">
+                {busy === `${t.key}-en` ? "Starting…" : "English"}
+              </button>
+              <button onClick={() => startPlan(t.key, "ar")} disabled={!!busy} className="primary">
+                {busy === `${t.key}-ar` ? "جارٍ البدء…" : "العربية"}
+              </button>
+            </div>
           ))}
           <div style={{ flex: 1 }} />
           {plans.map((p) => (
             <div key={p.id} className="row" style={{ gap: 2 }}>
               <button onClick={() => openPlan(p.id)}>
-                v{p.version} · {p.status === "delivered" ? "approved" : p.status.replace(/_/g, " ")}
+                v{p.version} · {p.language === "ar" ? "AR" : "EN"} · {p.status === "delivered" ? "approved" : p.status.replace(/_/g, " ")}
               </button>
               <button
                 title={`Delete plan v${p.version}`}
@@ -606,6 +615,9 @@ export function Plan({ clientId }: { clientId: string }) {
             <div className="row">
               <span className={`pill ${approved ? "good" : "grey"}`}>
                 {approved ? "Approved" : view.plan.status.replace(/_/g, " ")}
+              </span>
+              <span className="pill grey" title="Chosen when this plan was started — independent of the interview's own language">
+                {view.plan.language === "ar" ? "العربية" : "English"}
               </span>
               {view.plan.readiness && <span className="pill info">{view.plan.readiness.replace(/_/g, " ")}</span>}
               <div style={{ flex: 1 }} />
@@ -1055,6 +1067,7 @@ export function Plan({ clientId }: { clientId: string }) {
                     {editing === s.id ? (
                       <div className="stack" style={{ marginTop: 10 }}>
                         <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+                                  dir={view.plan.language === "ar" ? "rtl" : "ltr"}
                                   style={{ minHeight: 220, resize: "vertical" }} />
                         {/* Optional, and worth more than the diff — see D19. */}
                         <input value={note} onChange={(e) => setNote(e.target.value)}

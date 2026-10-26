@@ -21,9 +21,16 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Resvg, initWasm } from "@resvg/resvg-wasm";
+import type { PlanLanguage } from "../../src/planner/language.ts";
 
 const require = createRequire(import.meta.url);
-const FONT_FAMILY = "DejaVu Sans";
+export const FONT_FAMILY = "DejaVu Sans";
+// DejaVu Sans has no Arabic glyphs — resvg-wasm cannot see the container's
+// fonts at all (see this file's header comment), so an Arabic chart with no
+// font of its own would render every label as empty boxes. Noto Sans Arabic
+// is already a dependency for the docx export's RTL text; reused here for
+// the exact same reason.
+export const AR_FONT_FAMILY = "Noto Sans Arabic";
 
 let wasmReady: Promise<void> | null = null;
 function ensureWasm(): Promise<void> {
@@ -31,20 +38,36 @@ function ensureWasm(): Promise<void> {
   return wasmReady;
 }
 
-let fontBuffers: Uint8Array[] | null = null;
-function loadFontBuffers(): Uint8Array[] {
-  fontBuffers ??= [
+let latinFontBuffers: Uint8Array[] | null = null;
+let arabicFontBuffers: Uint8Array[] | null = null;
+function loadFontBuffers(language: PlanLanguage): Uint8Array[] {
+  if (language === "ar") {
+    arabicFontBuffers ??= [
+      new Uint8Array(readFileSync(require.resolve("@expo-google-fonts/noto-sans-arabic/400Regular/NotoSansArabic_400Regular.ttf"))),
+      new Uint8Array(readFileSync(require.resolve("@expo-google-fonts/noto-sans-arabic/700Bold/NotoSansArabic_700Bold.ttf"))),
+    ];
+    return arabicFontBuffers;
+  }
+  latinFontBuffers ??= [
     new Uint8Array(readFileSync(require.resolve("dejavu-fonts-ttf/ttf/DejaVuSans.ttf"))),
     new Uint8Array(readFileSync(require.resolve("dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf"))),
   ];
-  return fontBuffers;
+  return latinFontBuffers;
 }
 
-export async function svgToPng(svg: string, widthPx: number): Promise<{ buffer: Buffer; width: number; height: number }> {
+export async function svgToPng(
+  svg: string,
+  widthPx: number,
+  language: PlanLanguage = "en",
+): Promise<{ buffer: Buffer; width: number; height: number }> {
   await ensureWasm();
   const resvg = new Resvg(svg, {
     fitTo: { mode: "width", value: widthPx },
-    font: { fontBuffers: loadFontBuffers(), loadSystemFonts: false, defaultFontFamily: FONT_FAMILY },
+    font: {
+      fontBuffers: loadFontBuffers(language),
+      loadSystemFonts: false,
+      defaultFontFamily: language === "ar" ? AR_FONT_FAMILY : FONT_FAMILY,
+    },
   });
   const rendered = resvg.render();
   return { buffer: Buffer.from(rendered.asPng()), width: rendered.width, height: rendered.height };
@@ -69,11 +92,12 @@ export interface BarDatum {
 export function barChartSvg(
   title: string,
   data: BarDatum[],
-  opts: { width?: number; height?: number; valueFormat?: (n: number) => string } = {},
+  opts: { width?: number; height?: number; valueFormat?: (n: number) => string; fontFamily?: string } = {},
 ): string {
   const width = opts.width ?? 640;
   const height = opts.height ?? 320;
   const fmt = opts.valueFormat ?? ((n: number) => n.toLocaleString("en-US"));
+  const fontFamily = opts.fontFamily ?? FONT_FAMILY;
   const padding = { top: 44, right: 24, bottom: 44, left: 24 };
   const plotW = width - padding.left - padding.right;
   const plotH = height - padding.top - padding.bottom;
@@ -90,15 +114,15 @@ export function barChartSvg(
       const color = d.color ?? DEFAULT_COLOR;
       return `
         <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${color}" rx="3" />
-        <text x="${(x + barW / 2).toFixed(1)}" y="${(y - 8).toFixed(1)}" text-anchor="middle" font-family="${FONT_FAMILY}" font-size="14" fill="${LABEL_COLOR}" font-weight="bold">${escapeXml(fmt(d.value))}</text>
-        <text x="${(x + barW / 2).toFixed(1)}" y="${(zeroY + 20).toFixed(1)}" text-anchor="middle" font-family="${FONT_FAMILY}" font-size="13" fill="${LABEL_COLOR}">${escapeXml(d.label)}</text>
+        <text x="${(x + barW / 2).toFixed(1)}" y="${(y - 8).toFixed(1)}" text-anchor="middle" font-family="${fontFamily}" font-size="14" fill="${LABEL_COLOR}" font-weight="bold">${escapeXml(fmt(d.value))}</text>
+        <text x="${(x + barW / 2).toFixed(1)}" y="${(zeroY + 20).toFixed(1)}" text-anchor="middle" font-family="${fontFamily}" font-size="13" fill="${LABEL_COLOR}">${escapeXml(d.label)}</text>
       `;
     })
     .join("");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="${width}" height="${height}" fill="#ffffff" />
-    <text x="${width / 2}" y="22" text-anchor="middle" font-family="${FONT_FAMILY}" font-size="15" fill="${LABEL_COLOR}" font-weight="bold">${escapeXml(title)}</text>
+    <text x="${width / 2}" y="22" text-anchor="middle" font-family="${fontFamily}" font-size="15" fill="${LABEL_COLOR}" font-weight="bold">${escapeXml(title)}</text>
     <line x1="${padding.left}" y1="${zeroY}" x2="${width - padding.right}" y2="${zeroY}" stroke="${AXIS_COLOR}" stroke-width="1" />
     ${bars}
   </svg>`;
@@ -115,11 +139,12 @@ export function lineChartSvg(
   title: string,
   categories: string[],
   series: Series[],
-  opts: { width?: number; height?: number; valueFormat?: (n: number) => string } = {},
+  opts: { width?: number; height?: number; valueFormat?: (n: number) => string; fontFamily?: string } = {},
 ): string {
   const width = opts.width ?? 640;
   const height = opts.height ?? 340;
   const fmt = opts.valueFormat ?? ((n: number) => n.toLocaleString("en-US"));
+  const fontFamily = opts.fontFamily ?? FONT_FAMILY;
   // Right padding leaves room for each series' end-of-line value label; left
   // padding keeps the first category's x-axis label from clipping against
   // the edge, since it's centered on x = padding.left.
@@ -142,7 +167,7 @@ export function lineChartSvg(
         .map((v, i) => `<circle cx="${xFor(i).toFixed(1)}" cy="${yFor(v).toFixed(1)}" r="3.5" fill="${s.color}" />`)
         .join("");
       const lastLabel = s.points.length > 0
-        ? `<text x="${(xFor(s.points.length - 1) + 6).toFixed(1)}" y="${(yFor(s.points[s.points.length - 1]!) + 4).toFixed(1)}" font-family="${FONT_FAMILY}" font-size="12" fill="${s.color}" font-weight="bold">${escapeXml(fmt(s.points[s.points.length - 1]!))}</text>`
+        ? `<text x="${(xFor(s.points.length - 1) + 6).toFixed(1)}" y="${(yFor(s.points[s.points.length - 1]!) + 4).toFixed(1)}" font-family="${fontFamily}" font-size="12" fill="${s.color}" font-weight="bold">${escapeXml(fmt(s.points[s.points.length - 1]!))}</text>`
         : "";
       return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.5" />${dots}${lastLabel}`;
     })
@@ -151,7 +176,7 @@ export function lineChartSvg(
   const xLabels = categories
     .map(
       (c, i) =>
-        `<text x="${xFor(i).toFixed(1)}" y="${(padding.top + plotH + 20).toFixed(1)}" text-anchor="middle" font-family="${FONT_FAMILY}" font-size="12" fill="${LABEL_COLOR}">${escapeXml(c)}</text>`,
+        `<text x="${xFor(i).toFixed(1)}" y="${(padding.top + plotH + 20).toFixed(1)}" text-anchor="middle" font-family="${fontFamily}" font-size="12" fill="${LABEL_COLOR}">${escapeXml(c)}</text>`,
     )
     .join("");
 
@@ -159,14 +184,14 @@ export function lineChartSvg(
     .map(
       (s, i) => `
       <rect x="${padding.left + i * 150}" y="${height - 18}" width="10" height="10" fill="${s.color}" />
-      <text x="${padding.left + i * 150 + 16}" y="${height - 9}" font-family="${FONT_FAMILY}" font-size="11" fill="${LABEL_COLOR}">${escapeXml(s.name)}</text>
+      <text x="${padding.left + i * 150 + 16}" y="${height - 9}" font-family="${fontFamily}" font-size="11" fill="${LABEL_COLOR}">${escapeXml(s.name)}</text>
     `,
     )
     .join("");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="${width}" height="${height}" fill="#ffffff" />
-    <text x="${width / 2}" y="22" text-anchor="middle" font-family="${FONT_FAMILY}" font-size="15" fill="${LABEL_COLOR}" font-weight="bold">${escapeXml(title)}</text>
+    <text x="${width / 2}" y="22" text-anchor="middle" font-family="${fontFamily}" font-size="15" fill="${LABEL_COLOR}" font-weight="bold">${escapeXml(title)}</text>
     <line x1="${padding.left}" y1="${zeroY.toFixed(1)}" x2="${width - padding.right}" y2="${zeroY.toFixed(1)}" stroke="${AXIS_COLOR}" stroke-width="1" />
     ${lines}
     ${xLabels}

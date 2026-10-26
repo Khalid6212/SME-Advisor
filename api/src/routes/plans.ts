@@ -39,6 +39,11 @@ import { approvePhase, createPlan, draftPhase, TEMPLATES } from "../agents/plann
 import { distillEdit } from "../agents/distiller.ts";
 import { researchMarket } from "../agents/research.ts";
 import { RESEARCH_MODEL } from "../anthropic.ts";
+import {
+  AUDIENCE_LABEL as LANG_AUDIENCE_LABEL, CHROME, exhibitCaption, fmtNumber, label,
+  LINE_ITEM_LABEL as LANG_LINE_ITEM_LABEL, pick, scenarioExhibitHeading, SCENARIO_LABEL as LANG_SCENARIO_LABEL,
+  yearLabel, yearRevenueLabel, type PlanLanguage,
+} from "../../../src/planner/language.ts";
 
 const AUDIENCE_LABEL: Record<Audience | "full", string> = {
   marketing: "Marketing plan",
@@ -646,7 +651,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
 
     return query(
-      `SELECT id, version, template_key, template_version, status, readiness,
+      `SELECT id, version, template_key, template_version, status, readiness, language,
               manager_note, created_at, superseded_at, approved_by, approved_at
          FROM plans WHERE client_id = $1 ORDER BY created_at DESC`,
       [id],
@@ -721,14 +726,21 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /** Creates the plan skeleton only — drafting is per-phase from here on,
-   *  see POST /plans/:planId/phases/:phaseKey/draft below. */
+   *  see POST /plans/:planId/phases/:phaseKey/draft below. `language` is
+   *  required, not optional or inferred — the manager makes this choice
+   *  explicitly every time a plan is started (see createPlan). */
   app.post("/clients/:id/plans", async (req, reply) => {
     const user = requireManager(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
 
+    const parsed = z.object({ language: z.enum(["en", "ar"]) }).safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", message: "A plan language (\"en\" or \"ar\") is required." });
+    }
+
     try {
-      return reply.code(201).send(await createPlan(id, user.id));
+      return reply.code(201).send(await createPlan(id, user.id, parsed.data.language));
     } catch (err: any) {
       if (err.message === "no_profile") {
         return reply.code(409).send({ error: "no_profile", message: "Complete the interview first." });
@@ -1133,8 +1145,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const { planId } = req.params as { planId: string };
     const audience = parseAudience((req.query as { audience?: string }).audience);
 
-    const plan = await one<{ client_id: string; client_name: string; status: string }>(
-      `SELECT p.client_id, c.name AS client_name, p.status
+    const plan = await one<{ client_id: string; client_name: string; status: string; language: PlanLanguage }>(
+      `SELECT p.client_id, c.name AS client_name, p.status, p.language
          FROM plans p JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
       [planId],
     );
@@ -1142,8 +1154,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (plan.status !== "delivered") return reply.code(409).send({ error: "not_approved" });
 
     const keys = new Set(sectionsForAudience(businessPlanTemplate, audience).map((s) => s.key));
-    const allSections = await query<{ key: string; title_en: string; content: string; exhibits: SectionExhibit[] }>(
-      `SELECT key, title_en, content, exhibits FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
+    const allSections = await query<{ key: string; title_en: string; title_ar: string; content: string; exhibits: SectionExhibit[] }>(
+      `SELECT key, title_en, title_ar, content, exhibits FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
       [planId],
     );
     const sections = allSections.filter((s) => keys.has(s.key));
@@ -1177,7 +1189,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const appendices = await buildExportAppendices(planId, plan.client_id, includeFinancials);
     const historicalForMd = includeFinancials ? await loadHistorical(plan.client_id) : null;
     const historicalMarkdown = historicalForMd
-      ? historicalExhibits(historicalForMd).flatMap((h) => [
+      ? historicalExhibits(historicalForMd, plan.language).flatMap((h) => [
           `## ${h.title}`,
           "",
           `| ${h.headers.join(" | ")} |`,
@@ -1188,21 +1200,22 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
         ])
       : null;
 
+    const audienceLabel = label(LANG_AUDIENCE_LABEL[audience], plan.language, AUDIENCE_LABEL[audience]);
     const body = [
-      `# ${plan.client_name} — ${AUDIENCE_LABEL[audience]}`,
+      `# ${plan.client_name} — ${audienceLabel}`,
       "",
       ...sections.flatMap((s, i) => [
-        `## ${i + 1}. ${s.title_en}`, "",
-        renderSectionMarkdown(s.content), "",
-        ...(s.exhibits ?? []).flatMap((ex, j) => exhibitMarkdown(ex, i + 1, j + 1)),
+        `## ${fmtNumber(i + 1, plan.language)}. ${pick(plan.language, s.title_en, s.title_ar)}`, "",
+        renderSectionMarkdown(s.content, plan.language), "",
+        ...(s.exhibits ?? []).flatMap((ex, j) => exhibitMarkdown(ex, i + 1, j + 1, plan.language)),
       ]),
       ...(historicalMarkdown ?? []),
-      ...financialExhibitsMarkdown(financials),
+      ...financialExhibitsMarkdown(financials, plan.language),
       ...(assumptions.length
         ? [
-            "## Assumptions",
+            `## ${label(CHROME.assumptions, plan.language)}`,
             "",
-            "| Assumption | Value | Basis |",
+            `| ${label(CHROME.assumptionCol, plan.language)} | ${label(CHROME.valueCol, plan.language)} | ${label(CHROME.basisCol, plan.language)} |`,
             "|---|---|---|",
             ...assumptions.map((a) => `| ${a.label} | ${a.value} | ${a.basis} |`),
             "",
@@ -1211,7 +1224,7 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
       ...appendices.flatMap(appendixMarkdown),
       "---",
       "",
-      "Figures are as reported by the business owner and have not been independently verified, except where a reviewed document is cited in the text above.",
+      label(CHROME.disclaimer, plan.language),
     ].join("\n");
 
     await audit("plan.exported", { actorUserId: user.id, payload: { plan_id: planId, format: "markdown", audience } });
@@ -1227,8 +1240,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const { planId } = req.params as { planId: string };
     const audience = parseAudience((req.query as { audience?: string }).audience);
 
-    const plan = await one<{ client_id: string; client_name: string; status: string; approved_at: Date | null }>(
-      `SELECT p.client_id, c.name AS client_name, p.status, p.approved_at
+    const plan = await one<{ client_id: string; client_name: string; status: string; approved_at: Date | null; language: PlanLanguage }>(
+      `SELECT p.client_id, c.name AS client_name, p.status, p.approved_at, p.language
          FROM plans p JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
       [planId],
     );
@@ -1236,8 +1249,8 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     if (plan.status !== "delivered") return reply.code(409).send({ error: "not_approved" });
 
     const keys = new Set(sectionsForAudience(businessPlanTemplate, audience).map((s) => s.key));
-    const allSections = await query<{ key: string; title_en: string; content: string; exhibits: SectionExhibit[] }>(
-      `SELECT key, title_en, content, exhibits FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
+    const allSections = await query<{ key: string; title_en: string; title_ar: string; content: string; exhibits: SectionExhibit[] }>(
+      `SELECT key, title_en, title_ar, content, exhibits FROM plan_sections WHERE plan_id = $1 ORDER BY position`,
       [planId],
     );
     const sections = allSections.filter((s) => keys.has(s.key));
@@ -1268,13 +1281,14 @@ export async function planRoutes(app: FastifyInstance): Promise<void> {
     const buffer = await buildPlanDocx({
       firm: firmIdentity(),
       clientName: plan.client_name,
-      audienceLabel: AUDIENCE_LABEL[audience],
+      audienceLabel: label(LANG_AUDIENCE_LABEL[audience], plan.language, AUDIENCE_LABEL[audience]),
       approvedAt: plan.approved_at,
+      language: plan.language,
       sections,
       financials,
       assumptions,
       appendices,
-      historical: historicalStatements ? historicalExhibits(historicalStatements) : null,
+      historical: historicalStatements ? historicalExhibits(historicalStatements, plan.language) : null,
     });
 
     await audit("plan.exported", { actorUserId: user.id, payload: { plan_id: planId, format: "docx", audience } });
@@ -1365,16 +1379,16 @@ type FinRow = { year_offset: number; line_item: string; value: string; scenario:
 
 /** One section exhibit as a markdown table. Cells are escaped so a pipe in
  *  a quoted value cannot break the table, same as the appendices. */
-function exhibitMarkdown(ex: SectionExhibit, sectionNo: number, index: number): string[] {
+function exhibitMarkdown(ex: SectionExhibit, sectionNo: number, index: number, language: PlanLanguage = "en"): string[] {
   const esc = (v: string) => v.replace(/\|/g, "\\|").replace(/\n+/g, " ");
   return [
-    `**Exhibit ${sectionNo}.${index} — ${ex.title}**`,
+    `**${exhibitCaption(sectionNo, index, language)} — ${ex.title}**`,
     "",
     `| ${ex.headers.join(" | ")} |`,
     `|${ex.headers.map(() => "---").join("|")}|`,
     ...ex.rows.map((r) => `| ${r.map(esc).join(" | ")} |`),
     "",
-    ...(ex.source_note ? [`_Source: ${ex.source_note}_`, ""] : []),
+    ...(ex.source_note ? [`_${label(CHROME.source, language)} ${ex.source_note}_`, ""] : []),
   ];
 }
 
@@ -1386,7 +1400,7 @@ function exhibitMarkdown(ex: SectionExhibit, sectionNo: number, index: number): 
  * is the point of the whole exercise, and a reader scanning a column will
  * not go looking for a legend.
  */
-function historicalExhibits(s: NormalizedStatements): HistoricalExhibit[] {
+function historicalExhibits(s: NormalizedStatements, language: PlanLanguage = "en"): HistoricalExhibit[] {
   const cell = (line: StatementLine, period: string): string => {
     const c = line.cells[period];
     if (!c || c.value == null) return "—";
@@ -1408,8 +1422,16 @@ function historicalExhibits(s: NormalizedStatements): HistoricalExhibit[] {
 
   const derivedNote = "* Derived from other reported figures, not stated by any document.";
 
+  // Only the table's own title is localized here — each row's label
+  // ("Revenue", "Cost of revenue"...) comes from historical.ts's own
+  // hardcoded, English-only vocabulary (a different key set than
+  // language.ts's LINE_ITEM_LABEL), which this pass leaves as a disclosed
+  // limitation rather than a silent gap.
+  const incomeTitle = pick(language, "Normalized historical income statement", "قائمة الدخل التاريخية المعيارية");
+  const balanceTitle = pick(language, "Normalized historical balance sheet", "قائمة المركز المالي التاريخية المعيارية");
+
   const out: HistoricalExhibit[] = [];
-  const is = table("Normalized historical income statement", s.incomeStatement, derivedNote);
+  const is = table(incomeTitle, s.incomeStatement, derivedNote);
   if (is) out.push(is);
 
   // The residual rides with the balance sheet it belongs to rather than
@@ -1425,7 +1447,7 @@ function historicalExhibits(s: NormalizedStatements): HistoricalExhibit[] {
       `${unfooted.map((p) => `${p} (residual ${s.residuals[p]!.toLocaleString("en-US")})`).join(", ")}. ` +
       "The difference is a gap in the available evidence and has deliberately not been closed with a balancing entry."
     : derivedNote;
-  const bs = table("Normalized historical balance sheet", s.balanceSheet, bsNote);
+  const bs = table(balanceTitle, s.balanceSheet, bsNote);
   if (bs) out.push(bs);
 
   return out;
@@ -1494,8 +1516,8 @@ function fmtFinancial(item: string, v: string | undefined): string {
  * as the docx side — one line is as likely an ordinary sentence with a
  * colon in it as a real exhibit.
  */
-function renderSectionMarkdown(content: string): string {
-  const lines = (content || "_Not yet drafted._").split("\n");
+function renderSectionMarkdown(content: string, language: PlanLanguage = "en"): string {
+  const lines = (content || `_${label(CHROME.notYetDrafted, language)}_`).split("\n");
   const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -1518,41 +1540,51 @@ function renderSectionMarkdown(content: string): string {
   return out.join("\n");
 }
 
-function tableMarkdown(rows: FinRow[], order: string[], yearLabel: (y: number) => string): string[] {
+// Numbers go through fmtNumber (src/planner/language.ts) rather than a bare
+// toLocaleString("en-US"), same reasoning as docx.ts's fmtFinancial — a
+// figure must read identically in both exports for the chosen language.
+function fmtFinancialLang(item: string, v: string | undefined, language: PlanLanguage): string {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  if (item === "dscr") return `${fmtNumber(n, language, { maximumFractionDigits: 2 })}x`;
+  const abs = fmtNumber(Math.abs(n), language, { maximumFractionDigits: 0 });
+  return n < 0 ? `(${abs})` : abs;
+}
+
+function tableMarkdown(rows: FinRow[], order: string[], language: PlanLanguage): string[] {
   const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
   const items = order.filter((item) => rows.some((r) => r.line_item === item));
   const byKey = new Map(rows.map((r) => [`${r.year_offset}:${r.line_item}`, r.value]));
 
-  const header = `| SAR | ${years.map(yearLabel).join(" | ")} |`;
+  const header = `| ${label(CHROME.sar, language)} | ${years.map((y) => yearLabel(y, language)).join(" | ")} |`;
   const sep = `|---|${years.map(() => "---").join("|")}|`;
   const body = items.map(
     (item) =>
-      `| ${FINANCIAL_LINE_LABEL[item] ?? item} | ${years.map((y) => fmtFinancial(item, byKey.get(`${y}:${item}`))).join(" | ")} |`,
+      `| ${label(LANG_LINE_ITEM_LABEL[item], language, item)} | ${years.map((y) => fmtFinancialLang(item, byKey.get(`${y}:${item}`), language)).join(" | ")} |`,
   );
   return [header, sep, ...body];
 }
 
-const SCENARIO_LABEL: Record<string, string> = { base: "Base Case", bull: "Growth Case", bear: "Downside Case" };
-
 /** Final-year headline comparison across all three scenarios, mirroring
  *  docx.ts's scenarioSummaryTable — the "does this survive the downside"
  *  table a reader checks before three full per-scenario statement sets. */
-function scenarioSummaryMarkdown(rows: FinRow[]): string[] {
+function scenarioSummaryMarkdown(rows: FinRow[], language: PlanLanguage): string[] {
   const scenarios = ["bull", "base", "bear"] as const;
   const finalYear = Math.max(0, ...rows.map((r) => r.year_offset));
   const metric = (scenario: string, item: string) =>
-    fmtFinancial(item, rows.find((r) => r.scenario === scenario && r.year_offset === finalYear && r.line_item === item)?.value);
+    fmtFinancialLang(item, rows.find((r) => r.scenario === scenario && r.year_offset === finalYear && r.line_item === item)?.value, language);
   if (!scenarios.some((s) => rows.some((r) => r.scenario === s && r.year_offset === finalYear))) return [];
 
   return [
-    "## Scenario comparison",
+    `## ${label(CHROME.scenarioComparison, language)}`,
     "",
-    "_Growth and Downside apply the same fixed growth-rate band used throughout this plan's sensitivity discussion to the full three-statement model, not just the final year's headline figures._",
+    `_${label(CHROME.scenarioComparisonNote, language)}_`,
     "",
-    `| Scenario | Year ${finalYear} revenue | EBITDA | Net income | Closing cash |`,
+    `| ${label(CHROME.scenarioCol, language)} | ${yearRevenueLabel(finalYear, language)} | ${label(LANG_LINE_ITEM_LABEL.ebitda, language, "EBITDA")} | ${label(CHROME.netIncomeCol, language)} | ${label(CHROME.closingCashCol, language)} |`,
     "|---|---|---|---|---|",
     ...scenarios.map(
-      (s) => `| ${SCENARIO_LABEL[s]} | ${metric(s, "revenue")} | ${metric(s, "ebitda")} | ${metric(s, "net_income")} | ${metric(s, "cash_closing")} |`,
+      (s) => `| ${label(LANG_SCENARIO_LABEL[s], language)} | ${metric(s, "revenue")} | ${metric(s, "ebitda")} | ${metric(s, "net_income")} | ${metric(s, "cash_closing")} |`,
     ),
     "",
   ];
@@ -1563,29 +1595,29 @@ function scenarioSummaryMarkdown(rows: FinRow[]): string[] {
  *  positive inclusion, not "everything else": three disjoint line-item
  *  vocabularies share tableMarkdown, and an exclusion filter would silently
  *  leak one exhibit's rows into another. */
-function financialExhibitsMarkdown(rows: FinRow[]): string[] {
-  const out: string[] = [...scenarioSummaryMarkdown(rows)];
+function financialExhibitsMarkdown(rows: FinRow[], language: PlanLanguage = "en"): string[] {
+  const out: string[] = [...scenarioSummaryMarkdown(rows, language)];
 
   for (const scenario of ["base", "bull", "bear"] as const) {
     const scenarioRows = rows.filter((r) => r.scenario === scenario);
     if (scenarioRows.length === 0) continue;
-    const label = SCENARIO_LABEL[scenario];
+    const scenarioLabelText = label(LANG_SCENARIO_LABEL[scenario], language);
 
     const income = scenarioRows.filter((r) => FINANCIAL_LINE_ORDER.includes(r.line_item));
     if (income.length > 0) {
-      out.push(`## ${label} — income statement`, "", ...tableMarkdown(income, FINANCIAL_LINE_ORDER, (y) => (y === 0 ? "Base year" : `Year ${y}`)), "");
+      out.push(`## ${scenarioExhibitHeading(scenarioLabelText, "income", language)}`, "", ...tableMarkdown(income, FINANCIAL_LINE_ORDER, language), "");
     }
 
     const cashFlow = scenarioRows.filter((r) => CASH_FLOW_ORDER.includes(r.line_item));
     if (cashFlow.length > 0) {
-      out.push(`## ${label} — cash flow statement`, "", ...tableMarkdown(cashFlow, CASH_FLOW_ORDER, (y) => `Year ${y}`), "");
+      out.push(`## ${scenarioExhibitHeading(scenarioLabelText, "cashFlow", language)}`, "", ...tableMarkdown(cashFlow, CASH_FLOW_ORDER, language), "");
     }
 
     const balanceSheet = scenarioRows.filter((r) => BALANCE_SHEET_ORDER.includes(r.line_item));
     if (balanceSheet.length > 0) {
       out.push(
-        `## ${label} — balance sheet (Statement of Financial Position)`, "",
-        ...tableMarkdown(balanceSheet, BALANCE_SHEET_ORDER, (y) => (y === 0 ? "Base year" : `Year ${y}`)), "",
+        `## ${scenarioExhibitHeading(scenarioLabelText, "balanceSheet", language)}`, "",
+        ...tableMarkdown(balanceSheet, BALANCE_SHEET_ORDER, language), "",
       );
     }
   }

@@ -28,9 +28,14 @@ import {
 } from "docx";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { barChartSvg, lineChartSvg, svgToPng } from "./charts.ts";
+import { AR_FONT_FAMILY, barChartSvg, FONT_FAMILY as CHART_FONT_FAMILY, lineChartSvg, svgToPng } from "./charts.ts";
 import type { AppendixTable } from "../../src/planner/appendices.ts";
 import type { SectionExhibit } from "../../src/planner/types.ts";
+import {
+  CHROME, exhibitCaption, fmtDate, fmtNumber, label, LINE_ITEM_LABEL as LANG_LINE_ITEM_LABEL,
+  pick, SCENARIO_LABEL as LANG_SCENARIO_LABEL, scenarioExhibitHeading, yearLabel, yearRevenueLabel,
+  type PlanLanguage,
+} from "../../src/planner/language.ts";
 
 /** A normalized historical statement, flattened for rendering. Built by
  *  historicalExhibits() in routes/plans.ts, which owns the number formatting
@@ -54,6 +59,26 @@ const ACCENT = "2B3A55";
 const CALLOUT_FILL = "F3F4F6";
 const HEADING_FONT = "Georgia";
 const BODY_FONT = "Calibri";
+// Arabic text set in Georgia/Calibri silently falls back to a system font
+// Word picks on its own — Arial is the one serif-free, universally-Arabic-
+// shaped font every Word install actually has, so the chosen plan language
+// gets consistent rendering rather than whatever substitution happens to
+// kick in on a given machine.
+const AR_FONT = "Arial";
+
+/** The run-property spread for a chosen plan language — RTL shaping and the
+ *  Arabic-safe font where needed, nothing extra for English. Every TextRun
+ *  that carries plan content (as opposed to fixed English chrome that never
+ *  flips) spreads this in. */
+function langRun(language: PlanLanguage): { rightToLeft?: boolean; font?: string } {
+  return language === "ar" ? { rightToLeft: true, font: AR_FONT } : {};
+}
+
+/** The paragraph-property spread for a chosen plan language — right-aligned,
+ *  bidirectional-aware paragraphs for Arabic, nothing extra for English. */
+function langPara(language: PlanLanguage): { bidirectional?: boolean; alignment?: (typeof AlignmentType)[keyof typeof AlignmentType] } {
+  return language === "ar" ? { bidirectional: true, alignment: AlignmentType.RIGHT } : {};
+}
 const NO_BORDER = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" } as const;
 const NO_TABLE_BORDERS = {
   top: NO_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER,
@@ -116,8 +141,12 @@ function firmContactLine(firm: FirmIdentity): string {
   return [firm.contactEmail, firm.phone, firm.website].filter(Boolean).join(" · ");
 }
 
-function heading(text: string, level: (typeof HeadingLevel)[keyof typeof HeadingLevel]) {
-  return new Paragraph({ text, heading: level, spacing: { before: 240, after: 120 } });
+function heading(
+  text: string,
+  level: (typeof HeadingLevel)[keyof typeof HeadingLevel],
+  language: PlanLanguage = "en",
+) {
+  return new Paragraph({ text, heading: level, spacing: { before: 240, after: 120 }, ...langPara(language) });
 }
 
 /** The executive summary is the one section a reader always reads in full —
@@ -166,7 +195,7 @@ export function exhibitLine(line: string): { label: string; value: string } | nu
  *  list (a use-of-funds breakdown, say) rather than plain paragraph text
  *  with inline colons, which is what the same content looks like when
  *  rendered as prose. */
-function exhibitTable(rows: { label: string; value: string }[]): Table {
+function exhibitTable(rows: { label: string; value: string }[], language: PlanLanguage = "en"): Table {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: NO_TABLE_BORDERS,
@@ -177,11 +206,11 @@ function exhibitTable(rows: { label: string; value: string }[]): Table {
             new TableCell({
               width: { size: 38, type: WidthType.PERCENTAGE },
               margins: { top: 30, bottom: 30, left: 0, right: 120 },
-              children: [new Paragraph({ children: [new TextRun({ text: r.label, bold: true, color: MUTED, font: BODY_FONT })] })],
+              children: [new Paragraph({ children: [new TextRun({ text: r.label, bold: true, color: MUTED, font: BODY_FONT, ...langRun(language) })], ...langPara(language) })],
             }),
             new TableCell({
               margins: { top: 30, bottom: 30, left: 0, right: 0 },
-              children: [new Paragraph({ children: [new TextRun({ text: r.value, font: BODY_FONT })] })],
+              children: [new Paragraph({ children: [new TextRun({ text: r.value, font: BODY_FONT, ...langRun(language) })], ...langPara(language) })],
             }),
           ],
         }),
@@ -201,8 +230,8 @@ function exhibitTable(rows: { label: string; value: string }[]): Table {
  * documented convention — nothing here changes what the model is asked to
  * write, or adds anything it didn't say.
  */
-function renderSectionBody(text: string): (Paragraph | Table)[] {
-  const lines = (text || "Not yet drafted.").split("\n");
+function renderSectionBody(text: string, language: PlanLanguage = "en"): (Paragraph | Table)[] {
+  const lines = (text || label(CHROME.notYetDrafted, language)).split("\n");
   const out: (Paragraph | Table)[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -215,38 +244,42 @@ function renderSectionBody(text: string): (Paragraph | Table)[] {
       i++;
     }
     if (run.length >= 2) {
-      out.push(exhibitTable(run));
+      out.push(exhibitTable(run, language));
       continue;
     }
     // Not a run — emit the one line at runStart as ordinary prose and move
     // on one line at a time (i may have advanced 0 or 1 lines above).
     i = runStart;
-    out.push(new Paragraph({ children: [new TextRun({ text: lines[i]!, font: BODY_FONT })], spacing: { after: 120 } }));
+    out.push(
+      new Paragraph({
+        children: [new TextRun({ text: lines[i]!, font: BODY_FONT, ...langRun(language) })],
+        spacing: { after: 120 },
+        ...langPara(language),
+      }),
+    );
     i++;
   }
   return out;
 }
 
-function disclaimer(text: string) {
+function disclaimer(text: string, language: PlanLanguage = "en") {
   return new Paragraph({
-    children: [new TextRun({ text, italics: true, color: MUTED })],
+    children: [new TextRun({ text, italics: true, color: MUTED, ...langRun(language) })],
     spacing: { before: 240 },
+    ...langPara(language),
   });
 }
 
-function dateLabel(d: Date): string {
-  return d.toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
-}
-
-function headerFooter(firm: FirmIdentity, title: string) {
+function headerFooter(firm: FirmIdentity, title: string, language: PlanLanguage = "en") {
   const contact = firmContactLine(firm);
   return {
     headers: {
       default: new Header({
         children: [
           new Paragraph({
-            alignment: AlignmentType.RIGHT,
-            children: [new TextRun({ text: `${firm.name} — ${title}`, size: 16, color: FAINT })],
+            alignment: language === "ar" ? AlignmentType.LEFT : AlignmentType.RIGHT,
+            bidirectional: language === "ar",
+            children: [new TextRun({ text: `${firm.name} — ${title}`, size: 16, color: FAINT, ...langRun(language) })],
           }),
         ],
       }),
@@ -258,9 +291,10 @@ function headerFooter(firm: FirmIdentity, title: string) {
             alignment: AlignmentType.CENTER,
             children: [
               new TextRun({
-                children: ["Page ", PageNumber.CURRENT, " of ", PageNumber.TOTAL_PAGES],
+                children: [`${label(CHROME.page, language)} `, PageNumber.CURRENT, ` ${label(CHROME.pageOf, language)} `, PageNumber.TOTAL_PAGES],
                 size: 16,
                 color: FAINT,
+                ...langRun(language),
               }),
             ],
           }),
@@ -278,9 +312,9 @@ function headerFooter(firm: FirmIdentity, title: string) {
   };
 }
 
-function tableCell(text: string, bold = false): TableCell {
+function tableCell(text: string, bold = false, language: PlanLanguage = "en"): TableCell {
   return new TableCell({
-    children: [new Paragraph({ children: [new TextRun({ text, bold })] })],
+    children: [new Paragraph({ children: [new TextRun({ text, bold, ...langRun(language) })], ...langPara(language) })],
     margins: { top: 60, bottom: 60, left: 100, right: 100 },
   });
 }
@@ -288,9 +322,9 @@ function tableCell(text: string, bold = false): TableCell {
 /** A table's header row — shaded in the firm's own accent rather than bold
  *  text alone, the one thing that made every table in this document read as
  *  a plain database dump rather than a designed exhibit. */
-function headerCell(text: string): TableCell {
+function headerCell(text: string, language: PlanLanguage = "en"): TableCell {
   return new TableCell({
-    children: [new Paragraph({ children: [new TextRun({ text, bold: true, color: "FFFFFF" })] })],
+    children: [new Paragraph({ children: [new TextRun({ text, bold: true, color: "FFFFFF", ...langRun(language) })], ...langPara(language) })],
     margins: { top: 60, bottom: 60, left: 100, right: 100 },
     shading: { fill: ACCENT, type: ShadingType.CLEAR, color: "auto" },
   });
@@ -298,20 +332,29 @@ function headerCell(text: string): TableCell {
 
 /** The letterhead block at the top of the cover page — firm identity first,
  *  document title second, same order a printed letterhead would carry. */
-function coverAndToc(firm: FirmIdentity, title: string, subtitle: string, metaLines: string[]): FileChild[] {
+function coverAndToc(
+  firm: FirmIdentity,
+  title: string,
+  subtitle: string,
+  metaLines: string[],
+  language: PlanLanguage = "en",
+): FileChild[] {
   const contact = firmContactLine(firm);
+  const contents = label(CHROME.contents, language);
   return [
     ...(firm.logo
       ? [
           new Paragraph({
             children: [new ImageRun({ type: "png", data: firm.logo, transformation: { width: 140, height: 140 } })],
             spacing: { before: 400, after: 200 },
+            ...langPara(language),
           }),
         ]
       : []),
     new Paragraph({
-      children: [new TextRun({ text: firm.name, bold: true, size: 24 })],
+      children: [new TextRun({ text: firm.name, bold: true, size: 24, ...langRun(language) })],
       spacing: { before: firm.logo ? 0 : 600, after: contact ? 40 : 900 },
+      ...langPara(language),
     }),
     ...(contact
       ? [
@@ -321,15 +364,23 @@ function coverAndToc(firm: FirmIdentity, title: string, subtitle: string, metaLi
           }),
         ]
       : []),
-    new Paragraph({ text: title, heading: HeadingLevel.TITLE, spacing: { after: 200 } }),
-    new Paragraph({ children: [new TextRun({ text: subtitle, size: 28 })], spacing: { after: 300 } }),
+    new Paragraph({ text: title, heading: HeadingLevel.TITLE, spacing: { after: 200 }, ...langPara(language) }),
+    new Paragraph({
+      children: [new TextRun({ text: subtitle, size: 28, ...langRun(language) })],
+      spacing: { after: 300 },
+      ...langPara(language),
+    }),
     ...metaLines.map(
       (line) =>
-        new Paragraph({ children: [new TextRun({ text: line, color: MUTED })], spacing: { after: 80 } }),
+        new Paragraph({
+          children: [new TextRun({ text: line, color: MUTED, ...langRun(language) })],
+          spacing: { after: 80 },
+          ...langPara(language),
+        }),
     ),
     new Paragraph({ text: "", pageBreakBefore: true }),
-    new Paragraph({ text: "Contents", heading: HeadingLevel.HEADING_1 }),
-    new TableOfContents("Contents", { hyperlink: true, headingStyleRange: "1-2" }),
+    new Paragraph({ text: contents, heading: HeadingLevel.HEADING_1, ...langPara(language) }),
+    new TableOfContents(contents, { hyperlink: true, headingStyleRange: "1-2" }),
     new Paragraph({ text: "", pageBreakBefore: true }),
   ];
 }
@@ -352,65 +403,27 @@ const BALANCE_SHEET_ORDER = [
   "bs_debt_longterm", "bs_total_liabilities",
   "bs_equity", "bs_total_liabilities_and_equity",
 ] as const;
-const LINE_ITEM_LABEL: Record<string, string> = {
-  revenue: "Revenue",
-  cogs: "Cost of goods sold",
-  gross_profit: "Gross profit",
-  operating_cost: "Operating costs",
-  ebitda: "EBITDA",
-  depreciation: "Depreciation",
-  ebit: "EBIT",
-  interest_expense: "Interest expense",
-  ebt: "Earnings before Zakat",
-  zakat: "Zakat (estimated)",
-  net_income: "Net income",
-  principal_repayment: "Principal repayment",
-  debt_service: "Total debt service",
-  dscr: "Debt service coverage ratio",
-  cash_opening: "Opening cash",
-  cf_net_income: "Net income",
-  cf_depreciation: "+ Depreciation",
-  cf_working_capital_change: "± Working capital change",
-  cf_operating: "= Cash from operating activities",
-  cf_capex: "Capital expenditure",
-  cf_investing: "= Cash from investing activities",
-  cf_debt_drawn: "Facility drawn",
-  cf_principal_repaid: "Principal repaid",
-  cf_financing: "= Cash from financing activities",
-  cash_closing: "Closing cash",
-  bs_cash: "Cash and cash equivalents",
-  bs_receivables: "Accounts receivable",
-  bs_inventory: "Inventory",
-  bs_total_current_assets: "Total current assets",
-  bs_net_fixed_assets: "Net fixed assets",
-  bs_total_assets: "Total assets",
-  bs_payables: "Accounts payable",
-  bs_debt_current: "Current portion of long-term debt",
-  bs_total_current_liabilities: "Total current liabilities",
-  bs_debt_longterm: "Long-term debt",
-  bs_total_liabilities: "Total liabilities",
-  bs_equity: "Total equity",
-  bs_total_liabilities_and_equity: "Total liabilities and equity",
-};
-
 type FinRow = { year_offset: number; line_item: string; value: string; scenario: string };
 
 // Accounting convention, matching how the model itself writes a loss in
 // prose ("a loss of SAR 10.4m") — a bare minus sign reads as a typo next to
 // it. DSCR is a ratio, not a currency figure, so it gets its own format.
-function fmtFinancial(item: string, v: string | undefined): string {
+// Numbers go through the shared fmtNumber (src/planner/language.ts) so a
+// figure never reads differently here than it does in the prose that cites
+// it — Eastern Arabic-Indic numerals for an Arabic plan, Western for English.
+function fmtFinancial(item: string, v: string | undefined, language: PlanLanguage = "en"): string {
   if (v == null) return "—";
   const n = Number(v);
   // Postgres's numeric type accepts a literal 'NaN' — a bad upstream
   // computation must never render as that literal text in a document
   // carrying a client's name to a bank; treated the same as no value.
   if (!Number.isFinite(n)) return "—";
-  if (item === "dscr") return `${n.toFixed(2)}x`;
-  const abs = Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  if (item === "dscr") return `${fmtNumber(n, language, { maximumFractionDigits: 2 })}x`;
+  const abs = fmtNumber(Math.abs(n), language, { maximumFractionDigits: 0 });
   return n < 0 ? `(${abs})` : abs;
 }
 
-function yearsByItemTable(rows: FinRow[], order: readonly string[]): Table | null {
+function yearsByItemTable(rows: FinRow[], order: readonly string[], language: PlanLanguage = "en"): Table | null {
   if (rows.length === 0) return null;
 
   const years = [...new Set(rows.map((r) => r.year_offset))].sort((a, b) => a - b);
@@ -419,16 +432,16 @@ function yearsByItemTable(rows: FinRow[], order: readonly string[]): Table | nul
 
   const header = new TableRow({
     children: [
-      headerCell("SAR"),
-      ...years.map((y) => headerCell(y === 0 ? "Base year" : `Year ${y}`)),
+      headerCell(label(CHROME.sar, language), language),
+      ...years.map((y) => headerCell(yearLabel(y, language), language)),
     ],
   });
   const body = items.map(
     (item) =>
       new TableRow({
         children: [
-          tableCell(LINE_ITEM_LABEL[item] ?? item),
-          ...years.map((y) => tableCell(fmtFinancial(item, byKey.get(`${y}:${item}`)))),
+          tableCell(label(LANG_LINE_ITEM_LABEL[item], language, item), false, language),
+          ...years.map((y) => tableCell(fmtFinancial(item, byKey.get(`${y}:${item}`), language), false, language)),
         ],
       }),
   );
@@ -436,7 +449,6 @@ function yearsByItemTable(rows: FinRow[], order: readonly string[]): Table | nul
   return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [header, ...body] });
 }
 
-const SCENARIO_LABEL: Record<string, string> = { base: "Base Case", bull: "Growth Case", bear: "Downside Case" };
 const SCENARIO_CHART_COLOR: Record<string, string> = { base: ACCENT, bull: "#2F855A", bear: "#B7472A" };
 
 function numOrNull(v: string | undefined): number | null {
@@ -448,24 +460,30 @@ function numOrNull(v: string | undefined): number | null {
 /** Final-year headline comparison across all three scenarios — the "does
  *  this business survive the downside, and what does the upside actually
  *  look like" table a reader checks before reading three full statements. */
-function scenarioSummaryTable(rows: FinRow[]): Table | null {
+function scenarioSummaryTable(rows: FinRow[], language: PlanLanguage = "en"): Table | null {
   const scenarios = ["base", "bull", "bear"] as const;
   const finalYear = Math.max(0, ...rows.map((r) => r.year_offset));
   const metric = (scenario: string, item: string) =>
-    fmtFinancial(item, rows.find((r) => r.scenario === scenario && r.year_offset === finalYear && r.line_item === item)?.value);
+    fmtFinancial(item, rows.find((r) => r.scenario === scenario && r.year_offset === finalYear && r.line_item === item)?.value, language);
   if (!scenarios.some((s) => rows.some((r) => r.scenario === s && r.year_offset === finalYear))) return null;
 
   const header = new TableRow({
-    children: [headerCell("Scenario"), headerCell(`Year ${finalYear} revenue`), headerCell("EBITDA"), headerCell("Net income"), headerCell("Closing cash")],
+    children: [
+      headerCell(label(CHROME.scenarioCol, language), language),
+      headerCell(yearRevenueLabel(finalYear, language), language),
+      headerCell(label(LANG_LINE_ITEM_LABEL.ebitda, language, "EBITDA"), language),
+      headerCell(label(CHROME.netIncomeCol, language), language),
+      headerCell(label(CHROME.closingCashCol, language), language),
+    ],
   });
   const row = (scenario: (typeof scenarios)[number]) =>
     new TableRow({
       children: [
-        tableCell(SCENARIO_LABEL[scenario]!),
-        tableCell(metric(scenario, "revenue")),
-        tableCell(metric(scenario, "ebitda")),
-        tableCell(metric(scenario, "net_income")),
-        tableCell(metric(scenario, "cash_closing")),
+        tableCell(label(LANG_SCENARIO_LABEL[scenario], language), false, language),
+        tableCell(metric(scenario, "revenue"), false, language),
+        tableCell(metric(scenario, "ebitda"), false, language),
+        tableCell(metric(scenario, "net_income"), false, language),
+        tableCell(metric(scenario, "cash_closing"), false, language),
       ],
     });
 
@@ -475,7 +493,7 @@ function scenarioSummaryTable(rows: FinRow[]): Table | null {
 /** Final-year revenue by scenario, as a bar chart — the same headline
  *  comparison as scenarioSummaryTable, shown visually first. null when
  *  there's nothing to compare. */
-async function scenarioComparisonChart(rows: FinRow[]): Promise<ImageRun | null> {
+async function scenarioComparisonChart(rows: FinRow[], language: PlanLanguage = "en"): Promise<ImageRun | null> {
   const finalYear = Math.max(0, ...rows.map((r) => r.year_offset));
   const data = (["bull", "base", "bear"] as const)
     .map((s) => ({
@@ -483,31 +501,56 @@ async function scenarioComparisonChart(rows: FinRow[]): Promise<ImageRun | null>
       value: numOrNull(rows.find((r) => r.scenario === s && r.year_offset === finalYear && r.line_item === "revenue")?.value),
     }))
     .filter((d): d is { scenario: "bull" | "base" | "bear"; value: number } => d.value != null)
-    .map((d) => ({ label: SCENARIO_LABEL[d.scenario]!, value: d.value, color: SCENARIO_CHART_COLOR[d.scenario] }));
+    .map((d) => ({ label: label(LANG_SCENARIO_LABEL[d.scenario], language), value: d.value, color: SCENARIO_CHART_COLOR[d.scenario] }));
   if (data.length === 0) return null;
 
-  const svg = barChartSvg(`Year ${finalYear} revenue by scenario (SAR)`, data);
-  const { buffer } = await svgToPng(svg, 640);
+  const title = pick(
+    language,
+    `${yearRevenueLabel(finalYear, language)} by scenario (${label(CHROME.sar, language)})`,
+    `${yearRevenueLabel(finalYear, language)} حسب السيناريو (${label(CHROME.sar, language)})`,
+  );
+  const svg = barChartSvg(title, data, {
+    valueFormat: (n) => fmtNumber(n, language, { maximumFractionDigits: 0 }),
+    fontFamily: language === "ar" ? AR_FONT_FAMILY : CHART_FONT_FAMILY,
+  });
+  const { buffer } = await svgToPng(svg, 640, language);
   return new ImageRun({ type: "png", data: buffer, transformation: { width: 420, height: 210 } });
 }
 
 /** Base Case revenue and EBITDA across every projected year, as a line
  *  chart — null when there are fewer than two years, since a single point
- *  isn't a trend. */
-async function revenueTrendChart(rows: FinRow[]): Promise<ImageRun | null> {
+ *  isn't a trend. The x-axis stays chronological left-to-right even for an
+ *  Arabic chart — a time series read backwards would confuse every reader,
+ *  Arabic-literate or not, and that is not what bidi text direction means
+ *  for a diagram's geometry; only the text (labels, title, numerals) and
+ *  the font actually change. */
+async function revenueTrendChart(rows: FinRow[], language: PlanLanguage = "en"): Promise<ImageRun | null> {
   const base = rows.filter((r) => r.scenario === "base");
   const years = [...new Set(base.map((r) => r.year_offset))].sort((a, b) => a - b);
   if (years.length < 2) return null;
 
   const revenue = years.map((y) => numOrNull(base.find((r) => r.year_offset === y && r.line_item === "revenue")?.value) ?? 0);
   const ebitda = years.map((y) => numOrNull(base.find((r) => r.year_offset === y && r.line_item === "ebitda")?.value) ?? 0);
-  const categories = years.map((y) => (y === 0 ? "Base year" : `Year ${y}`));
+  const categories = years.map((y) => yearLabel(y, language));
 
-  const svg = lineChartSvg("Revenue and EBITDA — Base Case (SAR)", categories, [
-    { name: "Revenue", color: ACCENT, points: revenue },
-    { name: "EBITDA", color: "#2F855A", points: ebitda },
-  ]);
-  const { buffer } = await svgToPng(svg, 640);
+  const title = pick(
+    language,
+    `${label(LANG_LINE_ITEM_LABEL.revenue, language)} and ${label(LANG_LINE_ITEM_LABEL.ebitda, language)} — ${label(LANG_SCENARIO_LABEL.base, language)} (${label(CHROME.sar, language)})`,
+    `${label(LANG_LINE_ITEM_LABEL.revenue, language)} وEBITDA — ${label(LANG_SCENARIO_LABEL.base, language)} (${label(CHROME.sar, language)})`,
+  );
+  const svg = lineChartSvg(
+    title,
+    categories,
+    [
+      { name: label(LANG_LINE_ITEM_LABEL.revenue, language), color: ACCENT, points: revenue },
+      { name: label(LANG_LINE_ITEM_LABEL.ebitda, language), color: "#2F855A", points: ebitda },
+    ],
+    {
+      valueFormat: (n) => fmtNumber(n, language, { maximumFractionDigits: 0 }),
+      fontFamily: language === "ar" ? AR_FONT_FAMILY : CHART_FONT_FAMILY,
+    },
+  );
+  const { buffer } = await svgToPng(svg, 640, language);
   return new ImageRun({ type: "png", data: buffer, transformation: { width: 460, height: 245 } });
 }
 
@@ -519,24 +562,24 @@ async function revenueTrendChart(rows: FinRow[]): Promise<ImageRun | null> {
  * distributes them by content — the alternative is guessing proportions for
  * tables whose shape varies by client.
  */
-function dataTable(headers: string[], rows: string[][]): Table {
+function dataTable(headers: string[], rows: string[][], language: PlanLanguage = "en"): Table {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
-      new TableRow({ children: headers.map((h) => headerCell(h)) }),
-      ...rows.map((r) => new TableRow({ children: r.map((v) => tableCell(v)) })),
+      new TableRow({ children: headers.map((h) => headerCell(h, language)) }),
+      ...rows.map((r) => new TableRow({ children: r.map((v) => tableCell(v, false, language)) })),
     ],
   });
 }
 
-function assumptionsTable(rows: { label: string; value: string; basis: string }[]): Table | null {
+function assumptionsTable(rows: { label: string; value: string; basis: string }[], language: PlanLanguage = "en"): Table | null {
   if (rows.length === 0) return null;
 
   const header = new TableRow({
-    children: [headerCell("Assumption"), headerCell("Value"), headerCell("Basis")],
+    children: [headerCell(label(CHROME.assumptionCol, language), language), headerCell(label(CHROME.valueCol, language), language), headerCell(label(CHROME.basisCol, language), language)],
   });
   const body = rows.map(
-    (a) => new TableRow({ children: [tableCell(a.label), tableCell(a.value), tableCell(a.basis)] }),
+    (a) => new TableRow({ children: [tableCell(a.label, false, language), tableCell(a.value, false, language), tableCell(a.basis, false, language)] }),
   );
 
   return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [header, ...body] });
@@ -547,7 +590,11 @@ export async function buildPlanDocx(opts: {
   clientName: string;
   audienceLabel: string;
   approvedAt: Date | null;
-  sections: { key: string; title_en: string; content: string; exhibits?: SectionExhibit[] }[];
+  /** English/Arabic — an explicit choice made when the plan was created
+   *  (see plans.language), independent of the interview's own language.
+   *  Appendices A-G always stay English regardless (see language.ts). */
+  language?: PlanLanguage;
+  sections: { key: string; title_en: string; title_ar: string; content: string; exhibits?: SectionExhibit[] }[];
   financials: FinRow[];
   assumptions: { label: string; value: string; basis: string }[];
   /** The audit trail (src/planner/appendices.ts). Empty for a view that
@@ -558,28 +605,26 @@ export async function buildPlanDocx(opts: {
    *  the order they are read in: what happened, then what is projected. */
   historical?: HistoricalExhibit[] | null;
 }): Promise<Buffer> {
+  const language = opts.language ?? "en";
   const meta = [
-    `Prepared ${dateLabel(new Date())}`,
-    ...(opts.approvedAt ? [`Approved ${dateLabel(opts.approvedAt)}`] : []),
+    `${label(CHROME.prepared, language)} ${fmtDate(new Date(), language)}`,
+    ...(opts.approvedAt ? [`${label(CHROME.approved, language)} ${fmtDate(opts.approvedAt, language)}`] : []),
   ];
 
   const children: FileChild[] = [
-    ...coverAndToc(opts.firm, opts.clientName, opts.audienceLabel, meta),
+    ...coverAndToc(opts.firm, opts.clientName, opts.audienceLabel, meta, language),
     new Paragraph({
       children: [
-        new TextRun({
-          text: "Confidential — prepared for the named business and its financing counterparties only.",
-          italics: true,
-          color: MUTED,
-        }),
+        new TextRun({ text: label(CHROME.confidential, language), italics: true, color: MUTED, ...langRun(language) }),
       ],
       spacing: { after: 300 },
+      ...langPara(language),
     }),
   ];
 
   opts.sections.forEach((s, i) => {
-    const body = renderSectionBody(s.content);
-    children.push(heading(`${i + 1}. ${s.title_en}`, HeadingLevel.HEADING_1));
+    const body = renderSectionBody(s.content, language);
+    children.push(heading(`${fmtNumber(i + 1, language)}. ${pick(language, s.title_en, s.title_ar)}`, HeadingLevel.HEADING_1, language));
     if (s.key === "executive_summary") {
       children.push(calloutBox(body));
     } else {
@@ -593,18 +638,20 @@ export async function buildPlanDocx(opts: {
       children.push(
         new Paragraph({
           children: [
-            new TextRun({ text: `Exhibit ${i + 1}.${j + 1} — ${ex.title}`, bold: true, font: BODY_FONT, size: 19 }),
+            new TextRun({ text: `${exhibitCaption(i + 1, j + 1, language)} — ${ex.title}`, bold: true, font: BODY_FONT, size: 19, ...langRun(language) }),
           ],
           spacing: { before: 200, after: 80 },
           keepNext: true, // never let the caption strand at the foot of a page
+          ...langPara(language),
         }),
       );
-      children.push(dataTable(ex.headers, ex.rows));
+      children.push(dataTable(ex.headers, ex.rows, language));
       if (ex.source_note) {
         children.push(
           new Paragraph({
-            children: [new TextRun({ text: `Source: ${ex.source_note}`, italics: true, color: MUTED, font: BODY_FONT, size: 17 })],
+            children: [new TextRun({ text: `${label(CHROME.source, language)} ${ex.source_note}`, italics: true, color: MUTED, font: BODY_FONT, size: 17, ...langRun(language) })],
             spacing: { after: 200 },
+            ...langPara(language),
           }),
         );
       } else {
@@ -613,13 +660,17 @@ export async function buildPlanDocx(opts: {
     });
   });
 
+  // Historical statements are built from document-extracted facts, whose
+  // own line-item labels (routes/plans.ts's historicalExhibits) are already
+  // resolved to the chosen language — this just renders them RTL-aware.
   for (const h of opts.historical ?? []) {
-    children.push(heading(h.title, HeadingLevel.HEADING_1), dataTable(h.headers, h.rows));
+    children.push(heading(h.title, HeadingLevel.HEADING_1, language), dataTable(h.headers, h.rows, language));
     if (h.note) {
       children.push(
         new Paragraph({
-          children: [new TextRun({ text: h.note, italics: true, color: MUTED, font: BODY_FONT, size: 17 })],
+          children: [new TextRun({ text: h.note, italics: true, color: MUTED, font: BODY_FONT, size: 17, ...langRun(language) })],
           spacing: { before: 80, after: 200 },
+          ...langPara(language),
         }),
       );
     } else {
@@ -627,10 +678,10 @@ export async function buildPlanDocx(opts: {
     }
   }
 
-  const trendChart = await revenueTrendChart(opts.financials);
+  const trendChart = await revenueTrendChart(opts.financials, language);
   if (trendChart) {
     children.push(
-      heading("Financial trend", HeadingLevel.HEADING_1),
+      heading(label(CHROME.financialTrend, language), HeadingLevel.HEADING_1, language),
       new Paragraph({ children: [trendChart], alignment: AlignmentType.CENTER, spacing: { after: 200 } }),
     );
   }
@@ -638,14 +689,15 @@ export async function buildPlanDocx(opts: {
   // Positive inclusion per exhibit, not "everything else" — three disjoint
   // line-item vocabularies now share this table, and an exclusion filter
   // would silently leak one exhibit's rows into another.
-  const summary = scenarioSummaryTable(opts.financials);
+  const summary = scenarioSummaryTable(opts.financials, language);
   if (summary) {
-    const scenarioChart = await scenarioComparisonChart(opts.financials);
+    const scenarioChart = await scenarioComparisonChart(opts.financials, language);
     children.push(
-      heading("Scenario comparison", HeadingLevel.HEADING_1),
+      heading(label(CHROME.scenarioComparison, language), HeadingLevel.HEADING_1, language),
       new Paragraph({
-        children: [new TextRun({ text: "Growth and Downside apply the same fixed growth-rate band used throughout this plan's sensitivity discussion to the full three-statement model, not just the final year's headline figures.", color: MUTED, italics: true })],
+        children: [new TextRun({ text: label(CHROME.scenarioComparisonNote, language), color: MUTED, italics: true, ...langRun(language) })],
         spacing: { after: 120 },
+        ...langPara(language),
       }),
       ...(scenarioChart ? [new Paragraph({ children: [scenarioChart], alignment: AlignmentType.CENTER, spacing: { after: 160 } })] : []),
       summary,
@@ -656,31 +708,31 @@ export async function buildPlanDocx(opts: {
   for (const scenario of ["base", "bull", "bear"] as const) {
     const rows = opts.financials.filter((r) => r.scenario === scenario);
     if (rows.length === 0) continue;
-    const label = SCENARIO_LABEL[scenario]!;
+    const scenarioLabelText = label(LANG_SCENARIO_LABEL[scenario], language);
 
-    const finTable = yearsByItemTable(rows.filter((r) => (LINE_ITEM_ORDER as readonly string[]).includes(r.line_item)), LINE_ITEM_ORDER);
+    const finTable = yearsByItemTable(rows.filter((r) => (LINE_ITEM_ORDER as readonly string[]).includes(r.line_item)), LINE_ITEM_ORDER, language);
     if (finTable) {
-      children.push(heading(`${label} — income statement`, HeadingLevel.HEADING_1), finTable, new Paragraph({ text: "", spacing: { after: 200 } }));
+      children.push(heading(scenarioExhibitHeading(scenarioLabelText, "income", language), HeadingLevel.HEADING_1, language), finTable, new Paragraph({ text: "", spacing: { after: 200 } }));
     }
-    const cashFlowTable = yearsByItemTable(rows.filter((r) => (CASH_FLOW_ORDER as readonly string[]).includes(r.line_item)), CASH_FLOW_ORDER);
+    const cashFlowTable = yearsByItemTable(rows.filter((r) => (CASH_FLOW_ORDER as readonly string[]).includes(r.line_item)), CASH_FLOW_ORDER, language);
     if (cashFlowTable) {
-      children.push(heading(`${label} — cash flow statement`, HeadingLevel.HEADING_1), cashFlowTable, new Paragraph({ text: "", spacing: { after: 200 } }));
+      children.push(heading(scenarioExhibitHeading(scenarioLabelText, "cashFlow", language), HeadingLevel.HEADING_1, language), cashFlowTable, new Paragraph({ text: "", spacing: { after: 200 } }));
     }
-    const balanceSheetTable = yearsByItemTable(rows.filter((r) => (BALANCE_SHEET_ORDER as readonly string[]).includes(r.line_item)), BALANCE_SHEET_ORDER);
+    const balanceSheetTable = yearsByItemTable(rows.filter((r) => (BALANCE_SHEET_ORDER as readonly string[]).includes(r.line_item)), BALANCE_SHEET_ORDER, language);
     if (balanceSheetTable) {
-      children.push(heading(`${label} — balance sheet (Statement of Financial Position)`, HeadingLevel.HEADING_1), balanceSheetTable, new Paragraph({ text: "", spacing: { after: 200 } }));
+      children.push(heading(scenarioExhibitHeading(scenarioLabelText, "balanceSheet", language), HeadingLevel.HEADING_1, language), balanceSheetTable, new Paragraph({ text: "", spacing: { after: 200 } }));
     }
   }
 
-  const assumpTable = assumptionsTable(opts.assumptions);
+  const assumpTable = assumptionsTable(opts.assumptions, language);
   if (assumpTable) {
-    children.push(heading("Assumptions", HeadingLevel.HEADING_1), assumpTable);
+    children.push(heading(label(CHROME.assumptions, language), HeadingLevel.HEADING_1, language), assumpTable);
   }
 
-  // The audit trail. Appended after the statements and before the
-  // disclaimer, in letter order, each on its own page — a reviewer works
-  // through these one at a time and a page break is what stops Appendix C
-  // from starting three rows below the end of Appendix B.
+  // The audit trail stays English regardless of the plan's chosen language
+  // (see language.ts's documented scope note) — its content is generated
+  // with formulas embedded in descriptive text by the deterministic engine,
+  // not static labels a dictionary can translate.
   for (const appendix of opts.appendices ?? []) {
     children.push(
       new Paragraph({
@@ -701,23 +753,22 @@ export async function buildPlanDocx(opts: {
     children.push(dataTable(appendix.headers, appendix.rows));
   }
 
-  children.push(
-    disclaimer(
-      "Figures are as reported by the business owner and have not been independently verified, " +
-        "except where a reviewed document is cited in the text above.",
-    ),
-  );
+  children.push(disclaimer(label(CHROME.disclaimer, language), language));
 
   const doc = new Document({
     styles: DOCUMENT_STYLES,
     sections: [
-      { ...headerFooter(opts.firm, `${opts.clientName} — ${opts.audienceLabel}`), children },
+      { ...headerFooter(opts.firm, `${opts.clientName} — ${opts.audienceLabel}`, language), children },
     ],
   });
   return Buffer.from(await Packer.toBuffer(doc));
 }
 
 // ─── interview summary ──────────────────────────────────────────────────────
+//
+// Always English — this is an internal document built from the interview
+// itself, not the delivered plan the language choice governs (see
+// db/migrations/021_plan_language.sql's comment).
 
 export async function buildInterviewDocx(opts: {
   firm: FirmIdentity;
@@ -728,7 +779,7 @@ export async function buildInterviewDocx(opts: {
   claims: { field_path: string; stated_value: string | null; owner_quote: string; materiality: string }[];
 }): Promise<Buffer> {
   const children: FileChild[] = [
-    ...coverAndToc(opts.firm, "Interview summary", opts.clientName, [`Prepared ${dateLabel(new Date())}`]),
+    ...coverAndToc(opts.firm, "Interview summary", opts.clientName, [`Prepared ${new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" })}`]),
     new Paragraph({
       children: [
         new TextRun(

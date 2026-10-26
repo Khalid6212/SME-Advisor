@@ -67,6 +67,7 @@ export async function runEvalSuite(triggeredBy: string | null, note?: string): P
 
     const { system, messages } = buildPhaseMessages(phase, {
       clientName: fixture.client_name,
+      language: "en",
       profileData: fixture.profile_data,
       claims: fixture.claims,
       planInputs: fixture.plan_inputs,

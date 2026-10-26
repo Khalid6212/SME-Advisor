@@ -68,7 +68,7 @@ Figures in the profile are owner-reported and unverified at this stage. Where th
 
 Write for a credit officer reading their fortieth file this month. Plain sentences, concrete numbers, no marketing language. Claims like "market-leading" or "highly reputable" are noise unless the profile supports them, and a reader discounts everything that follows.
 
-Match the profile's language. If the interview ran in Arabic, draft in Arabic.
+Which language to draft in is specified separately, below — it is the manager's own explicit choice for this plan, independent of whatever language the interview happened to run in. Follow that instruction exactly; do not infer a language from the profile.
 
 ## Connected prose
 

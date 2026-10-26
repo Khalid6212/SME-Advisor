@@ -22,6 +22,7 @@ import { EVAL_JUDGE_MODEL, runAgentLoop, type Message } from "../anthropic.ts";
 const CRITIQUE_SYSTEM = `You review one phase of a business plan another AI agent just drafted, against the same evidence it had available. You did not write this and have no stake in it reading well — find what is actually wrong, not what could theoretically be better.
 
 Flag a "blocking" issue only for something that would genuinely make you push this back if you were the reviewing manager:
+- The draft is not actually written in the language the Language instruction below the phase brief specifies — check the first section's prose yourself rather than trusting that it followed the instruction. This is a hard requirement, not a style preference.
 - A factual claim, figure, or number with nothing in the source material actually backing it.
 - A contradiction — within this phase's own sections, or against a section drafted in an earlier phase (given to you below as "already drafted, from earlier phases").
 - A citation to a source or calculation code that does not appear in the register given, or that does not actually support the sentence it is attached to.

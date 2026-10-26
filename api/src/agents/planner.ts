@@ -29,6 +29,7 @@ import {
   type NormalizedStatements,
 } from "../../../src/planner/historical.ts";
 import { applyLevers, renderLeverBlock, type OperationalLever } from "../../../src/planner/levers.ts";
+import { languageDirective, type PlanLanguage } from "../../../src/planner/language.ts";
 import { PLAN_PHASES, phaseByKey, sectionsBeforePhase, type PhaseSpec } from "../../../src/planner/phases.ts";
 import type { RuleAgent } from "../../../src/learning/types.ts";
 import { EVAL_JUDGE_MODEL, MODEL, runAgentLoop, type Message } from "../anthropic.ts";
@@ -203,6 +204,9 @@ export function computeFinancialsBlock(
 
 export interface PhaseContext {
   clientName: string;
+  /** English/Arabic — the manager's explicit choice at plan creation, not
+   *  inferred from the profile. See languageDirective. */
+  language: PlanLanguage;
   profileData: any;
   claims: {
     claim_key: string; field_path: string; stated_value: string | null;
@@ -254,7 +258,7 @@ export interface PhaseContext {
  *  thing and rewrote PLANNER_SYSTEM to cache fresh (at a markup) on every
  *  single phase, for every client — never actually a hit. */
 export function buildPhaseMessages(phase: PhaseSpec, ctx: PhaseContext): { system: string[]; messages: Message[] } {
-  const variable = [buildPhaseBrief(phase, businessPlanTemplate, ctx.earlierSections), ctx.rules]
+  const variable = [buildPhaseBrief(phase, businessPlanTemplate, ctx.earlierSections), languageDirective(ctx.language), ctx.rules]
     .filter(Boolean)
     .join("\n\n");
   const system = [PLANNER_SYSTEM, variable];
@@ -403,8 +407,17 @@ export interface CreatePlanResult {
  * Requires plan_inputs to exist — the advisor's judgment is what grounds the
  * forward-looking sections (D-plan). Without it, most phases would either
  * invent content or come back as one long list of gaps.
+ *
+ * `language` is a required, explicit choice (not inferred from the
+ * interview's own language, which may differ — see
+ * db/migrations/021_plan_language.sql) — the manager decides which language
+ * the delivered plan is drafted in, every time a plan is created.
  */
-export async function createPlan(clientId: string, createdBy: string): Promise<CreatePlanResult> {
+export async function createPlan(
+  clientId: string,
+  createdBy: string,
+  language: PlanLanguage,
+): Promise<CreatePlanResult> {
   const template = businessPlanTemplate;
 
   const profile = await one<{ id: string }>(
@@ -423,11 +436,11 @@ export async function createPlan(clientId: string, createdBy: string): Promise<C
     );
 
     const { rows } = await c.query<{ id: string; version: number }>(
-      `INSERT INTO plans (client_id, profile_id, version, template_key, template_version, created_by)
-       SELECT $1, $2, COALESCE(MAX(version), 0) + 1, $3, $4, $5
+      `INSERT INTO plans (client_id, profile_id, version, template_key, template_version, created_by, language)
+       SELECT $1, $2, COALESCE(MAX(version), 0) + 1, $3, $4, $5, $6
          FROM plans WHERE client_id = $1
        RETURNING id, version`,
-      [clientId, profile.id, template.key, template.version, createdBy],
+      [clientId, profile.id, template.key, template.version, createdBy, language],
     );
     const created = rows[0]!;
 
@@ -486,8 +499,8 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
   const phase = phaseByKey(phaseKey);
   if (!phase) throw new Error("unknown_phase");
 
-  const plan = await one<{ id: string; client_id: string; profile_id: string }>(
-    `SELECT id, client_id, profile_id FROM plans WHERE id = $1`,
+  const plan = await one<{ id: string; client_id: string; profile_id: string; language: PlanLanguage }>(
+    `SELECT id, client_id, profile_id, language FROM plans WHERE id = $1`,
     [planId],
   );
   if (!plan) throw new Error("not_found");
@@ -700,6 +713,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
 
   const { system, messages } = buildPhaseMessages(phase, {
     clientName: client!.name,
+    language: plan.language,
     profileData: profile.data,
     claims,
     planInputs,
@@ -742,6 +756,7 @@ export async function draftPhase(planId: string, phaseKey: string, createdBy: st
   if (outcome.drafted.length > 0) {
     const evidenceContext = [
       buildPhaseBrief(phase, businessPlanTemplate, earlierSections),
+      languageDirective(plan.language),
       messages[0]!.content as string,
     ].join("\n\n");
     const critique = await critiquePhase(phase.title.en, evidenceContext, outcome.drafted, rules);
